@@ -1,8 +1,8 @@
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index 2aa4b5d..22dcc1c 100644
+index 2aa4b5d..ff86584 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
-@@ -692,3 +692,18 @@ config ARMSSE
+@@ -692,3 +692,20 @@ config ARMSSE
      select UNIMP
      select SSE_COUNTER
      select SSE_TIMER
@@ -21,6 +21,8 @@ index 2aa4b5d..22dcc1c 100644
 +    select CXD90014_NAND
 +    select CXD90014_DMAC
 +    select DMP_SMAPH
++    select SDHCI
++    select SD
 diff --git a/hw/arm/meson.build b/hw/arm/meson.build
 index dc68391..02fcce7 100644
 --- a/hw/arm/meson.build
@@ -32,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..5382b4b
+index 0000000..aedc83c
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,725 @@
+@@ -0,0 +1,753 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -72,6 +74,11 @@ index 0000000..5382b4b
 +#include "hw/cpu/a9mpcore.h"
 +#include "hw/misc/unimp.h"
 +#include "hw/arm/boot.h"
++#include "hw/sd/sdhci.h"
++#include "hw/qdev-properties.h"
++#include "hw/qdev-properties-system.h"
++#include "system/blockdev.h"
++#include "system/block-backend.h"
 +#include "system/system.h"
 +#include "system/address-spaces.h"
 +#include "system/reset.h"
@@ -485,7 +492,30 @@ index 0000000..5382b4b
 +    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
 +    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2402000);
 +
-+    sysbus_create_simple("cxd90014-sysctl", 0xF2915000, NULL);
++    /* SD slot: Fujitsu F_SDH30 = SDHCI v3 (vendor regs 0x100+ fall into the
++     * register file), mmc0 @0xF0300000 GIC 218.  -drive if=sd,file=... */
++    DriveInfo *sd = drive_get(IF_SD, 0, 0);
++    {
++        DeviceState *h = qdev_new("generic-sdhci");
++        qdev_prop_set_uint8(h, "sd-spec-version", 3);
++        qdev_prop_set_uint8(h, "uhs", 0);
++        qdev_prop_set_uint64(h, "capareg", 0x017834b4);  /* 3.3V, HS, ADMA2, SDMA */
++        sysbus_realize_and_unref(SYS_BUS_DEVICE(h), &error_fatal);
++        sysbus_mmio_map(SYS_BUS_DEVICE(h), 0, 0xF0300000);
++        sysbus_connect_irq(SYS_BUS_DEVICE(h), 0, pic[GIC_ID(218)]);
++        if (sd) {
++            DeviceState *card = qdev_new("sd-card");
++            qdev_prop_set_drive_err(card, "drive", blk_by_legacy_dinfo(sd),
++                                    &error_fatal);
++            qdev_realize_and_unref(card, qdev_get_child_bus(h, "sd-bus"),
++                                   &error_fatal);
++        }
++    }
++
++    dev = qdev_new("cxd90014-sysctl");
++    qdev_prop_set_bit(dev, "sd-present", sd != NULL);
++    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2915000);
 +
 +    /* Debug view of guest frame buffers in a QEMU window (no MMIO; the
 +     * firmware cannot see it).  -M ...,fb=addr,w,h,stride,fmt[;...] or at
@@ -2443,10 +2473,10 @@ index 0000000..125d026
 +type_init(rf_register)
 diff --git a/hw/misc/cxd90014_sysctl.c b/hw/misc/cxd90014_sysctl.c
 new file mode 100644
-index 0000000..c17f52d
+index 0000000..8ea2cb5
 --- /dev/null
 +++ b/hw/misc/cxd90014_sysctl.c
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,130 @@
 +/*
 + * Sony CXD90014 system controller block at 0xF2915000 (a5000).
 + *
@@ -2481,6 +2511,7 @@ index 0000000..c17f52d
 +    uint32_t regs[NREGS];
 +    uint32_t chip_id;
 +    uint32_t rstreq;
++    bool sd_present;
 +};
 +
 +static uint64_t sc_read(void *opaque, hwaddr off, unsigned size)
@@ -2536,6 +2567,11 @@ index 0000000..c17f52d
 +    CXDSysctlState *s = CXD90014_SYSCTL(dev);
 +    memset(s->regs, 0, sizeof(s->regs));
 +    s->rstreq = 0;
++    /* +0x10 media detect (active low): bit16 MS in, bit24 SD in, bit25 SD
++     * WP (mcmn_drv getmmccddata/getmmcwpdata/getmsindata; values per
++     * docs/RE_STORAGE_USB.md: 0x0C010000 = SD in + writable, 0x0D010000 =
++     * empty slot) */
++    s->regs[0x10 / 4] = s->sd_present ? 0x0C010000 : 0x0D010000;
 +}
 +
 +static void sc_init(Object *obj)
@@ -2548,6 +2584,7 @@ index 0000000..c17f52d
 +
 +static const Property sc_props[] = {
 +    DEFINE_PROP_UINT32("chip-id", CXDSysctlState, chip_id, 0x00000500),
++    DEFINE_PROP_BOOL("sd-present", CXDSysctlState, sd_present, false),
 +};
 +
 +static void sc_class_init(ObjectClass *klass, const void *data)
