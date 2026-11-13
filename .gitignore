@@ -1,0 +1,11 @@
+# nested QEMU repo (branch sony-a5000); tracked here only as patches/
+/qemu/
+# firmware-derived / generated binaries — never commit
+/re/vmlinux.elf
+/provision/prov.cpio
+/provision/a5kcopy
+*.nand
+*.img
+__pycache__/
+*.pyc
+.DS_Store
