@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..e166977
+index 0000000..e878f15
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,800 @@
+@@ -0,0 +1,844 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -63,11 +63,13 @@ index 0000000..e166977
 +
 +#include "qemu/osdep.h"
 +#include "qemu/units.h"
++#include "qemu/timer.h"
 +#include "qemu/error-report.h"
 +#include "qemu/cutils.h"
 +#include "qapi/error.h"
 +#include "cpu.h"
 +#include "hw/sysbus.h"
++#include "hw/irq.h"
 +#include "hw/boards.h"
 +#include "hw/loader.h"
 +#include "hw/char/pl011.h"
@@ -149,6 +151,9 @@ index 0000000..e166977
 +    char *loader;
 +    char *fb;
 +    DeviceState *gpio;
++    QEMUTimer *submicro_t;
++    int submicro_step;
++    bool submicro;
 +    char *cmdline;
 +    uint8_t *kernel, *initrd;
 +    size_t kernel_len, initrd_len;
@@ -329,6 +334,26 @@ index 0000000..e166977
 +    a5k_regfile_ex(name, base, size, NULL, NULL, -1000);
 +}
 +
++/*
++ * Sub-micro (power micro) handshake, observation stage: after boot the real
++ * micro raises its request line p0.0 and gives an edge on p0.7 (IRQ 128),
++ * which makes av-cam start the SIO ch0 link (docs/RE_AVCAM_IRQ_BOOT.md §5).
++ * Only the handshake is emulated here; no frames are answered yet.
++ */
++static void a5k_submicro_attn(void *opaque)
++{
++    A5KMachineState *s = opaque;
++    if (!s->gpio) {
++        return;
++    }
++    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 0), 1);   /* p0.0 high */
++    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 7), s->submicro_step & 1);
++    if (++s->submicro_step < 2) {
++        timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++                  10 * SCALE_MS);
++    }
++}
++
 +/* ---- per-reset boot (runs after the ROM reset) ---- */
 +
 +#define A5K_LOADER_DESC     0x80027000ULL
@@ -373,6 +398,11 @@ index 0000000..e166977
 +        }
 +    }
 +    a5k_write_kemco(s->cmdline);
++    if (s->submicro_t && s->submicro) {
++        s->submicro_step = 0;
++        timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++                  8 * NANOSECONDS_PER_SECOND);
++    }
 +}
 +
 +static void a5k_init_done(Notifier *n, void *data)
@@ -540,6 +570,7 @@ index 0000000..e166977
 +        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 17 + pn, pic[GIC_ID(137 + pn)]);
 +    }
 +    s->gpio = dev;
++    s->submicro_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_submicro_attn, s);
 +
 +    /* ADC units 0/1 (resistor-ladder keys, zoom lever), GIC 215/216 */
 +    for (int u = 0; u < 2; u++) {
@@ -734,6 +765,16 @@ index 0000000..e166977
 +    A5K_MACHINE(o)->debug_console = v;
 +}
 +
++static bool a5k_get_smc(Object *o, Error **errp)
++{
++    return A5K_MACHINE(o)->submicro;
++}
++
++static void a5k_set_smc(Object *o, bool v, Error **errp)
++{
++    A5K_MACHINE(o)->submicro = v;
++}
++
 +static char *a5k_get_fb(Object *o, Error **errp)
 +{
 +    return g_strdup(A5K_MACHINE(o)->fb);
@@ -793,6 +834,9 @@ index 0000000..e166977
 +{
 +    MachineClass *mc = MACHINE_CLASS(oc);
 +
++    object_class_property_add_bool(oc, "submicro", a5k_get_smc, a5k_set_smc);
++    object_class_property_set_description(oc, "submicro",
++        "Emulate the power micro's attention handshake (experimental)");
 +    object_class_property_add_str(oc, "fb", a5k_get_fb, a5k_set_fb);
 +    object_class_property_set_description(oc, "fb",
 +        "Debug frame-buffer view: addr,w,h,stride,fmt[;...]");
@@ -2578,10 +2622,10 @@ index 4c09790..4d287fa 100644
 +cxd_dmac_done(int ch, uint32_t n) "ch0 chain of 0 done"
 diff --git a/hw/gpio/cxd90014_gpio.c b/hw/gpio/cxd90014_gpio.c
 new file mode 100644
-index 0000000..0ca9f18
+index 0000000..114f8d7
 --- /dev/null
 +++ b/hw/gpio/cxd90014_gpio.c
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,181 @@
 +/*
 + * CXD90014 GPIO, 18 ports (gpio_p0..p17) at PA 0xF2910000 + 0x100*n.
 + * Register triples (value / set / clear), from the kernel hw_gpio_* code
@@ -2600,6 +2644,7 @@ index 0000000..0ca9f18
 +#include "hw/sysbus.h"
 +#include "hw/irq.h"
 +#include "qemu/log.h"
++#include "qemu/timer.h"
 +#include "qemu/module.h"
 +#include "qom/object.h"
 +
@@ -2615,7 +2660,12 @@ index 0000000..0ca9f18
 +    uint32_t dir[NPORT], ien[NPORT], mode[NPORT], out[NPORT], ext[NPORT];
 +    uint32_t misc[NPORT][0x100 / 4];
 +    qemu_irq irq[NIRQ];
++    QEMUTimer *drop[NIRQ];
 +};
++
++static void drop_cb(void *opaque);
++typedef struct { struct GpioState *s; int n; } DropArg;
++static DropArg drop_args[NIRQ];
 +
 +static uint32_t pin_in(GpioState *s, int p)
 +{
@@ -2642,7 +2692,9 @@ index 0000000..0ca9f18
 +        n = 17 + pin;               /* irq[17..23] */
 +    }
 +    if (n >= 0) {
-+        qemu_irq_pulse(s->irq[n]);
++        /* hold the line 1 ms so a level-configured GIC input sees it */
++        qemu_set_irq(s->irq[n], 1);
++        timer_mod(s->drop[n], qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SCALE_MS);
 +    }
 +}
 +
@@ -2691,6 +2743,12 @@ index 0000000..0ca9f18
 +    s->misc[p][o / 4] = v;
 +}
 +
++static void drop_cb(void *opaque)
++{
++    DropArg *a = opaque;
++    qemu_set_irq(a->s->irq[a->n], 0);
++}
++
 +static void gpio_set_ext(void *opaque, int line, int level)
 +{
 +    GpioState *s = opaque;
@@ -2724,6 +2782,9 @@ index 0000000..0ca9f18
 +    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mr);
 +    for (int i = 0; i < NIRQ; i++) {
 +        sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq[i]);
++        drop_args[i].s = s;
++        drop_args[i].n = i;
++        s->drop[i] = timer_new_ns(QEMU_CLOCK_VIRTUAL, drop_cb, &drop_args[i]);
 +    }
 +    qdev_init_gpio_in(DEVICE(obj), gpio_set_ext, NPORT * 32);
 +}
@@ -3092,10 +3153,10 @@ index 0000000..125d026
 +type_init(rf_register)
 diff --git a/hw/misc/cxd90014_sio.c b/hw/misc/cxd90014_sio.c
 new file mode 100644
-index 0000000..eb89037
+index 0000000..a72a879
 --- /dev/null
 +++ b/hw/misc/cxd90014_sio.c
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,109 @@
 +/*
 + * CXD90014 SIO (SPI-style serial) controller, 5 channels (a5000).
 + * PA 0xF2405000 + 0x200*ch, GIC IRQ 201 + ch.  From av-cam.bin's driver
@@ -3156,6 +3217,8 @@ index 0000000..eb89037
 +        r[0] = (v & 0x1fffffffu) | (st & 0x02000000u) | (v & 0x20000000u);
 +        if ((v & 0x20000000u) && !(st & 0x20000000u)) {
 +            trace_cxd_sio_xfer(ch, r[0x0C / 4] >> 24);
++            trace_cxd_sio_data(ch, r[0x100 / 4], r[0x104 / 4], r[0x108 / 4],
++                               r[0x10C / 4]);
 +            qemu_set_irq(s->irq[ch], 1);        /* start -> done at once */
 +        }
 +        return;
@@ -3352,16 +3415,17 @@ index b1d8d8e..b12c2f3 100644
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_sio.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_adc.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index e3f64c0..a93b112 100644
+index e3f64c0..1a0c7ec 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -403,3 +403,6 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
+@@ -403,3 +403,7 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
  i2c_echo_event(const char *id, const char *event) "%s: %s"
  i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
  i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
 +
 +# cxd90014_sio.c
 +cxd_sio_xfer(int ch, uint32_t len) "ch%d transfer (len-1 %u)"
++cxd_sio_data(int ch, uint32_t w0, uint32_t w1, uint32_t w2, uint32_t w3) "ch%d fifo %08x %08x %08x %08x"
 diff --git a/hw/timer/Kconfig b/hw/timer/Kconfig
 index b3d823c..44c8809 100644
 --- a/hw/timer/Kconfig
