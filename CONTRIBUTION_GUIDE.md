@@ -60,7 +60,7 @@
 
 ## 5. 작업 절차 (한 단계의 표준 루프)
 1. 부팅해서 멈춘 지점을 찾는다: `run.sh`, `tools/klog.py <port>`(Sony klog 링), `-d unimp,guest_errors`, gdb(`arm-none-eabi-gdb re/vmlinux.elf`, 모듈은 로드 주소 역산).
-2. 원인이 되는 펌웨어 코드를 읽는다 (`objdump`, capstone, `re/ida/*.c`).
+2. 원인이 되는 펌웨어 코드를 읽는다 (`objdump`, capstone, `re/ida/*.c`). 복잡한 함수는 windev의 IDA Pro 9.4 + Hex-Rays로 디컴파일한다 — 절차는 저장소 루트의 `LOCAL_DEV_GUIDE.md`.
 3. 실기 값을 찾는다 (스냅샷 → `tools/wbi.py`).
 4. 모델을 고친다 → 빌드 → 같은 지점을 **무수정 펌웨어로** 통과하는지 확인.
 5. `docs/HARDWARE.md`(값·상태), `README.md`(현재 상태) 갱신 → 커밋.

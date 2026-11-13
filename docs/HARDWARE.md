@@ -57,5 +57,9 @@ Every value here was recovered from the official 1.10 firmware (kernel
 | arm7io | 0x00011000 | 170 | cxd90014-nand |
 
 ## NAND geometry (lld.ko cache in the snapshot, identical in the emulator)
-reg 0x140=0 (1 chip), 0x150=0x40 pages/block, 0x170=0x1000 blocks, 0x180=0x100 extra blocks, 2048-byte pages.
-SRAM dev-info blob: `00000000 c0000c00 00000006 00000001 00000800 0000002e 00000005 0000c350 0 0 0 0 00000004`.
+Registers left by the bootloader: 0x140=0 (dies-1), 0x150=0x40 (pages/block), **0x170=0x1000 (main page size 4096)**,
+**0x180=0x100 (spare 256)**, 0x270 also pre-set — see `docs/NAND_PROTOCOL.md`. → 4096+256 B pages, 64 pages/block,
+2048 blocks, 1 die, 1 plane (512 MiB); MUMIN keeps 8 "extra" (OOB) bytes per page. (An earlier note here read 0x170 as a
+block count — wrong.)
+SRAM dev-info blob (+0x3F00): `00000000 c0000c00 00000006 00000001 00000800 0000002e 00000005 0000c350 0 0 0 0 00000004`.
+Bootloader also leaves ARM7 firmware status SRAM+0x3F40 = 2 (running) and a bad-block list at PA 0xC0000C00.
