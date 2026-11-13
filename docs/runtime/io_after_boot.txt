@@ -1,0 +1,738 @@
+# stage-2 boot, all accesses to not-yet-modelled IO (regfile reads return last written value)
+# addr  rd/wr  count  first distinct values
+f0102008 rd      1 0x40
+f0102008 wr      1 0x40
+f010200c rd      1 0x40
+f010200c wr      1 0x40
+f010201c rd     25 0x0
+f0102030 rd      6 0x1 0x0
+f0102030 wr      5 0x1 0x0
+f0102034 rd      1 0x0
+f0102034 wr      1 0x0
+f01021c0 rd     25 0x83e791c0 0x83e7d1c0 0x83e811c0 0x83e851c0 0x83e891c0 0x83e8d1c0
+f01021c0 wr     25 0x83e791c0 0x83e7d1c0 0x83e811c0 0x83e851c0 0x83e891c0 0x83e8d1c0
+f01021c4 rd     25 0x83ee2100 0x83ee6100 0x83eea100 0x83eee100 0x83ef2100 0x83ef6100
+f01021c4 wr     25 0x83ee2100 0x83ee6100 0x83eea100 0x83eee100 0x83ef2100 0x83ef6100
+f01021c8 rd      1 0x0
+f01021c8 wr      1 0x0
+f01021cc rd     25 0x1c491000 0x1c491642
+f01021cc wr     25 0x1c491000 0x1c491642
+f01021d0 rd     25 0x1
+f01021d0 wr     25 0x1
+f020200c rd      1 0x0
+f020200c wr      1 0x0
+f0210000 rd      2 0x0
+f0210000 wr      1 0x4
+f0210004 rd      1 0x0
+f0210004 wr      1 0x2
+f0210018 rd      1 0x0
+f0210018 wr      1 0x4
+f0210040 rd     48 0x0 0x800
+f0210040 wr     16 0x800
+f0210204 rd      1 0x1
+f0218000 rd    528 0x0
+f0218040 rd     12 0x0 0x40 0x80040
+f0218040 wr     12 0x40 0x80040
+f1000004 wr     10 0x70100
+f100001c wr     10 0x10000
+f10000c0 wr     10 0x20000000
+f1000c18 wr     10 0x0
+f1000c1c wr     10 0x0
+f1001000 wr     20 0x0
+f1001080 wr     10 0x12345678
+f10010c0 wr     20 0xffffffff 0xfffffff0
+f10010c4 wr     10 0xffffffff
+f10010d0 wr     10 0x0
+f1001100 wr     10 0x1
+f1001110 wr     10 0x0
+f1001114 wr     10 0x76543210
+f1001118 wr     10 0xfedcba98
+f1001128 wr     10 0x0
+f1001410 wr     10 0x0
+f1001800 wr     10 0x4
+f1001804 wr     10 0x8d7a3320 0x8d7a3340
+f2404000 wr      1 0x0
+f2404004 wr      1 0x4
+f2404008 rd      1 0x0
+f2404008 wr      1 0x0
+f240400c rd      1 0x0
+f240400c wr      1 0x0
+f2404010 rd      2 0x0
+f2404014 wr      1 0x0
+f2404018 rd      1 0xffff
+f2404018 wr      1 0xffff
+f240401c rd      1 0xffff
+f240401c wr      1 0xffff
+f2404028 rd      2 0x3f
+f2404028 wr      2 0x3f
+f240402c rd      4 0x0 0x1
+f240402c wr      1 0x1
+f2406000 rd      1 0xfff
+f2406000 wr      1 0xfff
+f2406008 rd      2 0x0 0x2
+f2406008 wr      1 0x2
+f240600c rd      4 0x0 0x10 0x110
+f240600c wr      2 0x10 0x110
+f2406010 rd      2 0x0
+f2406044 rd      1 0xa03
+f2406044 wr      1 0xa03
+f2406048 rd      1 0x2f
+f2406048 wr      1 0x2f
+f2407000 rd      1 0xfff
+f2407000 wr      1 0xfff
+f2407008 rd      2 0x0 0x2
+f2407008 wr      1 0x2
+f240700c rd      4 0x0 0x10 0x110
+f240700c wr      2 0x10 0x110
+f2407010 rd      2 0x0
+f2407044 rd      1 0xfe03
+f2407044 wr      1 0xfe03
+f2407048 rd      1 0x2f
+f2407048 wr      1 0x2f
+f2800000 rd      2 0x0
+f2800000 wr      2 0x0
+f2800004 rd      2 0x0
+f2800004 wr      2 0x0
+f2804000 rd      1 0x0
+f2804000 wr      1 0x0
+f28040c4 rd     19 0x0 0x6 0x7
+f28040c4 wr     19 0x6 0x7
+f28040c8 rd      2 0x0
+f28040c8 wr      1 0x0
+f28041a8 rd     19 0x0 0x6 0x7
+f28041a8 wr     19 0x6 0x7
+f28041ac rd      2 0x0
+f28041ac wr      1 0x0
+f2805000 rd      1 0x0
+f2805000 wr      1 0x0
+f28050b8 rd     19 0x0 0x6 0x7
+f28050b8 wr     19 0x6 0x7
+f280518c rd     19 0x0 0x6 0x7
+f280518c wr     19 0x6 0x7
+f2806000 rd      1 0x0
+f2806000 wr      1 0x0
+f2910000 rd      2 0x0
+f2910010 rd      2 0x0
+f2910100 rd      1 0x0
+f2910110 rd      1 0x0
+f2910300 rd      1 0x0
+f2910304 wr      1 0x100000
+f2910320 rd      1 0x0
+f2910324 wr      1 0x100000
+f2910330 rd      1 0x0
+f2910334 wr      1 0x100000
+f2910340 rd      1 0x0
+f2910348 wr      1 0x100000
+f2910500 rd      2 0x0
+f2910510 rd   9072 0x0
+f2910604 wr      1 0x8
+f2910628 wr      1 0x8
+f2910634 wr      1 0x8
+f2910644 wr      1 0x8
+f2910a10 rd   9070 0x0
+f2912344 rd      1 0x100000
+f2912344 wr      1 0x100000
+f2912358 rd      1 0x100000
+f2912358 wr      1 0x100000
+f2914004 wr      1 0x10000000
+f2914018 wr      1 0x10000000
+f2920000 rd      1 0x0
+f2920000 wr      1 0x0
+f2920010 rd      4 0x3
+f2920040 rd      4 0x0 0x100
+f2920040 wr      4 0x100 0x300
+f2920050 rd      4 0x0 0x100
+f2920050 wr      4 0x100 0x300
+f2a00008 rd      1 0x10000
+f2a00008 wr      1 0x10000
+f2a00024 rd     11 0x1000000 0x1 0x10 0x100 0x10000 0x100000
+f2a00024 wr     11 0x1000000 0x1 0x10 0x100 0x10000 0x100000
+f2a00028 rd      2 0x1000
+f2a00028 wr      2 0x1000
+f2a01000 rd      2 0x0 0x1b
+f2a01000 wr      1 0x1b
+f2a01004 rd      1 0x1
+f2a01010 rd      1 0x0
+f2a01010 wr      1 0x0
+f2a01030 rd      4 0x0
+f2a01030 wr      2 0x1
+f2a01140 rd      1 0xb
+f2a01140 wr      1 0xb
+f2a01160 rd      1 0x3
+f2a01160 wr      1 0x3
+f2a10004 rd      1 0x1
+f2a10004 wr      1 0x1
+f2a10024 rd      5 0x100 0x10000 0x10 0x100000 0x1
+f2a10024 wr      5 0x100 0x10000 0x10 0x100000 0x1
+f2a10028 rd      2 0x1
+f2a10028 wr      2 0x1
+f2a11000 rd      2 0x0 0x21a
+f2a11000 wr      1 0x21a
+f2a11004 rd      1 0x1
+f2a11010 rd      1 0x0
+f2a11010 wr      1 0x0
+f2a11030 rd      2 0x0
+f2a11030 wr      1 0x1
+f2a11100 rd      1 0x5a
+f2a11100 wr      1 0x5a
+f2a11140 rd      1 0x7
+f2a11140 wr      1 0x7
+f2a12000 rd      2 0x0 0x19
+f2a12000 wr      1 0x19
+f2a12004 rd      1 0x1
+f2a12010 rd      1 0x0
+f2a12010 wr      1 0x0
+f2a12030 rd      2 0x0
+f2a12030 wr      1 0x1
+f2a12100 rd      1 0x3
+f2a12100 wr      1 0x3
+f2a12110 rd      1 0x3
+f2a12110 wr      1 0x3
+f2a12120 rd      1 0x7
+f2a12120 wr      1 0x7
+f2a12130 rd      1 0xf
+f2a12130 wr      1 0xf
+f2a12140 rd      1 0x1
+f2a12140 wr      1 0x1
+f2a20024 rd      2 0x40000 0x1
+f2a20024 wr      2 0x40000 0x1
+f2a20028 rd      1 0x1
+f2a20028 wr      1 0x1
+f2a21000 rd      2 0x0 0x20
+f2a21000 wr      1 0x20
+f2a21004 rd      1 0x1
+f2a21010 rd      1 0x0
+f2a21010 wr      1 0x0
+f2a21030 rd      2 0x0
+f2a21030 wr      1 0x1
+f2a21100 rd      1 0x4a
+f2a21100 wr      1 0x4a
+f2a21110 rd      1 0x7
+f2a21110 wr      1 0x7
+f2a21120 rd      1 0xf
+f2a21120 wr      1 0xf
+f2a22000 rd      2 0x0 0x24
+f2a22000 wr      1 0x24
+f2a22004 rd      1 0x1
+f2a22010 rd      1 0x0
+f2a22010 wr      1 0x0
+f2a22030 rd      2 0x0
+f2a22030 wr      1 0x1
+f2a22100 rd      1 0x1d
+f2a22100 wr      1 0x1d
+f2a24020 wr      1 0x35
+f2a24024 rd      1 0x0
+f2a241c4 rd      1 0x0
+f2a244f4 wr      1 0xe
+f2a26008 wr      1 0xa8
+f2a26020 wr      1 0x1
+f2a30028 wr      1 0x1
+f2a30034 rd      1 0x20000
+f2a30034 wr      1 0x20000
+f2a30044 rd      1 0x200
+f2a30044 wr      1 0x200
+f2a30064 rd      3 0x1000 0x100 0x100000
+f2a30064 wr  19586 0x100000 0x10000000 0x20000 0x1000 0x100
+f2a30068 wr      2 0x10000000
+f2a300a4 rd      5 0x7 0x40000000 0x20000000 0x200
+f2a300a4 wr      5 0x7 0x40000000 0x20000000 0x200
+f2a300b4 rd      1 0x20
+f2a300b4 wr      1 0x20
+f2a31190 rd      1 0x0
+f2a32030 wr      1 0x1
+f2a321a0 wr      1 0x2d
+f3000000 wr      1 0x80
+f3000008 wr      1 0x80
+f3000160 wr      1 0x1
+f3000180 wr      1 0x1
+f3000188 wr      1 0x1
+f3000190 wr      1 0x1
+f3000198 wr      1 0x1
+f30001a0 wr      1 0x7
+f30001a8 wr      1 0x1
+f3002008 rd     12 0x0 0x1 0x11 0x111 0x1111 0x11111
+f3002008 wr      6 0x1 0x11 0x111 0x1111 0x11111 0x111111
+f3015e00 rd      1 0x0
+f3015e00 wr      1 0x0
+f3020000 wr      1 0xffff
+f3020008 wr      1 0x1111
+f3020200 rd      1 0x0
+f3020204 rd      1 0x0
+f3020280 rd      1 0x0
+f3020284 rd      1 0x0
+f3020300 rd      1 0x0
+f3020304 rd      1 0x0
+f3020380 rd      1 0x0
+f3020384 rd      1 0x0
+f3020400 wr      1 0x30
+f3020404 wr      1 0x30
+f3020408 wr      1 0xf0
+f302040c wr      2 0xf0 0xf
+f3020410 wr      1 0x3
+f3020414 wr      1 0x3
+f302042c wr      1 0x3003f3f
+f3020518 wr      1 0x1
+f30317dc wr      1 0x43d9e934
+f30317e0 wr      1 0x43dd58d4
+f30a1200 rd      1 0x10
+f30a1200 wr      1 0x10
+f30a1280 rd      2 0x20 0x21
+f30a1280 wr      2 0x20 0x21
+f30a1284 rd      1 0x0
+f30a128c rd      1 0x0
+f30a128c wr      1 0x0
+f30a12a0 rd      1 0x83c84000
+f30a12a0 wr      1 0x83c84000
+f30a12a4 rd      1 0x1f404e
+f30a12a4 wr      1 0x1f404e
+f30a12ac rd      1 0x0
+f30a12ac wr      1 0x0
+f30a12b4 rd      1 0x0
+f30a12b4 wr      1 0x0
+f30a12bc rd      1 0x0
+f30a12bc wr      1 0x0
+f30a12c4 rd      1 0x0
+f30a12c4 wr      1 0x0
+f3100000 wr      1 0x80
+f3100008 wr      1 0x80
+f3100160 wr      1 0x1
+f3100180 wr      1 0x1
+f3100188 wr      1 0x1
+f3100190 wr      1 0x1
+f3100198 wr      1 0x1
+f31001a0 wr      1 0x7
+f31001a8 wr      1 0x1
+f3102008 rd     12 0x0 0x1 0x11 0x111 0x1111 0x11111
+f3102008 wr      6 0x1 0x11 0x111 0x1111 0x11111 0x111111
+f3120000 wr      1 0x1
+f3120008 wr      1 0x1
+f3120028 wr      2 0x0
+f3120048 wr      1 0x1
+f312004c wr      1 0x1
+f3120050 rd      1 0x0
+f3120050 wr      1 0x1
+f3120054 rd      1 0x0
+f3120054 wr      1 0x1
+f3120070 wr      1 0x0
+f3120074 wr      2 0xf0000300
+f3120100 wr      1 0x6
+f3120110 wr      2 0x1 0x7
+f3120120 wr      1 0x3f
+f312020c wr      1 0x1
+f312022c wr      1 0x0
+f3120234 wr      1 0x30005
+f3120238 wr      1 0x3
+f3120248 wr      1 0x3ffe3ffe
+f312024c wr      1 0x3ffe3ffe
+f3120250 wr      1 0x0
+f3120254 wr      1 0x0
+f3121100 wr      1 0x6
+f3121110 wr      1 0x7
+f3121120 wr      1 0x3f
+f312120c wr      1 0x1
+f3121234 wr      1 0x30005
+f3121238 wr      1 0x3
+f321205c wr      1 0xa
+f3212068 wr      1 0x0
+f321206c wr      1 0x0
+f3215300 wr      1 0xf
+f3215304 wr      1 0x1e
+f3215308 wr      1 0x33
+f321530c wr      1 0x43
+f3215310 wr      1 0x54
+f3215314 wr      1 0x65
+f3215318 wr      1 0x76
+f321531c wr      1 0x89
+f3215320 wr      1 0x98
+f3215324 wr      1 0xa7
+f3215328 wr      1 0xb5
+f321532c wr      1 0xc2
+f3215330 wr      1 0xd1
+f3215334 wr      1 0xe1
+f3215338 wr      1 0xed
+f321533c wr      1 0xf8
+f3215340 wr      1 0x103
+f3215344 wr      1 0x110
+f3215348 wr      1 0x11b
+f321534c wr      1 0x126
+f3215350 wr      1 0x133
+f3215354 wr      1 0x13f
+f3215358 wr      1 0x14c
+f321535c wr      1 0x157
+f3215360 wr      1 0x161
+f3215364 wr      1 0x16c
+f3215368 wr      1 0x178
+f321536c wr      1 0x184
+f3215370 wr      1 0x18d
+f3215374 wr      1 0x196
+f3215378 wr      1 0x1a0
+f321537c wr      1 0x1ad
+f3215380 wr      1 0x1bf
+f3215384 wr      1 0x1cf
+f3215388 wr      1 0x1df
+f321538c wr      1 0x1eb
+f3215390 wr      1 0x1fb
+f3215394 wr      1 0x208
+f3215398 wr      1 0x214
+f321539c wr      1 0x222
+f32153a0 wr      1 0x22d
+f32153a4 wr      1 0x23a
+f32153a8 wr      1 0x245
+f32153ac wr      1 0x250
+f32153b0 wr      1 0x25c
+f32153b4 wr      1 0x267
+f32153b8 wr      1 0x272
+f32153bc wr      1 0x27c
+f32153c0 wr      1 0x290
+f32153c4 wr      1 0x2a2
+f32153c8 wr      1 0x2b2
+f32153cc wr      1 0x2c2
+f32153d0 wr      1 0x2d1
+f32153d4 wr      1 0x2df
+f32153d8 wr      1 0x2ec
+f32153dc wr      1 0x2f9
+f32153e0 wr      1 0x303
+f32153e4 wr      1 0x30e
+f32153e8 wr      1 0x318
+f32153ec wr      1 0x321
+f32153f0 wr      1 0x329
+f32153f4 wr      1 0x331
+f32153f8 wr      1 0x33a
+f32153fc wr      1 0x341
+f3215400 wr      1 0x350
+f3215404 wr      1 0x35e
+f3215408 wr      1 0x36c
+f321540c wr      1 0x379
+f3215410 wr      1 0x383
+f3215414 wr      1 0x38b
+f3215418 wr      1 0x393
+f321541c wr      1 0x39b
+f3215420 wr      1 0x3a2
+f3215424 wr      1 0x3a9
+f3215428 wr      1 0x3b0
+f321542c wr      1 0x3b6
+f3215430 wr      1 0x3bb
+f3215434 wr      1 0x3bf
+f3215438 wr      1 0x3c3
+f321543c wr      1 0x3c6
+f3215440 wr      1 0x3d1
+f3215444 wr      1 0x3da
+f3215448 wr      1 0x3e2
+f321544c wr      1 0x3e8
+f3215450 wr      1 0x3ef
+f3215454 wr      1 0x3f6
+f3215458 wr      1 0x3fe
+f321545c wr      1 0x3ff
+f3215460 wr      1 0x3ff
+f3215464 wr      1 0x3ff
+f3215468 wr      1 0x3ff
+f321546c wr      1 0x3ff
+f3215470 wr      1 0x3ff
+f3215474 wr      1 0x3ff
+f3215478 wr      1 0x3ff
+f321547c wr      1 0x3ff
+f3215480 wr      1 0x0
+f3215484 wr      1 0x0
+f3215488 wr      1 0x0
+f3215494 wr      1 0x2
+f3215498 wr      1 0x2
+f321549c wr      1 0x4
+f32154a0 wr      1 0x3
+f32154a4 wr      1 0x4
+f32154a8 wr      1 0x4
+f32154ac wr      1 0x3
+f32154b0 wr      1 0x4
+f32154b4 wr      1 0x3
+f32154b8 wr      1 0x1
+f3215b00 wr      1 0x1
+f3400010 rd      8 0x1 0x100 0x400 0x1000
+f3400010 wr      8 0x1 0x100 0x400 0x1000
+f3400030 rd      3 0x1 0x4 0x10
+f3400030 wr      3 0x1 0x4 0x10
+f3400060 rd      1 0x15
+f3400060 wr      1 0x15
+f3400064 rd      1 0x15
+f3400064 wr      1 0x15
+f3400080 rd     13 0x15 0x1 0x4 0x10
+f3400080 wr     13 0x15 0x1 0x4 0x10
+f3400084 wr      9 0x15
+f34000a0 rd      6 0x1 0x4 0x10 0x100 0x400 0x1000
+f34000a0 wr      6 0x1 0x4 0x10 0x100 0x400 0x1000
+f34000a4 rd      6 0x1 0x4 0x10 0x100 0x400 0x1000
+f34000a4 wr      6 0x1 0x4 0x10 0x100 0x400 0x1000
+f34000a8 rd      1 0x3c0014
+f34000a8 wr      1 0x3c0014
+f34000b0 wr      1 0x5
+f34000b4 wr      1 0x5
+f34000c0 wr      1 0x5
+f34000c4 wr      1 0x5
+f3400104 rd      3 0x1 0x4 0x10
+f3400104 wr      3 0x1 0x4 0x10
+f3400124 rd      4 0x1 0x4 0x10 0x100
+f3400124 wr      4 0x1 0x4 0x10 0x100
+f3400130 wr      1 0x5
+f3400134 wr      1 0x5
+f3400140 rd      5 0x1 0x4 0x10 0x100 0x400
+f3400140 wr      5 0x1 0x4 0x10 0x100 0x400
+f3400144 rd      5 0x1 0x4 0x10 0x100 0x400
+f3400144 wr      5 0x1 0x4 0x10 0x100 0x400
+f3400148 rd      1 0x3c0014
+f3400148 wr      1 0x3c0014
+f3400210 rd      4 0x1 0x10
+f3400210 wr      4 0x1 0x10
+f3400230 rd      3 0x1 0x4 0x10
+f3400230 wr      3 0x1 0x4 0x10
+f3400260 rd      1 0x15
+f3400260 wr      1 0x15
+f3400264 rd      1 0x15
+f3400264 wr      1 0x15
+f3400280 rd      1 0x10
+f3400280 wr     11 0x10
+f3400284 wr      9 0x10
+f34002a0 rd      3 0x1 0x4 0x10
+f34002a0 wr      3 0x1 0x4 0x10
+f34002a4 rd      3 0x1 0x4 0x10
+f34002a4 wr      3 0x1 0x4 0x10
+f34002b0 wr      1 0x11
+f34002b4 wr      1 0x11
+f34002c0 wr      1 0x11
+f34002c4 wr      1 0x11
+f3400304 rd      3 0x1 0x4 0x10
+f3400304 wr      4 0x15 0x1 0x4 0x10
+f3400324 rd      4 0x1 0x4 0x10 0x100
+f3400324 wr      4 0x1 0x4 0x10 0x100
+f3400330 wr      1 0x11
+f3400334 wr      1 0x11
+f3400340 rd      5 0x1 0x4 0x10 0x100 0x400
+f3400340 wr      5 0x1 0x4 0x10 0x100 0x400
+f3400344 rd      5 0x1 0x4 0x10 0x100 0x400
+f3400344 wr      5 0x1 0x4 0x10 0x100 0x400
+f3400400 rd      3 0x1 0x4 0x10
+f3400400 wr      3 0x1 0x4 0x10
+f3400410 rd      6 0x1 0x4 0x10 0x100 0x400 0x1000
+f3400410 wr      6 0x1 0x4 0x10 0x100 0x400 0x1000
+f3400434 rd      4 0x1 0x4 0x10 0x100
+f3400434 wr      4 0x1 0x4 0x10 0x100
+f34004e0 wr      1 0x5
+f34004e4 wr      1 0x5
+f3400500 rd      1 0x1
+f3400500 wr      1 0x1
+f3400520 rd      1 0x1
+f3400520 wr      1 0x1
+f3400600 rd      3 0x1 0x4 0x10
+f3400600 wr      3 0x1 0x4 0x10
+f3400610 rd      6 0x1 0x4 0x10 0x100 0x400 0x1000
+f3400610 wr      6 0x1 0x4 0x10 0x100 0x400 0x1000
+f3400634 rd      4 0x1 0x4 0x10 0x100
+f3400634 wr      4 0x1 0x4 0x10 0x100
+f34006e0 wr      1 0x11
+f34006e4 wr      1 0x11
+f3400700 rd      1 0x1
+f3400700 wr      1 0x1
+f3400720 rd      1 0x1
+f3400720 wr      1 0x1
+f3402010 rd     83 0x0
+f3402010 wr      1 0x0
+f3402020 rd      1 0x1
+f3402020 wr      1 0x1
+f3402028 rd     82 0x0
+f340202c rd      1 0x2bfe6
+f340202c wr      1 0x2bfe6
+f3402030 rd      1 0x2ff2e
+f3402030 wr      1 0x2ff2e
+f340203c rd      1 0xfd20
+f340203c wr      1 0xfd20
+f3402044 rd      1 0x0
+f3402044 wr      1 0x0
+f340204c rd      1 0x1
+f340204c wr      1 0x1
+f3402080 rd      1 0x1011
+f3402080 wr      1 0x1011
+f3402094 rd     82 0x0
+f3402098 rd    164 0x0
+f340214c rd      1 0x21
+f340214c wr      1 0x21
+f3405000 rd      1 0x1
+f3405000 wr      1 0x1
+f3420800 wr      1 0x1
+f3420810 wr      1 0x1
+f3420c00 wr      1 0x1
+f3420c50 wr      1 0x6
+f3421014 rd      1 0x0
+f3422400 rd      1 0x0
+f3422400 wr      1 0x1
+f3422404 rd      2 0x0
+f3422404 wr      2 0x0 0x100
+f3422408 wr      1 0x20001
+f3422440 wr      1 0x9000002
+f3422444 wr      1 0xf30c000c
+f3422c00 rd      1 0x0
+f3422c00 wr      1 0x10
+f3422c04 rd      1 0x0
+f3422c04 wr      1 0x1000
+f3423000 wr      1 0x0
+f3423008 wr      1 0x1
+f342300c wr      1 0x18b7
+f3423010 wr      1 0xca4a
+f3423014 wr      1 0x21b6
+f3423018 wr      1 0x52a
+f342301c wr      1 0x4e2
+f3423020 wr      1 0x52a
+f3423024 wr      1 0xdefe
+f3423028 wr      1 0x3b0f
+f342302c wr      1 0x5754
+f3423030 wr      1 0x951
+f3423034 wr      1 0x5754
+f3423038 wr      1 0xbc74
+f342303c wr      1 0x1517
+f3423040 wr      1 0x788
+f3423044 wr      1 0xdab
+f3423048 wr      1 0x788
+f342304c wr      1 0xd857
+f3423050 wr      1 0x2ff9
+f3423054 wr      1 0x4430
+f3423058 wr      1 0x17ae
+f342305c wr      1 0x4430
+f3423400 rd      3 0x0 0xc8e9
+f3423400 wr      1 0xc8e9
+f3423800 rd      1 0x0
+f3423800 wr      1 0x3f85
+f3423804 rd      1 0x0
+f3423804 wr      1 0x39f2
+f3423808 rd      1 0x0
+f3423808 wr      1 0x3e99
+f342380c rd      1 0x0
+f342380c wr      1 0x3ff9
+f3423810 rd      1 0x0
+f3423810 wr      1 0x22e
+f3423814 rd      1 0x0
+f3423814 wr      1 0x37f
+f3423818 rd      1 0x0
+f3423818 wr      1 0x2d2
+f342381c rd      1 0x0
+f342381c wr      1 0x3fff
+f3423820 rd      1 0x0
+f3423820 wr      1 0x3c2e
+f3423824 rd      1 0x0
+f3423824 wr      1 0x3992
+f3423828 rd      1 0x0
+f3423828 wr      1 0x3a74
+f342382c rd      1 0x0
+f342382c wr      1 0x0
+f3423830 rd      1 0x0
+f3423830 wr      1 0x979
+f3423834 rd      1 0x0
+f3423834 wr      1 0x143f
+f3423838 rd      1 0x0
+f3423838 wr      1 0x1cc3
+f342383c rd      1 0x0
+f342383c wr      1 0x1fff
+f3423900 rd      2 0x0
+f3423900 wr      2 0x0
+f3423904 rd      5 0x0 0x10 0x100010
+f3423904 wr      5 0x0 0x10 0x100010
+f3423c00 wr      1 0x0
+f3423c04 wr      1 0x0
+f3423c08 wr      1 0x0
+f3423c0c rd      1 0x0
+f3423c0c wr      1 0x1
+f3423c10 wr      1 0x0
+f3423c14 rd      1 0x1
+f3423c14 wr      2 0x1
+f3423c18 wr      1 0x0
+f3423c1c wr      1 0x1
+f3423c20 rd      1 0x0
+f3423c20 wr      1 0x1
+f3423c24 wr      1 0x0
+f3423c28 wr      1 0x0
+f3440028 wr      1 0x111
+f34a00f0 rd      1 0x0
+f34a00f4 rd      1 0x0
+f34a00f8 rd      1 0x0
+f34a00fc rd      1 0x0
+f34b00f0 rd      1 0x0
+f34b00f4 rd      1 0x0
+f34b00f8 rd      1 0x0
+f34b00fc rd      1 0x0
+f34c00f0 rd      1 0x0
+f34c00f4 rd      1 0x0
+f34c00f8 rd      1 0x0
+f34c00fc rd      1 0x0
+f35c00f0 rd      1 0x0
+f35c00f4 rd      1 0x0
+f35c00f8 rd      1 0x0
+f35c00fc rd      1 0x0
+f3c04100 rd      4 0x0 0x1000 0x1100
+f3c04100 wr      4 0x1000 0x1100 0x1101
+f3c04104 rd      3 0x0 0x1000
+f3c04104 wr      3 0x1000
+f3c04108 rd      2 0x0
+f3c04108 wr      2 0x0
+f3c0410c rd      1 0x0
+f3c0410c wr      1 0x1
+f3c04200 rd      6 0x0 0x1000
+f3c04200 wr      6 0x1000 0x1001
+f3c04204 rd      9 0x0 0x4000 0x6000 0x7000 0x7004
+f3c04204 wr      9 0x4000 0x6000 0x7000 0x7004
+f3c04208 wr      1 0x0
+f3c0420c wr      1 0x0
+f3c04210 wr      1 0x0
+f3c04214 wr      1 0x0
+f3c04218 wr      1 0x0
+f3c0421c wr      1 0x0
+f3c04220 rd      4 0x0
+f3c04220 wr      4 0x0
+f3c04224 wr      1 0x0
+f3c04228 wr      1 0x0
+f3c0422c wr      1 0x0
+f3c04230 rd      1 0x0
+f3c04230 wr      1 0x1
+f3c04300 rd      4 0x0 0x1000 0x1100
+f3c04300 wr      4 0x1000 0x1100
+f3c04304 rd      3 0x0 0x1000
+f3c04304 wr      3 0x1000
+f3c04308 rd      2 0x0
+f3c04308 wr      2 0x0
+f3c0430c rd      1 0x0
+f3c0430c wr      1 0x1
+f3c04400 rd      4 0x0 0x1000 0x1100
+f3c04400 wr      4 0x1000 0x1100
+f3c04404 rd      3 0x0 0x1000
+f3c04404 wr      3 0x1000
+f3c04408 rd      2 0x0
+f3c04408 wr      2 0x0
+f3c0440c rd      1 0x0
+f3c0440c wr      1 0x0
+f3c04500 rd      4 0x0 0x1000 0x1100
+f3c04500 wr      4 0x1000 0x1100
+f3c04504 rd      3 0x0 0x1000
+f3c04504 wr      3 0x1000
+f3c04508 rd      2 0x0
+f3c04508 wr      2 0x0
+f3c0450c rd      1 0x0
+f3c0450c wr      1 0x0
+f3c08000 rd      1 0x0
+f3c08000 wr      1 0x1
+f3c08270 rd      6 0x0 0x1 0x3
+f3c08270 wr      6 0x1 0x3 0x7
+f3c08274 rd      4 0x0
+f3c08274 wr      4 0x0
+f3c08280 wr      1 0x1
+f3c08284 wr      1 0x2
+f3c08288 wr      1 0x1
+f3c0828c wr      1 0x2
+f3c3000c rd      2 0x0
+f3c3000c wr      2 0x0
+f3c30010 rd      2 0x0 0x80
+f3c30010 wr      2 0x80 0xc0
+f3c30058 wr      1 0x1d
+f3c3005c wr      1 0x1c
+f3c300d0 wr      1 0x1
+f3c300d4 wr      1 0x1
+f3c300e4 wr      1 0x0
+f3c300e8 wr      1 0x17
+f3c300ec wr      2 0x0 0x1
+f3c300f8 wr      1 0x3ff
+f3c30100 wr      1 0x0
+# GIC: IRQs enabled after boot (stage 2): 35 36 37 40-56 61 63 64 66 73 74 75 76 79 81-84 98 99 101 102 125 128 129 133 144 146-150 153 155-161 170 171 172 180 189-199 206 215 216 232 233 255
+# acked so far: 1,3,4 (SGIs/PPI), 150 (UART0), 153,155-158 (timers), 170 (ARM7 mailbox), 189 (DMAC)

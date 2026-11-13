@@ -1,8 +1,8 @@
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index 2aa4b5d..7c3c431 100644
+index 2aa4b5d..22dcc1c 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
-@@ -692,3 +692,17 @@ config ARMSSE
+@@ -692,3 +692,18 @@ config ARMSSE
      select UNIMP
      select SSE_COUNTER
      select SSE_TIMER
@@ -20,6 +20,7 @@ index 2aa4b5d..7c3c431 100644
 +    select CXD90014_SYSCTL
 +    select CXD90014_NAND
 +    select CXD90014_DMAC
++    select DMP_SMAPH
 diff --git a/hw/arm/meson.build b/hw/arm/meson.build
 index dc68391..02fcce7 100644
 --- a/hw/arm/meson.build
@@ -31,10 +32,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..2ddc2de
+index 0000000..b4c303e
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,698 @@
+@@ -0,0 +1,701 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -484,6 +485,9 @@ index 0000000..2ddc2de
 +    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2402000);
 +
 +    sysbus_create_simple("cxd90014-sysctl", 0xF2915000, NULL);
++
++    /* DMP SMAPH-S30 GPU (grm_gles.ko + libObj rm_*), GIC 76 */
++    sysbus_create_simple("dmp-smaph-s30", 0xF1000000, pic[GIC_ID(76)]);
 +
 +    /* BOSS mem-to-mem DMA: two units of four channels, GIC 189..196 */
 +    for (int u = 0; u < 2; u++) {
@@ -1545,6 +1549,283 @@ index 64bebbd..2f497e5 100644
          error_setg(errp,
                     "Cortex-A9MPCore peripheral can only use Cortex-A9 CPU");
          return;
+diff --git a/hw/display/Kconfig b/hw/display/Kconfig
+index 1e95ab2..3b3e039 100644
+--- a/hw/display/Kconfig
++++ b/hw/display/Kconfig
+@@ -149,3 +149,6 @@ config MAC_PVG_PCI
+     bool
+     depends on MAC_PVG && PCI
+     default y if PCI_DEVICES
++
++config DMP_SMAPH
++    bool
+diff --git a/hw/display/dmp_smaph.c b/hw/display/dmp_smaph.c
+new file mode 100644
+index 0000000..6c4c402
+--- /dev/null
++++ b/hw/display/dmp_smaph.c
+@@ -0,0 +1,240 @@
++/*
++ * DMP SMAPH-S30 ("SUGILITE"/"GPE") GPU of the CXD90014 (a5000).
++ * PA 0xF1000000, 16 KiB, GIC IRQ 76 (level high).
++ *
++ * Interface from grm_gles.ko (sugilite_interrupt / sugilite_register_init)
++ * and libObj.so rm_* (docs/RE_DISPLAY_GPU.md §2):
++ *   +0x10/+0x14/+0x18/+0x1C  PSC0 memory fill: start>>3, end>>3, value,
++ *                            ctrl (bit0 start, bits8-9 width: 0=16, 1=24,
++ *                            2=32 bit) -> status bit26, ack: +0x1C = 0
++ *   +0xC00..+0xC28           PPF display transfer / texture copy, kick
++ *                            +0xC18 != 0 -> status bit30, ack: +0xC18 = 0
++ *   +0x1804 / +0x1800        P3D command list address / size+kick
++ *                            -> status bit31, ack: +0x1000 = 0
++ *   +0x34                    IRQ status (the ISR BUG()s if it reads 0)
++ *
++ * PSC fill and PPF transfers are executed.  P3D command lists are NOT
++ * interpreted yet (the register stream / shader ISA are undocumented):
++ * they complete immediately, so GL draws produce no pixels for now.
++ * PPF follows the PICA200 layout (8x8 Morton tiles) with addresses >>2
++ * [hypothesis, see the RE doc].
++ */
++
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/irq.h"
++#include "qemu/log.h"
++#include "qemu/units.h"
++#include "qemu/module.h"
++#include "qom/object.h"
++#include "system/address-spaces.h"
++#include "trace.h"
++
++#define TYPE_DMP_SMAPH "dmp-smaph-s30"
++OBJECT_DECLARE_SIMPLE_TYPE(SmaphState, DMP_SMAPH)
++
++#define ST_P3D  0x80000000u
++#define ST_PPF  0x40000000u
++#define ST_PSC0 0x04000000u
++
++struct SmaphState {
++    SysBusDevice parent_obj;
++    MemoryRegion mr;
++    uint32_t reg[0x4000 / 4];
++    uint32_t status;
++    qemu_irq irq;
++};
++
++static void smaph_update(SmaphState *s)
++{
++    qemu_set_irq(s->irq, s->status != 0);
++}
++
++static void psc_fill(SmaphState *s)
++{
++    hwaddr a = (hwaddr)s->reg[0x10 / 4] << 3, e = (hwaddr)s->reg[0x14 / 4] << 3;
++    uint32_t v = s->reg[0x18 / 4], w = (s->reg[0x1C / 4] >> 8) & 3;
++    unsigned bpp = w == 2 ? 4 : w == 1 ? 3 : 2;
++    if (e <= a || e - a > 64 * MiB) {
++        return;
++    }
++    g_autofree uint8_t *buf = g_malloc(e - a);
++    for (hwaddr i = 0; i + bpp <= e - a; i += bpp) {
++        for (unsigned b = 0; b < bpp; b++) {
++            buf[i + b] = v >> (8 * b);
++        }
++    }
++    address_space_write(&address_space_memory, a, MEMTXATTRS_UNSPECIFIED,
++                        buf, e - a);
++    trace_dmp_smaph_job("psc-fill", a, e - a);
++}
++
++static const unsigned ppf_bpp[8] = { 4, 3, 2, 2, 2, 4, 4, 4 };
++
++static void px_to_rgba(const uint8_t *p, unsigned fmt, uint8_t o[4])
++{
++    uint16_t v = p[0] | p[1] << 8;
++    switch (fmt) {
++    case 0: o[0] = p[3]; o[1] = p[2]; o[2] = p[1]; o[3] = p[0]; break;
++    case 1: o[0] = p[2]; o[1] = p[1]; o[2] = p[0]; o[3] = 0xff; break;
++    case 2: o[0] = (v >> 11) << 3; o[1] = ((v >> 5) & 63) << 2;
++            o[2] = (v & 31) << 3; o[3] = 0xff; break;
++    case 3: o[0] = (v >> 11) << 3; o[1] = ((v >> 6) & 31) << 3;
++            o[2] = ((v >> 1) & 31) << 3; o[3] = v & 1 ? 0xff : 0; break;
++    default: o[0] = (v >> 12) << 4; o[1] = ((v >> 8) & 15) << 4;
++            o[2] = ((v >> 4) & 15) << 4; o[3] = (v & 15) << 4; break;
++    }
++}
++
++static void rgba_to_px(const uint8_t i[4], unsigned fmt, uint8_t *p)
++{
++    uint16_t v;
++    switch (fmt) {
++    case 0: p[0] = i[3]; p[1] = i[2]; p[2] = i[1]; p[3] = i[0]; return;
++    case 1: p[0] = i[2]; p[1] = i[1]; p[2] = i[0]; return;
++    case 2: v = (i[0] >> 3) << 11 | (i[1] >> 2) << 5 | i[2] >> 3; break;
++    case 3: v = (i[0] >> 3) << 11 | (i[1] >> 3) << 6 | (i[2] >> 3) << 1 |
++                (i[3] >> 7); break;
++    default: v = (i[0] >> 4) << 12 | (i[1] >> 4) << 8 | (i[2] >> 4) << 4 |
++                 (i[3] >> 4); break;
++    }
++    p[0] = v; p[1] = v >> 8;
++}
++
++/* PICA200 8x8 tile, Morton order inside the tile */
++static size_t tiled_index(unsigned x, unsigned y, unsigned w)
++{
++    unsigned m = 0;
++    for (int b = 0; b < 3; b++) {
++        m |= ((x >> b) & 1) << (2 * b) | ((y >> b) & 1) << (2 * b + 1);
++    }
++    return ((size_t)(y / 8) * (w / 8) + x / 8) * 64 + m;
++}
++
++static void ppf_run(SmaphState *s)
++{
++    hwaddr src = (hwaddr)s->reg[0xC00 / 4] << 2, dst = (hwaddr)s->reg[0xC04 / 4] << 2;
++    uint32_t flags = s->reg[0xC10 / 4];
++    AddressSpace *as = &address_space_memory;
++
++    if (flags & 8) {                    /* texture copy: plain byte copy */
++        uint32_t size = s->reg[0xC20 / 4];
++        if (size && size < 64 * MiB) {
++            g_autofree uint8_t *b = g_malloc(size);
++            address_space_read(as, src, MEMTXATTRS_UNSPECIFIED, b, size);
++            address_space_write(as, dst, MEMTXATTRS_UNSPECIFIED, b, size);
++        }
++        trace_dmp_smaph_job("ppf-copy", dst, size);
++        return;
++    }
++    unsigned iw = s->reg[0xC08 / 4] & 0xffff, ih = s->reg[0xC08 / 4] >> 16;
++    unsigned ow = s->reg[0xC0C / 4] & 0xffff, oh = s->reg[0xC0C / 4] >> 16;
++    unsigned ifmt = (flags >> 8) & 7, ofmt = (flags >> 12) & 7;
++    bool to_tiled = flags & 2, flip = flags & 1;
++    unsigned w = MIN(iw, ow), h = MIN(ih, oh);
++    if (!w || !h || w > 4096 || h > 4096) {
++        return;
++    }
++    size_t ib = (size_t)iw * ih * ppf_bpp[ifmt], ob = (size_t)ow * oh * ppf_bpp[ofmt];
++    g_autofree uint8_t *in = g_malloc(ib);
++    g_autofree uint8_t *out = g_malloc0(ob);
++    address_space_read(as, src, MEMTXATTRS_UNSPECIFIED, in, ib);
++    address_space_read(as, dst, MEMTXATTRS_UNSPECIFIED, out, ob);
++    for (unsigned y = 0; y < h; y++) {
++        for (unsigned x = 0; x < w; x++) {
++            unsigned sy = flip ? h - 1 - y : y;
++            size_t si = to_tiled ? (size_t)sy * iw + x : tiled_index(x, sy, iw);
++            size_t di = to_tiled ? tiled_index(x, y, ow) : (size_t)y * ow + x;
++            uint8_t px[4];
++            px_to_rgba(in + si * ppf_bpp[ifmt], ifmt, px);
++            rgba_to_px(px, ofmt, out + di * ppf_bpp[ofmt]);
++        }
++    }
++    address_space_write(as, dst, MEMTXATTRS_UNSPECIFIED, out, ob);
++    trace_dmp_smaph_job("ppf-transfer", dst, ob);
++}
++
++static uint64_t smaph_read(void *opaque, hwaddr off, unsigned size)
++{
++    SmaphState *s = opaque;
++    if (off == 0x34) {
++        return s->status;
++    }
++    return s->reg[off / 4];
++}
++
++static void smaph_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    SmaphState *s = opaque;
++    s->reg[off / 4] = v;
++    switch (off) {
++    case 0x1C:
++        if (v & 1) {
++            psc_fill(s);
++            s->status |= ST_PSC0;
++        } else if (v == 0) {
++            s->status &= ~ST_PSC0;
++        }
++        break;
++    case 0xC18:
++        if (v) {
++            ppf_run(s);
++            s->status |= ST_PPF;
++        } else {
++            s->status &= ~ST_PPF;
++        }
++        break;
++    case 0x1800:
++        trace_dmp_smaph_job("p3d-list (not executed)", s->reg[0x1804 / 4], v);
++        s->status |= ST_P3D;
++        break;
++    case 0x1000:
++        s->status &= ~ST_P3D;
++        break;
++    case 0x3C:
++    case 0x44:
++        s->status &= ~0xFu;
++        break;
++    }
++    smaph_update(s);
++}
++
++static const MemoryRegionOps smaph_ops = {
++    .read = smaph_read, .write = smaph_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void smaph_reset(DeviceState *dev)
++{
++    SmaphState *s = DMP_SMAPH(dev);
++    memset(s->reg, 0, sizeof(s->reg));
++    s->status = 0;
++}
++
++static void smaph_init(Object *obj)
++{
++    SmaphState *s = DMP_SMAPH(obj);
++    memory_region_init_io(&s->mr, obj, &smaph_ops, s, "dmp-smaph", 0x4000);
++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mr);
++    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq);
++}
++
++static void smaph_class_init(ObjectClass *klass, const void *data)
++{
++    device_class_set_legacy_reset(DEVICE_CLASS(klass), smaph_reset);
++}
++
++static const TypeInfo smaph_info = {
++    .name = TYPE_DMP_SMAPH,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(SmaphState),
++    .instance_init = smaph_init,
++    .class_init = smaph_class_init,
++};
++
++static void smaph_register(void)
++{
++    type_register_static(&smaph_info);
++}
++type_init(smaph_register)
+diff --git a/hw/display/meson.build b/hw/display/meson.build
+index 90e6c04..a83e94b 100644
+--- a/hw/display/meson.build
++++ b/hw/display/meson.build
+@@ -145,3 +145,4 @@ endif
+ system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_lcdc.c'))
+ 
+ modules += { 'hw-display': hw_display_modules }
++system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('dmp_smaph.c'))
+diff --git a/hw/display/trace-events b/hw/display/trace-events
+index 52786e6..25e9212 100644
+--- a/hw/display/trace-events
++++ b/hw/display/trace-events
+@@ -224,3 +224,6 @@ apple_gfx_iosfc_unmap_memory(void *a, void *b, void *c, void *d, void *e, void *
+ apple_gfx_iosfc_unmap_memory_region(void* mem, void *region) "unmapping @ %p from memory region %p"
+ apple_gfx_iosfc_raise_irq(uint32_t vector) "vector=0x%x"
+ 
++
++# dmp_smaph.c
++dmp_smaph_job(const char *what, uint64_t addr, uint64_t len) "%s 0x%" PRIx64 " len 0x%" PRIx64
 diff --git a/hw/dma/Kconfig b/hw/dma/Kconfig
 index 98fbb1b..76e58f5 100644
 --- a/hw/dma/Kconfig
