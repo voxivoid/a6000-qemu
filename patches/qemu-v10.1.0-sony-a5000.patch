@@ -31,10 +31,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..877bbd6
+index 0000000..af41a07
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,570 @@
+@@ -0,0 +1,652 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -138,6 +138,11 @@ index 0000000..877bbd6
 +    char *provision;
 +    char *nand_file;
 +    char *preload;
++    char *loader;
++    char *cmdline;
++    uint8_t *kernel, *initrd;
++    size_t kernel_len, initrd_len;
++    Notifier init_done;
 +    MemoryRegion prov_rom;
 +    MemoryRegion iram;
 +    MemoryRegion arm7_sram;
@@ -206,7 +211,8 @@ index 0000000..877bbd6
 +    char *buf = g_malloc0(len + 6);
 +    memcpy(buf, "kemco", 5);
 +    memcpy(buf + 5, cmdline, len);
-+    rom_add_blob_fixed("a5k.kemco", buf, len + 6, A5K_KEMCO_ADDR);
++    address_space_write(&address_space_memory, A5K_KEMCO_ADDR,
++                        MEMTXATTRS_UNSPECIFIED, buf, len + 6);
 +    g_free(buf);
 +}
 +
@@ -280,6 +286,58 @@ index 0000000..877bbd6
 +    } else {
 +        cpu_set_pc(cs, A5K_SMP_STUB_ADDR);
 +    }
++}
++
++/* ---- per-reset boot (runs after the ROM reset) ---- */
++
++#define A5K_LOADER_DESC     0x80027000ULL
++#define A5K_DESC_MAGIC      0x424b3541      /* "A5KB" */
++
++static void a5k_boot_reset(void *opaque)
++{
++    A5KMachineState *s = opaque;
++    AddressSpace *as = &address_space_memory;
++    uint32_t d[5];
++
++    address_space_read(as, A5K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED, d,
++                       sizeof(d));
++    for (int i = 0; i < 5; i++) {
++        d[i] = le32_to_cpu(d[i]);
++    }
++    if (d[0] == A5K_DESC_MAGIC && d[2] && d[2] <= A5K_INITRD_ADDR -
++        A5K_KERNEL_ADDR && d[4] <= 8 * MiB) {
++        /* stage 2: kernel + initrd read from NAND by stage 1 */
++        g_autofree uint8_t *k = g_malloc(d[2]);
++        g_autofree uint8_t *r = g_malloc(MAX(d[4], 1));
++        address_space_read(as, d[1], MEMTXATTRS_UNSPECIFIED, k, d[2]);
++        address_space_read(as, d[3], MEMTXATTRS_UNSPECIFIED, r, d[4]);
++        address_space_write(as, A5K_KERNEL_ADDR, MEMTXATTRS_UNSPECIFIED,
++                            k, d[2]);
++        address_space_write(as, A5K_INITRD_ADDR, MEMTXATTRS_UNSPECIFIED,
++                            r, d[4]);
++        uint32_t zero = 0;
++        address_space_write(as, A5K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED,
++                            &zero, 4);
++        info_report("sony-a5000: stage 2 — kernel %u B, initrd %u B from NAND",
++                    d[2], d[4]);
++    } else {
++        address_space_write(as, A5K_KERNEL_ADDR, MEMTXATTRS_UNSPECIFIED,
++                            s->kernel, s->kernel_len);
++        if (s->initrd_len) {
++            address_space_write(as, A5K_INITRD_ADDR, MEMTXATTRS_UNSPECIFIED,
++                                s->initrd, s->initrd_len);
++        }
++        if (s->loader) {
++            info_report("sony-a5000: stage 1 (loader)");
++        }
++    }
++    a5k_write_kemco(s->cmdline);
++}
++
++static void a5k_init_done(Notifier *n, void *data)
++{
++    A5KMachineState *s = container_of(n, A5KMachineState, init_done);
++    qemu_register_reset(a5k_boot_reset, s);   /* after rom_reset */
 +}
 +
 +/* ---- machine ---- */
@@ -479,25 +537,33 @@ index 0000000..877bbd6
 +        }
 +    }
 +
-+    /* ---- load firmware images ---- */
++    /* ---- load firmware images ----
++     * Kernel, initrd and the kemco command line are (re)written on every
++     * reset by a5k_boot_reset(), which runs after the ROM reset:
++     *  - stage 2: the loader descriptor "A5KB" at PA 0x80027000 is valid ->
++     *    the kernel/initrd that stage 1 read from the emulated NAND are
++     *    moved into place (what the Sony bootloader does);
++     *  - otherwise (power-on, reboot): boot -kernel with the stage-1 loader
++     *    initramfs (-M ...,loader=) or the -initrd given. */
 +    if (!ms->kernel_filename) {
 +        error_report("sony-a5000: -kernel vmlinux.bin is required");
 +        exit(1);
 +    }
-+    int ksz = load_image_targphys(ms->kernel_filename, A5K_KERNEL_ADDR,
-+                                  A5K_INITRD_ADDR - A5K_KERNEL_ADDR);
-+    if (ksz < 0) {
++    gsize len;
++    if (!g_file_get_contents(ms->kernel_filename, (gchar **)&s->kernel,
++                             &len, NULL)) {
 +        error_report("sony-a5000: cannot load kernel %s", ms->kernel_filename);
 +        exit(1);
 +    }
-+    int isz = 0;
-+    if (ms->initrd_filename) {
-+        isz = load_image_targphys(ms->initrd_filename, A5K_INITRD_ADDR,
-+                                  8 * MiB);
-+        if (isz < 0) {
-+            error_report("sony-a5000: cannot load initrd");
++    s->kernel_len = len;
++    const char *ird = s->loader ? s->loader : ms->initrd_filename;
++    if (ird) {
++        if (!g_file_get_contents(ird, (gchar **)&s->initrd, &len, NULL) ||
++            len > 8 * MiB) {
++            error_report("sony-a5000: cannot load initrd %s", ird);
 +            exit(1);
 +        }
++        s->initrd_len = len;
 +    }
 +    g_autofree char *dbg = NULL;
 +    const char *cmd = a5k_default_cmdline;
@@ -509,13 +575,14 @@ index 0000000..877bbd6
 +        dbg = g_string_free(g_steal_pointer(&g), false);
 +        cmd = dbg;
 +    }
-+    g_autofree char *pcmd = NULL;
 +    if (prov_len) {
-+        pcmd = g_strdup_printf("%s a5k.provlen=0x%" PRIx64, cmd, prov_len);
-+        cmd = pcmd;
++        s->cmdline = g_strdup_printf("%s a5k.provlen=0x%" PRIx64, cmd, prov_len);
++    } else {
++        s->cmdline = g_strdup(cmd);
 +    }
-+    a5k_write_atags(cmd, isz);
-+    a5k_write_kemco(cmd);
++    a5k_write_atags(s->cmdline, s->initrd_len);
++    s->init_done.notify = a5k_init_done;
++    qemu_add_machine_init_done_notifier(&s->init_done);
 +    a5k_write_stub();
 +    a5k_write_smp_stub();
 +}
@@ -528,6 +595,17 @@ index 0000000..877bbd6
 +static void a5k_set_dbgcon(Object *o, bool v, Error **errp)
 +{
 +    A5K_MACHINE(o)->debug_console = v;
++}
++
++static char *a5k_get_loader(Object *o, Error **errp)
++{
++    return g_strdup(A5K_MACHINE(o)->loader);
++}
++
++static void a5k_set_loader(Object *o, const char *v, Error **errp)
++{
++    g_free(A5K_MACHINE(o)->loader);
++    A5K_MACHINE(o)->loader = g_strdup(v);
 +}
 +
 +static char *a5k_get_preload(Object *o, Error **errp)
@@ -567,6 +645,10 @@ index 0000000..877bbd6
 +{
 +    MachineClass *mc = MACHINE_CLASS(oc);
 +
++    object_class_property_add_str(oc, "loader", a5k_get_loader,
++                                  a5k_set_loader);
++    object_class_property_set_description(oc, "loader",
++        "Stage-1 loader initramfs (bootloader NAND duties), see docs/BOOT.md");
 +    object_class_property_add_str(oc, "preload", a5k_get_preload,
 +                                  a5k_set_preload);
 +    object_class_property_set_description(oc, "preload",

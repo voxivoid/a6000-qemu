@@ -1,13 +1,23 @@
 /*
- * a5kcopy — guest-side provisioning helper (freestanding, raw syscalls).
- * Copies a physical memory window (exposed by the sony-a5000 machine's
- * "provision" ROM) into a block device through /dev/mem.
+ * a5kcopy — guest-side helper for the emulator's provisioning and
+ * stage-1 loader environments (freestanding, raw syscalls, no libc).
  *
- *   a5kcopy <phys-hex> <len-hex> <dst-device> [skip-hex]
+ *   a5kcopy <phys> <len|auto> <dst-file> [skip]   phys window -> file
+ *   a5kcopy -f2p <file> <phys>                    file -> phys RAM
+ *   a5kcopy -backup <Backup.bin>                  file -> phys from its
+ *                                                 header word 0
+ *   a5kcopy -mumin <dev_va>                       MUMIN hand-off: copy the
+ *        mounted muminmem (dev+0x34 / dev+0x38) to PA 0x80000000, with
+ *        pointers into itself rebased to VA 0x40000000
+ *   a5kcopy -w32 <phys> <val> [<val>...]          write words
+ *   a5kcopy -stage2 <kernel> <initrd>             stage kernel @0x90000000,
+ *        initrd @0x90400000 and write the board's loader descriptor
+ *        {"A5KB", kpa, klen, ipa, ilen} at PA 0x80027000
  *
- * Built with arm-none-eabi-gcc -nostdlib; no libc needed in the guest.
+ * Built with arm-none-eabi-gcc -nostdlib.
  */
 typedef unsigned long ul;
+typedef unsigned int u32;
 static long sc(long n, long a, long b, long c, long d, long e, long f)
 {
     register long r0 asm("r0") = a, r1 asm("r1") = b, r2 asm("r2") = c,
@@ -18,16 +28,21 @@ static long sc(long n, long a, long b, long c, long d, long e, long f)
     return r0;
 }
 #define SYS_exit 1
+#define SYS_read 3
 #define SYS_write 4
 #define SYS_open 5
 #define SYS_close 6
+#define SYS_lseek 19
 #define SYS_munmap 91
 #define SYS_fsync 118
-#define SYS_mmap2 192
 #define SYS_llseek 140
+#define SYS_mmap2 192
+#define PROT_RW 3
+#define MAP_SHARED 1
 
 static ul slen(const char *s) { ul n = 0; while (s[n]) n++; return n; }
 static void puts1(const char *s) { sc(SYS_write, 1, (long)s, slen(s), 0, 0, 0); }
+static void die(const char *s) { puts1("a5kcopy: "); puts1(s); puts1("\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
 static ul hex(const char *s)
 {
     ul v = 0;
@@ -47,48 +62,150 @@ static void puthex(ul v)
     for (int i = 0; i < 8; i++) b[2 + i] = "0123456789abcdef"[(v >> (28 - 4 * i)) & 15];
     b[10] = 0; puts1(b);
 }
+static int streq(const char *a, const char *b) { while (*a && *a == *b) a++, b++; return *a == *b; }
 
-void cmain(int argc, char **argv)
+static long g_mem = -1;
+static long memfd(void)
 {
-    if (argc < 4) { puts1("usage: a5kcopy <phys> <len> <dev> [skip]\n"); sc(SYS_exit, 2, 0, 0, 0, 0, 0); }
+    if (g_mem < 0) g_mem = sc(SYS_open, (long)"/dev/mem", 2 /* O_RDWR */ | 0x101000, 0, 0, 0, 0);
+    if (g_mem < 0) die("cannot open /dev/mem");
+    return g_mem;
+}
+/* map [pa, pa+len) (page aligned internally); returns pointer to pa */
+static unsigned char *pmap(ul pa, ul len, ul *mlen, long *base)
+{
+    ul pg = pa & ~0xffful, off = pa - pg;
+    *mlen = (off + len + 0xfff) & ~0xffful;
+    long p = sc(SYS_mmap2, 0, *mlen, PROT_RW, MAP_SHARED, memfd(), (long)(pg >> 12));
+    if ((ul)p >= (ul)-4096) die("mmap failed");
+    *base = p;
+    return (unsigned char *)p + off;
+}
+static void punmap(long base, ul mlen) { sc(SYS_munmap, base, mlen, 0, 0, 0, 0); }
+static u32 rd32(ul pa) { ul ml; long b; u32 v = *(volatile u32 *)pmap(pa, 4, &ml, &b); punmap(b, ml); return v; }
+
+/* ARMv7 short-descriptor walk through swapper_pg_dir (PA 0x80034000) */
+static ul v2p(ul va)
+{
+    if (va >= 0x40000000 && va < 0x80000000) return va + 0x40000000;   /* lowmem */
+    u32 l1 = rd32(0x80034000 + (va >> 20) * 4);
+    if ((l1 & 3) == 2) return (l1 & 0xfff00000) | (va & 0xfffff);
+    if ((l1 & 3) != 1) die("unmapped VA");
+    u32 l2 = rd32((l1 & 0xfffffc00) + ((va >> 12) & 0xff) * 4);
+    if (l2 & 2) return (l2 & 0xfffff000) | (va & 0xfff);
+    if ((l2 & 3) == 1) return (l2 & 0xffff0000) | (va & 0xffff);
+    die("unmapped VA (l2)");
+    return 0;
+}
+
+static ul file_to_phys(const char *path, ul phys)
+{
+    long fd = sc(SYS_open, (long)path, 0, 0, 0, 0, 0);
+    if (fd < 0) die("cannot open input file");
+    long size = sc(SYS_lseek, fd, 0, 2 /* SEEK_END */, 0, 0, 0);
+    sc(SYS_lseek, fd, 0, 0, 0, 0, 0);
+    if (size <= 0) die("empty file");
+    ul ml; long b;
+    unsigned char *p = pmap(phys, size, &ml, &b);
+    for (long got = 0; got < size; ) {
+        long r = sc(SYS_read, fd, (long)(p + got), size - got, 0, 0, 0);
+        if (r <= 0) die("read failed");
+        got += r;
+    }
+    punmap(b, ml);
+    sc(SYS_close, fd, 0, 0, 0, 0, 0);
+    return size;
+}
+
+static void phys_to_file(int argc, char **argv)
+{
     ul phys = hex(argv[1]), len = hex(argv[2]), skip = argc > 4 ? hex(argv[4]) : 0;
-    long mem = sc(SYS_open, (long)"/dev/mem", 0 /* O_RDONLY */, 0, 0, 0, 0);
-    if (mem >= 0 && argv[2][0] == 'a') {
+    if (argv[2][0] == 'a') {
         /* "auto": phys points at an emulator provision header
          * {"A5KP", u32 length}, image at +0x1000 */
-        long h = sc(SYS_mmap2, 0, 4096, 1, 1, mem, (long)(phys >> 12));
-        if ((ul)h >= (ul)-4096 || ((unsigned *)h)[0] != 0x504b3541) {
-            puts1("a5kcopy: no A5KP header\n");
-            sc(SYS_exit, 1, 0, 0, 0, 0, 0);
-        }
-        len = ((unsigned *)h)[1];
+        if (rd32(phys) != 0x504b3541) die("no A5KP header");
+        len = rd32(phys + 4);
         phys += 0x1000;
-        sc(SYS_munmap, h, 4096, 0, 0, 0, 0);
         puts1("a5kcopy: image length "); puthex(len); puts1("\n");
     }
     long dst = sc(SYS_open, (long)argv[3], 1 | 0x101000 /* O_WRONLY|O_SYNC */, 0, 0, 0, 0);
-    if (mem < 0 || dst < 0) { puts1("a5kcopy: open failed\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
+    if (dst < 0) die("open dst failed");
     if (skip) {
         long long res;
-        sc(SYS_llseek, dst, 0L, (long)skip, (long)&res, 0 /* SEEK_SET */, 0);
+        sc(SYS_llseek, dst, 0L, (long)skip, (long)&res, 0, 0);
     }
     const ul CH = 0x100000;
     for (ul off = 0; off < len; off += CH) {
-        ul n = len - off < CH ? len - off : CH;
-        long p = sc(SYS_mmap2, 0, CH, 1 /* PROT_READ */, 1 /* MAP_SHARED */, mem,
-                    (long)((phys + off) >> 12));
-        if ((ul)p >= (ul)-4096) { puts1("a5kcopy: mmap failed at "); puthex(phys + off); puts1("\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
+        ul n = len - off < CH ? len - off : CH, ml; long b;
+        unsigned char *p = pmap(phys + off, n, &ml, &b);
         for (ul w = 0; w < n; ) {
-            long r = sc(SYS_write, dst, p + w, n - w, 0, 0, 0);
+            long r = sc(SYS_write, dst, (long)(p + w), n - w, 0, 0, 0);
             if (r <= 0) { puts1("a5kcopy: write failed at "); puthex(off + w); puts1("\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
             w += r;
         }
-        sc(SYS_munmap, p, CH, 0, 0, 0, 0);
+        punmap(b, ml);
         if ((off & 0xffffff) == 0) { puts1("a5kcopy: "); puthex(off); puts1("\n"); }
     }
     sc(SYS_fsync, dst, 0, 0, 0, 0, 0);
     sc(SYS_close, dst, 0, 0, 0, 0, 0);
     puts1("a5kcopy: done\n");
+}
+
+static void mumin_handoff(ul dev_va)
+{
+    ul dev = v2p(dev_va);
+    ul mva = rd32(dev + 0x34), size = rd32(dev + 0x38);
+    puts1("a5kcopy: muminmem va "); puthex(mva); puts1(" size "); puthex(size); puts1("\n");
+    if (mva < 0x40000000 || mva >= 0x80000000 || size == 0 || size > 0x20000) die("bad muminmem");
+    ul ml1, ml2; long b1, b2;
+    u32 *src = (u32 *)pmap(mva + 0x40000000, size, &ml1, &b1);
+    u32 *dst = (u32 *)pmap(0x80000000, 0x20000, &ml2, &b2);
+    ul n = 0;
+    for (ul i = 0; i < 0x20000 / 4; i++) {
+        u32 v = i < size / 4 ? src[i] : 0;
+        if (v >= mva && v < mva + 0x20000) { v = v - mva + 0x40000000; n++; }
+        dst[i] = v;
+    }
+    punmap(b1, ml1); punmap(b2, ml2);
+    puts1("a5kcopy: MUMIN hand-off written, rebased "); puthex(n); puts1(" pointers\n");
+}
+
+void cmain(int argc, char **argv)
+{
+    if (argc >= 4 && streq(argv[1], "-f2p")) {
+        ul n = file_to_phys(argv[2], hex(argv[3]));
+        puts1("a5kcopy: loaded "); puthex(n); puts1(" bytes at "); puts1(argv[3]); puts1("\n");
+    } else if (argc >= 3 && streq(argv[1], "-backup")) {
+        long fd = sc(SYS_open, (long)argv[2], 0, 0, 0, 0, 0);
+        u32 pa = 0;
+        if (fd < 0 || sc(SYS_read, fd, (long)&pa, 4, 0, 0, 0) != 4) die("cannot read Backup header");
+        sc(SYS_close, fd, 0, 0, 0, 0, 0);
+        if (pa < 0x80000000 || pa >= 0xA0000000) die("bad Backup phys address");
+        ul n = file_to_phys(argv[2], pa);
+        puts1("a5kcopy: Backup "); puthex(n); puts1(" bytes at "); puthex(pa); puts1("\n");
+    } else if (argc >= 3 && streq(argv[1], "-mumin")) {
+        mumin_handoff(hex(argv[2]));
+    } else if (argc >= 4 && streq(argv[1], "-w32")) {
+        ul pa = hex(argv[2]), ml; long b;
+        u32 *p = (u32 *)pmap(pa, 4 * (argc - 3), &ml, &b);
+        for (int i = 3; i < argc; i++) p[i - 3] = hex(argv[i]);
+        punmap(b, ml);
+    } else if (argc >= 4 && streq(argv[1], "-stage2")) {
+        ul kl = file_to_phys(argv[2], 0x90000000);
+        ul il = file_to_phys(argv[3], 0x90400000);
+        ul ml; long b;
+        u32 *p = (u32 *)pmap(0x80027000, 20, &ml, &b);
+        p[1] = 0x90000000; p[2] = kl; p[3] = 0x90400000; p[4] = il;
+        p[0] = 0x424b3541;      /* "A5KB" written last */
+        punmap(b, ml);
+        puts1("a5kcopy: stage 2 staged, kernel "); puthex(kl);
+        puts1(" initrd "); puthex(il); puts1("\n");
+    } else if (argc >= 4) {
+        phys_to_file(argc, argv);
+    } else {
+        puts1("usage: see source\n");
+        sc(SYS_exit, 2, 0, 0, 0, 0, 0);
+    }
     sc(SYS_exit, 0, 0, 0, 0, 0, 0);
 }
 
