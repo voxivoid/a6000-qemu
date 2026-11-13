@@ -31,10 +31,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..32c0a14
+index 0000000..2ddc2de
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,664 @@
+@@ -0,0 +1,698 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -288,14 +288,26 @@ index 0000000..32c0a14
 +    }
 +}
 +
-+static void a5k_regfile(const char *name, hwaddr base, uint64_t size)
++static void a5k_regfile_ex(const char *name, hwaddr base, uint64_t size,
++                           const char *init, const char *autoclear, int prio)
 +{
 +    DeviceState *d = qdev_new("cxd90014-regfile");
 +    qdev_prop_set_string(d, "name", name);
 +    qdev_prop_set_uint64(d, "size", size);
 +    qdev_prop_set_uint64(d, "base", base);
++    if (init) {
++        qdev_prop_set_string(d, "init", init);
++    }
++    if (autoclear) {
++        qdev_prop_set_string(d, "autoclear", autoclear);
++    }
 +    sysbus_realize_and_unref(SYS_BUS_DEVICE(d), &error_fatal);
-+    sysbus_mmio_map_overlap(SYS_BUS_DEVICE(d), 0, base, -1000);
++    sysbus_mmio_map_overlap(SYS_BUS_DEVICE(d), 0, base, prio);
++}
++
++static void a5k_regfile(const char *name, hwaddr base, uint64_t size)
++{
++    a5k_regfile_ex(name, base, size, NULL, NULL, -1000);
 +}
 +
 +/* ---- per-reset boot (runs after the ROM reset) ---- */
@@ -492,6 +504,28 @@ index 0000000..32c0a14
 +    a5k_regfile("io-fa", 0xFA000000, 0x04000000);
 +    a5k_regfile("io-38", 0x38000000, 0x00100000);
 +    create_unimplemented_device("a5k.nandc", 0x10000000, 0x10000);
++
++    /* USB OTG glue: +0x10 bit0 VBUS (active low), bit1 ID -> 3 = no cable
++     * (docs/RE_STORAGE_USB.md: fusb_otg_get_vbus, event_cid_exec) */
++    a5k_regfile_ex("otg", 0xF2920000, 0x1000, "0x10=3", NULL, -500);
++    /* F_USB20HDC UDC: CONF bit2 = soft reset, self-clearing
++     * (f_usb20hdc_initialize_controller / transition_to_idle polls it) */
++    /* DEVS (0x204) bit0 polled after MODE |= 2 (transition_to_idle+0x430) */
++    a5k_regfile_ex("usb-hdc", 0xF0210000, 0x20000, "0x204=1", "0x0=4", -500);
++
++    /* clock generators (PLL lock / self-clearing update request) */
++    static const hwaddr clkgen[] = {
++        0xF2A01000, 0xF2A02000, 0xF2A11000, 0xF2A12000, 0xF2A21000,
++        0xF2A22000, 0xF2901000, 0xF2A31000, 0xF2A32000,
++    };
++    for (int i = 0; i < ARRAY_SIZE(clkgen); i++) {
++        DeviceState *d = qdev_new("cxd90014-regfile");
++        qdev_prop_set_string(d, "name", "clkgen");
++        qdev_prop_set_uint64(d, "base", clkgen[i]);
++        qdev_prop_set_bit(d, "clkgen", true);
++        sysbus_realize_and_unref(SYS_BUS_DEVICE(d), &error_fatal);
++        sysbus_mmio_map_overlap(SYS_BUS_DEVICE(d), 0, clkgen[i], -500);
++    }
 +
 +    /* NAND subsystem: controller regs (GIC 172) + ARM7 sub-CPU I/O (170) */
 +    dev = qdev_new("cxd90014-nand");
@@ -1754,10 +1788,10 @@ index 8b4b61e..7659e95 100644
      case 0xF60:
 diff --git a/hw/misc/cxd90014_regfile.c b/hw/misc/cxd90014_regfile.c
 new file mode 100644
-index 0000000..e7d1762
+index 0000000..125d026
 --- /dev/null
 +++ b/hw/misc/cxd90014_regfile.c
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,157 @@
 +/*
 + * Catch-all register file for not-yet-modelled CXD90014 I/O.
 + *
@@ -1775,6 +1809,7 @@ index 0000000..e7d1762
 +#include "hw/sysbus.h"
 +#include "hw/qdev-properties.h"
 +#include "qemu/log.h"
++#include "qemu/cutils.h"
 +#include "qemu/module.h"
 +#include "qom/object.h"
 +
@@ -1788,7 +1823,33 @@ index 0000000..e7d1762
 +    uint64_t size;
 +    uint64_t base;          /* for log messages only */
 +    char *name;
++    bool clkgen;        /* PLL/clock-generator semantics, see below */
++    char *init;         /* "off=val,..." reset values */
++    char *autoclear;    /* "off=mask,...": bits that self-clear on write */
++    GHashTable *acl;
 +};
++
++static void parse_pairs(const char *spec, GHashTable *h)
++{
++    if (!spec) {
++        return;
++    }
++    g_auto(GStrv) it = g_strsplit(spec, ",", -1);
++    for (int i = 0; it[i]; i++) {
++        uint64_t o, v;
++        char *eq = strchr(it[i], '=');
++        if (!eq) {
++            continue;
++        }
++        *eq = 0;
++        if (qemu_strtou64(it[i], NULL, 0, &o) < 0 ||
++            qemu_strtou64(eq + 1, NULL, 0, &v) < 0) {
++            continue;
++        }
++        g_hash_table_insert(h, GUINT_TO_POINTER((guint)(o & ~3ULL)),
++                            GUINT_TO_POINTER((guint)v));
++    }
++}
 +
 +static uint64_t rf_read(void *opaque, hwaddr off, unsigned size)
 +{
@@ -1796,6 +1857,18 @@ index 0000000..e7d1762
 +    hwaddr w = off & ~3ULL;
 +    uint32_t v = GPOINTER_TO_UINT(g_hash_table_lookup(s->regs,
 +                                  GUINT_TO_POINTER((guint)w)));
++    /*
++     * clkgen: CXD90014 clock generator blocks (kernel clk table
++     * 0xF2A01000/02000/11000/12000/21000/22000, 0xF2901000, 0xF2A31000/
++     * 32000).  av-cam.bin @0x438bccd4: write +0x160 = 3, poll +0x004 bit0,
++     * write +0x030 = 1, poll +0x030 == 0.  Model: lock bit always set,
++     * update request self-clears (hypothesis consistent with that code).
++     */
++    if (s->clkgen && w == 0x004) {
++        v |= 1;
++    } else if (s->clkgen && w == 0x030) {
++        v = 0;
++    }
 +    v >>= (off & 3) * 8;
 +    if (size < 4) {
 +        v &= (1u << (size * 8)) - 1;
@@ -1814,6 +1887,8 @@ index 0000000..e7d1762
 +    unsigned sh = (off & 3) * 8;
 +    uint32_t mask = size >= 4 ? 0xffffffffu : ((1u << (size * 8)) - 1) << sh;
 +    uint32_t nv = (old & ~mask) | (((uint32_t)v << sh) & mask);
++    nv &= ~GPOINTER_TO_UINT(g_hash_table_lookup(s->acl,
++                            GUINT_TO_POINTER((guint)w)));
 +    g_hash_table_insert(s->regs, GUINT_TO_POINTER((guint)w),
 +                        GUINT_TO_POINTER(nv));
 +    qemu_log_mask(LOG_UNIMP, "%s: wr%u 0x%08" HWADDR_PRIx " = 0x%" PRIx64
@@ -1829,13 +1904,17 @@ index 0000000..e7d1762
 +
 +static void rf_reset(DeviceState *dev)
 +{
-+    g_hash_table_remove_all(CXD_REGFILE(dev)->regs);
++    CXDRegfileState *s = CXD_REGFILE(dev);
++    g_hash_table_remove_all(s->regs);
++    parse_pairs(s->init, s->regs);
 +}
 +
 +static void rf_realize(DeviceState *dev, Error **errp)
 +{
 +    CXDRegfileState *s = CXD_REGFILE(dev);
 +    s->regs = g_hash_table_new(g_direct_hash, g_direct_equal);
++    s->acl = g_hash_table_new(g_direct_hash, g_direct_equal);
++    parse_pairs(s->autoclear, s->acl);
 +    memory_region_init_io(&s->mr, OBJECT(dev), &rf_ops, s,
 +                          s->name ? s->name : "regfile", s->size);
 +    sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->mr);
@@ -1845,6 +1924,9 @@ index 0000000..e7d1762
 +    DEFINE_PROP_UINT64("size", CXDRegfileState, size, 0x1000),
 +    DEFINE_PROP_UINT64("base", CXDRegfileState, base, 0),
 +    DEFINE_PROP_STRING("name", CXDRegfileState, name),
++    DEFINE_PROP_BOOL("clkgen", CXDRegfileState, clkgen, false),
++    DEFINE_PROP_STRING("init", CXDRegfileState, init),
++    DEFINE_PROP_STRING("autoclear", CXDRegfileState, autoclear),
 +};
 +
 +static void rf_class_init(ObjectClass *klass, const void *data)
