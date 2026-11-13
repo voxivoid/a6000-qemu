@@ -22,7 +22,17 @@ emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulat
 ```
 
 ## 현재 상태 (2026-11-13)
-- ✅ 쿼드 Cortex-A5(VFPv4-D16) · GIC · L2C-310 · CXD4115 타이머/WDT · SYSCTL · PL011
-- ✅ 커널 3.0.27 부팅 → initrd(ext2) → Sony `/sbin/init` → 커널 모듈(devno/dmac/ldec/lld/nand) 로드
-- ⏳ NAND: ARM7 NAND 펌웨어(백업에 없음) 대신 lld.ko 메일박스 프로토콜 HLE 구현 중 → 이후 프로비저닝으로 실기 NAND 재현
-- ⬜ 그 다음: `/usr` 커널 모듈 33종 장치(i2c/sircs/input/hdmi/mmc/usb/GPU grm_gles…), im.elf 카메라 엔진, 디스플레이/키 입력, 센서·ISP
+- ✅ 쿼드 Cortex-A5(VFPv4-D16) · GIC · L2C-310 · CXD4115 타이머/WDT · SYSCTL · PL011 · 클럭 생성기 · USB OTG/HDC 리셋 · BOSS DMAC · GPU(SMAPH-S30: fill/transfer, 3D는 완료 신호만)
+- ✅ NAND: ARM7 NAND 펌웨어 HLE(메일박스, LDEC LZ77) + raw NAND 백킹 파일. `provision.sh`로 `backup/NAND.BIN`을 Sony FTL 경유 기록
+- ✅ 실기 방식 2단계 부팅(`docs/BOOT.md`): 부트로더의 NAND 작업을 Sony NAND 스택으로 재현 → **NAND에서 읽은 커널**로 순정 부팅
+- ✅ 순정 init → 압축 rootfs·/usr 마운트 → `/usr/kmod` 33종 → Android 시작 → **LIRO가 카메라 엔진 av-cam.bin 기동** → im.elf가 입력장치 생성, GLES 초기화
+- ⏳ 엔진(av-cam) 하드웨어: 인터럽트 76개 중 대부분 미모델 → 엔진 초기화 대기 (분석 중: `docs/RE_AVCAM_IRQ_BOOT.md`)
+- ⏳ 화면: VDF 스캔아웃(분석 중: `docs/RE_DISPLAY_SCANOUT.md`), 임시로 `fb=` 디버그 뷰. GPU 3D 커맨드 실행 미구현
+- ⬜ SD 카드(SDHCI), 센서/ISP(라이브뷰), 렌즈, 서브마이컴(전원/키), 오디오
+
+## 사용
+```sh
+emulator/provision.sh            # 최초 1회: 빈 NAND 포맷 + NAND.BIN 기록 → state/a5000.nand
+emulator/run.sh -nographic       # 실기 방식 부팅 (시리얼 콘솔)
+emulator/run.sh -monitor stdio   # QEMU 창에 fb= 디버그 화면
+```
