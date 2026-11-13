@@ -53,6 +53,19 @@ void cmain(int argc, char **argv)
     if (argc < 4) { puts1("usage: a5kcopy <phys> <len> <dev> [skip]\n"); sc(SYS_exit, 2, 0, 0, 0, 0, 0); }
     ul phys = hex(argv[1]), len = hex(argv[2]), skip = argc > 4 ? hex(argv[4]) : 0;
     long mem = sc(SYS_open, (long)"/dev/mem", 0 /* O_RDONLY */, 0, 0, 0, 0);
+    if (mem >= 0 && argv[2][0] == 'a') {
+        /* "auto": phys points at an emulator provision header
+         * {"A5KP", u32 length}, image at +0x1000 */
+        long h = sc(SYS_mmap2, 0, 4096, 1, 1, mem, (long)(phys >> 12));
+        if ((ul)h >= (ul)-4096 || ((unsigned *)h)[0] != 0x504b3541) {
+            puts1("a5kcopy: no A5KP header\n");
+            sc(SYS_exit, 1, 0, 0, 0, 0, 0);
+        }
+        len = ((unsigned *)h)[1];
+        phys += 0x1000;
+        sc(SYS_munmap, h, 4096, 0, 0, 0, 0);
+        puts1("a5kcopy: image length "); puthex(len); puts1("\n");
+    }
     long dst = sc(SYS_open, (long)argv[3], 1 | 0x101000 /* O_WRONLY|O_SYNC */, 0, 0, 0, 0);
     if (mem < 0 || dst < 0) { puts1("a5kcopy: open failed\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
     if (skip) {

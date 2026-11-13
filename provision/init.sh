@@ -7,18 +7,21 @@ export PATH=/bin
 mount -t proc proc /proc
 mount -t sysfs sys /sys
 echo "a5k-provision: loading NAND stack"
-insmod /kmod/devno.ko
+insmod /kmod/devno.ko; echo "a5k-provision: devno rc=$?"
 insmod /kmod/dmac.ko pri_mode_ch_0_3=1 pri_mode_ch_4_7=1
-insmod /kmod/ldec.ko
-insmod /kmod/lld.ko
+insmod /kmod/ldec.ko; echo "a5k-provision: ldec rc=$?"
+insmod /kmod/lld.ko; echo "a5k-provision: lld rc=$?"
 insmod /kmod/nand.ko boot_mode=1
-sleep 1
-ls -l /dev | grep -i nflash
-LEN=$(cat /proc/cmdline | sed -n 's/.*a5k.provlen=\([0-9a-fx]*\).*/\1/p')
-if [ -n "$LEN" ] && [ -e /dev/nflasha ]; then
-    echo "a5k-provision: writing $LEN bytes to /dev/nflasha"
-    a5kcopy 0x40000000 $LEN /dev/nflasha && sync && echo "a5k-provision: OK"
+echo "a5k-provision: nand.ko loaded rc=$?"
+echo "a5k-provision: partitions:"; cat /proc/partitions
+# initramfs has no pre-made nodes (the stock ext2 initrd ships them):
+# create the whole-device node from /proc/partitions (nflasha0 = 252:0)
+MAJ=$(grep nflasha0 /proc/partitions | while read a b c d; do echo $a; done)
+[ -n "$MAJ" ] && mknod /dev/nflasha b $MAJ 0
+if [ -e /dev/nflasha ]; then
+    echo "a5k-provision: writing provision image to /dev/nflasha"
+    a5kcopy 0x40000000 auto /dev/nflasha && sync && echo "a5k-provision: OK"
 else
-    echo "a5k-provision: no image or no /dev/nflasha"
+    echo "a5k-provision: /dev/nflasha missing"
 fi
 exec /bin/sh

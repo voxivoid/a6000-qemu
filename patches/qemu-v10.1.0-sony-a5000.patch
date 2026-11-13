@@ -30,10 +30,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..07246cb
+index 0000000..a20893f
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,514 @@
+@@ -0,0 +1,522 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -335,14 +335,18 @@ index 0000000..07246cb
 +        uint32_t two = cpu_to_le32(2);
 +        rom_add_blob_fixed("a5k.arm7-status", &two, 4, 0x3F40);
 +
-+        /* On-chip RAM left by the bootloader: initial bad-block list
-+         * (u16, 0xFFFF-terminated; blocks 0-5 = boot area, reconstructed)
-+         * and init_param + init_reg_param for nand.ko boot_mode=1/resume
-+         * (values = real camera, nand.ko .bss in the WBI snapshot). */
-+        static const uint16_t ibt[8] = { 0, 1, 2, 3, 4, 5, 0xFFFF, 0xFFFF };
++        /* On-chip RAM left by the bootloader: initial bad-block list and
++         * init_param + init_reg_param for nand.ko boot_mode=1/resume.
++         * Both read from the real camera (/dev/mem, PA 0xC0000C00 /
++         * 0xC0001500, re/device/hwdump/IRAM.BIN): u16 list {0x10 (factory
++         * bad block of this unit), 0..5 (boot area)}, init_param[2] = 7. */
++        static const uint16_t ibt[16] = {
++            0x0010, 0, 1, 2, 3, 4, 5, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
++            0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
++        };
 +        rom_add_blob_fixed("a5k.nand-ibt", ibt, sizeof(ibt), 0xC0000C00);
 +        static const uint32_t ip[5 + 50] = {
-+            0x00000000, 0xC0000C00, 0x00000000, 0x00000004, 0x00000000,
++            0x00000000, 0xC0000C00, 0x00000007, 0x00000004, 0xC0001514,
 +            0x00000000, 0x000001f4, 0x000001f4, 0x000001f4, 0x000001f4,
 +            0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 +            0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00001f1f,
@@ -426,11 +430,15 @@ index 0000000..07246cb
 +            error_report("sony-a5000: bad provision image %s", s->provision);
 +            exit(1);
 +        }
++        /* layout: +0 "A5KP" magic, +4 image length, +0x1000 image */
 +        memory_region_init_rom(&s->prov_rom, NULL, "a5k.provision",
-+                               ROUND_UP(prov_len, 4096), &error_fatal);
++                               ROUND_UP(prov_len, 4096) + 0x1000,
++                               &error_fatal);
 +        memory_region_add_subregion(sysmem, 0x40000000, &s->prov_rom);
-+        if (load_image_size(s->provision,
-+                            memory_region_get_ram_ptr(&s->prov_rom),
++        uint8_t *rp = memory_region_get_ram_ptr(&s->prov_rom);
++        memcpy(rp, "A5KP", 4);
++        stl_le_p(rp + 4, prov_len);
++        if (load_image_size(s->provision, rp + 0x1000,
 +                            prov_len) != prov_len) {
 +            error_report("sony-a5000: cannot read %s", s->provision);
 +            exit(1);
