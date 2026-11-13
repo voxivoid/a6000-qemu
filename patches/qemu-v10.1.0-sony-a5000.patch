@@ -3308,10 +3308,10 @@ index 0000000..125d026
 +type_init(rf_register)
 diff --git a/hw/misc/cxd90014_sio.c b/hw/misc/cxd90014_sio.c
 new file mode 100644
-index 0000000..a72a879
+index 0000000..a8c6c62
 --- /dev/null
 +++ b/hw/misc/cxd90014_sio.c
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,135 @@
 +/*
 + * CXD90014 SIO (SPI-style serial) controller, 5 channels (a5000).
 + * PA 0xF2405000 + 0x200*ch, GIC IRQ 201 + ch.  From av-cam.bin's driver
@@ -3334,6 +3334,7 @@ index 0000000..a72a879
 +#include "qemu/module.h"
 +#include "qom/object.h"
 +#include "trace.h"
++#include "hw/misc/cxd90014_sio.h"
 +
 +#define TYPE_CXD_SIO "cxd90014-sio"
 +OBJECT_DECLARE_SIMPLE_TYPE(SioState, CXD_SIO)
@@ -3345,12 +3346,24 @@ index 0000000..a72a879
 +    MemoryRegion mr;
 +    uint32_t reg[NCH][0x200 / 4];
 +    qemu_irq irq[NCH];
++    CXDSioSlaveXfer slave[NCH];
++    void *slave_opaque[NCH];
 +};
++
++void cxd90014_sio_attach(DeviceState *dev, int ch, CXDSioSlaveXfer fn,
++                         void *opaque)
++{
++    SioState *s = CXD_SIO(dev);
++    s->slave[ch] = fn;
++    s->slave_opaque[ch] = opaque;
++}
 +
 +static uint64_t sio_read(void *opaque, hwaddr off, unsigned size)
 +{
 +    SioState *s = opaque;
-+    return s->reg[off / 0x200][(off % 0x200) / 4];
++    uint32_t v = s->reg[off / 0x200][(off % 0x200) / 4];
++    trace_cxd_sio_rd(off / 0x200, off % 0x200, v);
++    return v;
 +}
 +
 +static void sio_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
@@ -3359,6 +3372,7 @@ index 0000000..a72a879
 +    int ch = off / 0x200;
 +    uint32_t *r = s->reg[ch];
 +    hwaddr o = off % 0x200;
++    trace_cxd_sio_wr(ch, o, v);
 +    if (o == 0x00) {
 +        uint32_t st = r[0];
 +        if (v & 0x80000000u) {
@@ -3374,6 +3388,18 @@ index 0000000..a72a879
 +            trace_cxd_sio_xfer(ch, r[0x0C / 4] >> 24);
 +            trace_cxd_sio_data(ch, r[0x100 / 4], r[0x104 / 4], r[0x108 / 4],
 +                               r[0x10C / 4]);
++            if (s->slave[ch]) {
++                int len = (r[0x0C / 4] >> 24) + 1;
++                uint8_t buf[0x100];
++                for (int i = 0; i < 0x100; i++) {
++                    buf[i] = r[0x100 / 4 + i / 4] >> (8 * (i % 4));
++                }
++                s->slave[ch](s->slave_opaque[ch], ch, buf, len);
++                for (int i = 0; i < 0x100; i += 4) {
++                    r[(0x100 + i) / 4] = buf[i] | buf[i + 1] << 8 |
++                                         buf[i + 2] << 16 | buf[i + 3] << 24;
++                }
++            }
 +            qemu_set_irq(s->irq[ch], 1);        /* start -> done at once */
 +        }
 +        return;
@@ -3570,10 +3596,10 @@ index b1d8d8e..b12c2f3 100644
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_sio.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_adc.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index e3f64c0..1a0c7ec 100644
+index e3f64c0..1821310 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -403,3 +403,7 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
+@@ -403,3 +403,9 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
  i2c_echo_event(const char *id, const char *event) "%s: %s"
  i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
  i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
@@ -3581,6 +3607,8 @@ index e3f64c0..1a0c7ec 100644
 +# cxd90014_sio.c
 +cxd_sio_xfer(int ch, uint32_t len) "ch%d transfer (len-1 %u)"
 +cxd_sio_data(int ch, uint32_t w0, uint32_t w1, uint32_t w2, uint32_t w3) "ch%d fifo %08x %08x %08x %08x"
++cxd_sio_wr(int ch, uint32_t off, uint64_t v) "ch%d wr +0x%03x = 0x%08" PRIx64
++cxd_sio_rd(int ch, uint32_t off, uint32_t v) "ch%d rd +0x%03x -> 0x%08x"
 diff --git a/hw/timer/Kconfig b/hw/timer/Kconfig
 index b3d823c..44c8809 100644
 --- a/hw/timer/Kconfig
@@ -3874,6 +3902,29 @@ index c5b6db4..1e3ced9 100644
 +# cxd4115_timer.c
 +cxd4115_write(uint32_t ch, uint32_t off, uint32_t val) "ch%u +0x%x = 0x%08x"
 +cxd4115_fire(uint32_t ch, uint32_t ctrl) "ch%u match ctrl=0x%x"
+diff --git a/include/hw/misc/cxd90014_sio.h b/include/hw/misc/cxd90014_sio.h
+new file mode 100644
+index 0000000..762b0e4
+--- /dev/null
++++ b/include/hw/misc/cxd90014_sio.h
+@@ -0,0 +1,17 @@
++/* CXD90014 SIO controller: slave attachment for board-level models. */
++#ifndef HW_MISC_CXD90014_SIO_H
++#define HW_MISC_CXD90014_SIO_H
++
++#include "hw/sysbus.h"
++
++/*
++ * Called when a transfer starts on the channel.  @buf holds the @len TX
++ * bytes (from the +0x100 FIFO window); the slave overwrites it with the RX
++ * bytes it shifts out at the same time (full-duplex SPI).
++ */
++typedef void (*CXDSioSlaveXfer)(void *opaque, int ch, uint8_t *buf, int len);
++
++void cxd90014_sio_attach(DeviceState *sio, int ch, CXDSioSlaveXfer fn,
++                         void *opaque);
++
++#endif
 diff --git a/target/arm/tcg/cpu32.c b/target/arm/tcg/cpu32.c
 index a2a23ea..6736165 100644
 --- a/target/arm/tcg/cpu32.c
