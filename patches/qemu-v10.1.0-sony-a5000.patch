@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..2811518
+index 0000000..df15952
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,850 @@
+@@ -0,0 +1,865 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -348,15 +348,19 @@ index 0000000..2811518
 +    }
 +    /* step 0/1: p0.0 high + p0.7 edge (event 16); step 2/3: p0.12 edge
 +     * (IRQ 133, link event 0) [experimental ordering] */
-+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 0), 1);   /* p0.0 high */
++    /* micro "request" line: p3.17 on this unit (av-cam reads the port/pin
++     * from globals @0x43d684e4/0x43d684b4, set from Backup) */
++    qemu_set_irq(qdev_get_gpio_in(s->gpio, 3 * 32 + 17), 1);
 +    if (s->submicro_step < 2) {
 +        qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 7), s->submicro_step & 1);
 +    } else {
 +        qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 12), s->submicro_step & 1);
 +    }
-+    if (++s->submicro_step < 4) {
-+        timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-+                  10 * SCALE_MS);
++    s->submicro_step++;
++    timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++              (s->submicro_step < 4 ? 10 * SCALE_MS : NANOSECONDS_PER_SECOND));
++    if (s->submicro_step >= 4) {
++        s->submicro_step = 2;       /* keep edging p0.12 once a second */
 +    }
 +}
 +
@@ -609,6 +613,17 @@ index 0000000..2811518
 +    object_property_set_str(OBJECT(dev), "fb", s->fb ? s->fb :
 +                            "0x8F758000,640,480,1280,rgb565", &error_fatal);
 +    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++
++    /* av-cam memory DMA, 2 x 8 channels, GIC 173..188 */
++    for (int u = 0; u < 2; u++) {
++        dev = qdev_new("cxd90014-mdma");
++        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF0102000 + u * 0x1000);
++        for (int c = 0; c < 8; c++) {
++            sysbus_connect_irq(SYS_BUS_DEVICE(dev), c,
++                               pic[GIC_ID(173 + u * 8 + c)]);
++        }
++    }
 +
 +    /* DMP SMAPH-S30 GPU (grm_gles.ko + libObj rm_*), GIC 76 */
 +    sysbus_create_simple("dmp-smaph-s30", 0xF1000000, pic[GIC_ID(76)]);
@@ -2606,26 +2621,160 @@ index 0000000..dd9d1ee
 +    type_register_static(&dmac_info);
 +}
 +type_init(dmac_register)
+diff --git a/hw/dma/cxd90014_mdma.c b/hw/dma/cxd90014_mdma.c
+new file mode 100644
+index 0000000..36da443
+--- /dev/null
++++ b/hw/dma/cxd90014_mdma.c
+@@ -0,0 +1,126 @@
++/*
++ * CXD90014 16-channel memory DMA used by av-cam.bin (a5000).
++ * Units at PA 0xF0102000 (ch0-7) and 0xF0103000 (ch8-15), GIC 173 + ch.
++ * Recovered from av-cam: entry_pre copies its initialised data section
++ * with it (ch6 regs +0x1C0..+0x1D0, 25 x 16 KiB), ISR 0x439172b0,
++ * status 0x43917994, stop 0x43917bb0 (docs/RE_AVCAM_IRQ_BOOT.md):
++ *   unit +0x00  per-channel done/IRQ status (bit ch)     +0x08 W clear
++ *        +0x0C  per-channel error status                 +0x10 W clear
++ *        +0x1C  busy bits (always 0: transfers finish at once)
++ *   ch k +0x100 + 0x20*k: +0x00 src PA, +0x04 dst PA, +0x0C cfg (bits
++ *        [11:0] = 32-bit word count, 0 = 4096), +0x10 ctl bit0 = start
++ * Without this model the engine ran with an all-zero .data section.
++ */
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/irq.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qom/object.h"
++#include "system/address-spaces.h"
++#include "trace.h"
++
++#define TYPE_CXD_MDMA "cxd90014-mdma"
++OBJECT_DECLARE_SIMPLE_TYPE(MdmaState, CXD_MDMA)
++
++struct MdmaState {
++    SysBusDevice parent_obj;
++    MemoryRegion mr;
++    uint32_t reg[0x1000 / 4];
++    uint32_t status, err;
++    qemu_irq irq[8];
++};
++
++static void mdma_update(MdmaState *s)
++{
++    for (int k = 0; k < 8; k++) {
++        qemu_set_irq(s->irq[k], (s->status >> k) & 1);
++    }
++}
++
++static void mdma_run(MdmaState *s, int k)
++{
++    uint32_t *c = &s->reg[(0x100 + 0x20 * k) / 4];
++    uint32_t words = c[3] & 0xfff;
++    size_t len = (size_t)(words ? words : 4096) * 4;
++    g_autofree uint8_t *buf = g_malloc(len);
++    address_space_read(&address_space_memory, c[0], MEMTXATTRS_UNSPECIFIED,
++                       buf, len);
++    address_space_write(&address_space_memory, c[1], MEMTXATTRS_UNSPECIFIED,
++                        buf, len);
++    trace_cxd_mdma_copy(k, c[0], c[1], len);
++    c[4] &= ~1u;
++    s->status |= 1u << k;
++    mdma_update(s);
++}
++
++static uint64_t mdma_read(void *opaque, hwaddr off, unsigned size)
++{
++    MdmaState *s = opaque;
++    switch (off) {
++    case 0x00: return s->status;
++    case 0x0C: return s->err;
++    case 0x1C: return 0;
++    }
++    return s->reg[off / 4];
++}
++
++static void mdma_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    MdmaState *s = opaque;
++    switch (off) {
++    case 0x08:
++        s->status &= ~v;
++        mdma_update(s);
++        return;
++    case 0x10:
++        s->err &= ~v;
++        return;
++    }
++    s->reg[off / 4] = v;
++    if (off >= 0x100 && off < 0x200 && (off & 0x1f) == 0x10 && (v & 1)) {
++        mdma_run(s, (off - 0x100) / 0x20);
++    }
++}
++
++static const MemoryRegionOps mdma_ops = {
++    .read = mdma_read, .write = mdma_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void mdma_reset(DeviceState *dev)
++{
++    MdmaState *s = CXD_MDMA(dev);
++    memset(s->reg, 0, sizeof(s->reg));
++    s->status = s->err = 0;
++}
++
++static void mdma_init(Object *obj)
++{
++    MdmaState *s = CXD_MDMA(obj);
++    memory_region_init_io(&s->mr, obj, &mdma_ops, s, "cxd-mdma", 0x1000);
++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mr);
++    for (int i = 0; i < 8; i++) {
++        sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq[i]);
++    }
++}
++
++static void mdma_class_init(ObjectClass *klass, const void *data)
++{
++    device_class_set_legacy_reset(DEVICE_CLASS(klass), mdma_reset);
++}
++
++static const TypeInfo mdma_info = {
++    .name = TYPE_CXD_MDMA,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(MdmaState),
++    .instance_init = mdma_init,
++    .class_init = mdma_class_init,
++};
++
++static void mdma_register(void)
++{
++    type_register_static(&mdma_info);
++}
++type_init(mdma_register)
 diff --git a/hw/dma/meson.build b/hw/dma/meson.build
-index cc7810b..43af7f1 100644
+index cc7810b..fe2332c 100644
 --- a/hw/dma/meson.build
 +++ b/hw/dma/meson.build
-@@ -12,3 +12,4 @@ system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_dma.c', 'soc_dma.c'))
+@@ -12,3 +12,5 @@ system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_dma.c', 'soc_dma.c'))
  system_ss.add(when: 'CONFIG_RASPI', if_true: files('bcm2835_dma.c'))
  system_ss.add(when: 'CONFIG_SIFIVE_PDMA', if_true: files('sifive_pdma.c'))
  system_ss.add(when: 'CONFIG_XLNX_CSU_DMA', if_true: files('xlnx_csu_dma.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_DMAC', if_true: files('cxd90014_dmac.c'))
++system_ss.add(when: 'CONFIG_CXD90014_DMAC', if_true: files('cxd90014_mdma.c'))
 diff --git a/hw/dma/trace-events b/hw/dma/trace-events
-index 4c09790..4d287fa 100644
+index 4c09790..da857f1 100644
 --- a/hw/dma/trace-events
 +++ b/hw/dma/trace-events
-@@ -47,3 +47,6 @@ pl330_iomem_read(uint32_t addr, uint32_t data) "addr: 0x%08"PRIx32" data: 0x%08"
+@@ -47,3 +47,7 @@ pl330_iomem_read(uint32_t addr, uint32_t data) "addr: 0x%08"PRIx32" data: 0x%08"
  
  # xilinx_axidma.c
  xilinx_axidma_loading_desc_fail(uint32_t res) "error:%u"
 +
 +# cxd90014_dmac.c
 +cxd_dmac_done(int ch, uint32_t n) "ch0 chain of 0 done"
++cxd_mdma_copy(int ch, uint32_t src, uint32_t dst, uint64_t len) "ch%d 0x%08x -> 0x%08x len 0x%" PRIx64
 diff --git a/hw/gpio/cxd90014_gpio.c b/hw/gpio/cxd90014_gpio.c
 new file mode 100644
 index 0000000..114f8d7
