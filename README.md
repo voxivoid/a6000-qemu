@@ -22,12 +22,14 @@ emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulat
 ```
 
 ## 현재 상태 (2026-11-13)
+- 주의: 엔진 작업 시 `A5K_STOCK_CONSOLE=1` (디버그 시리얼 콘솔이 av-cam의 UART0 모니터와 충돌)
 - ✅ 쿼드 Cortex-A5(VFPv4-D16) · GIC · L2C-310 · CXD4115 타이머/WDT · SYSCTL · PL011 · 클럭 생성기 · USB OTG/HDC 리셋 · BOSS DMAC · GPU(SMAPH-S30: fill/transfer, 3D는 완료 신호만)
 - ✅ NAND: ARM7 NAND 펌웨어 HLE(메일박스, LDEC LZ77) + raw NAND 백킹 파일. `provision.sh`로 `backup/NAND.BIN`을 Sony FTL 경유 기록
 - ✅ 실기 방식 2단계 부팅(`docs/BOOT.md`): 부트로더의 NAND 작업을 Sony NAND 스택으로 재현 → **NAND에서 읽은 커널**로 순정 부팅
 - ✅ 순정 init → 압축 rootfs·/usr 마운트 → `/usr/kmod` 33종 → Android 시작 → **LIRO가 카메라 엔진 av-cam.bin 기동** → im.elf가 입력장치 생성, GLES 초기화
-- ⏳ 엔진(av-cam) 하드웨어: 인터럽트 76개 중 대부분 미모델 → 엔진 초기화 대기 (분석 중: `docs/RE_AVCAM_IRQ_BOOT.md`)
-- ⏳ 화면: VDF 스캔아웃(분석 중: `docs/RE_DISPLAY_SCANOUT.md`), 임시로 `fb=` 디버그 뷰. GPU 3D 커맨드 실행 미구현
+- ✅ 엔진 하드웨어 1차: SYSV 프레임 타이머·VPH vsync 60 Hz(IRQ 98/101/102), SIO 5채널, GPIO 18포트, ADC 2유닛 → VDF가 패널(640×480)을 설정
+- ⏳ **UI 첫 화면의 관문 = 서브마이컴(전원 마이컴) 링크**: im.elf i1 스레드가 `libmprctrl` 초기화에서 upm.ko 전원 상태 질의로 대기 → upm 값은 서브마이컴 캐시. 링크(SIO ch0 + GPIO 핸드셰이크)는 아직 미개통(`-M ...,submicro=on` 실험 중). `docs/RE_UI_BRINGUP.md`, 부팅 체크포인트는 PA 0x834C0000의 boot_time 로그
+- ⏳ 화면: VPH 스캔아웃 모델(콘솔 0) 준비됨, UI가 아직 OSD를 보내지 않음. GPU 3D 커맨드 실행 미구현(완료 신호만)
 - ⬜ SD 카드(SDHCI), 센서/ISP(라이브뷰), 렌즈, 서브마이컴(전원/키), 오디오
 
 ## 사용

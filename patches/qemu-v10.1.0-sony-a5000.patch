@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..e878f15
+index 0000000..2811518
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,844 @@
+@@ -0,0 +1,850 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -346,9 +346,15 @@ index 0000000..e878f15
 +    if (!s->gpio) {
 +        return;
 +    }
++    /* step 0/1: p0.0 high + p0.7 edge (event 16); step 2/3: p0.12 edge
++     * (IRQ 133, link event 0) [experimental ordering] */
 +    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 0), 1);   /* p0.0 high */
-+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 7), s->submicro_step & 1);
-+    if (++s->submicro_step < 2) {
++    if (s->submicro_step < 2) {
++        qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 7), s->submicro_step & 1);
++    } else {
++        qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 12), s->submicro_step & 1);
++    }
++    if (++s->submicro_step < 4) {
 +        timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
 +                  10 * SCALE_MS);
 +    }
