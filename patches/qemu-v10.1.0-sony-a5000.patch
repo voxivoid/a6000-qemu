@@ -31,10 +31,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..af41a07
+index 0000000..32c0a14
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,652 @@
+@@ -0,0 +1,664 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -288,6 +288,16 @@ index 0000000..af41a07
 +    }
 +}
 +
++static void a5k_regfile(const char *name, hwaddr base, uint64_t size)
++{
++    DeviceState *d = qdev_new("cxd90014-regfile");
++    qdev_prop_set_string(d, "name", name);
++    qdev_prop_set_uint64(d, "size", size);
++    qdev_prop_set_uint64(d, "base", base);
++    sysbus_realize_and_unref(SYS_BUS_DEVICE(d), &error_fatal);
++    sysbus_mmio_map_overlap(SYS_BUS_DEVICE(d), 0, base, -1000);
++}
++
 +/* ---- per-reset boot (runs after the ROM reset) ---- */
 +
 +#define A5K_LOADER_DESC     0x80027000ULL
@@ -474,12 +484,15 @@ index 0000000..af41a07
 +        }
 +    }
 +
-+    /* Everything not yet modelled: log accesses (-d unimp) and read 0.
-+     * These sit at priority -1000 underneath the real models above. */
-+    create_unimplemented_device("a5k.io", 0xF0000000, 0x08000000);
-+    create_unimplemented_device("a5k.io-f8", 0xF8000000, 0x00100000);
-+    create_unimplemented_device("a5k.io-fa", 0xFA000000, 0x04000000);
-+    create_unimplemented_device("a5k.io-38", 0x38000000, 0x00100000);
++    /* Everything not yet modelled: a logging register file (reads back
++     * the last value written, -d unimp shows every access), underneath the
++     * real models at priority -1000. */
++    a5k_regfile("io-f0", 0xF0000000, 0x08000000);
++    a5k_regfile("io-f8", 0xF8000000, 0x00100000);
++    a5k_regfile("io-fa", 0xFA000000, 0x04000000);
++    a5k_regfile("io-38", 0x38000000, 0x00100000);
++    create_unimplemented_device("a5k.nandc", 0x10000000, 0x10000);
++
 +    /* NAND subsystem: controller regs (GIC 172) + ARM7 sub-CPU I/O (170) */
 +    dev = qdev_new("cxd90014-nand");
 +    if (s->nand_file) {
@@ -491,7 +504,6 @@ index 0000000..af41a07
 +    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, 0xF2900000);    /* clkrst3 */
 +    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(172)]);
 +    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, pic[GIC_ID(170)]);
-+    create_unimplemented_device("a5k.nandc", 0x10000000, 0x10000);
 +
 +    /* Provisioning window: a host image (e.g. backup/NAND.BIN, the logical
 +     * /dev/nflasha) exposed read-only at PA 0x40000000 for the factory-style
@@ -1740,6 +1752,121 @@ index 8b4b61e..7659e95 100644
      case 0xF40:
          return;
      case 0xF60:
+diff --git a/hw/misc/cxd90014_regfile.c b/hw/misc/cxd90014_regfile.c
+new file mode 100644
+index 0000000..e7d1762
+--- /dev/null
++++ b/hw/misc/cxd90014_regfile.c
+@@ -0,0 +1,109 @@
++/*
++ * Catch-all register file for not-yet-modelled CXD90014 I/O.
++ *
++ * Plain config registers read back what was last written, which is what
++ * most Sony drivers expect (e.g. grm_gles BUG()s unless the GPU clock gate
++ * 0xF3400080 reads back 0x15).  Unwritten registers read 0.  Every access is
++ * logged under -d unimp so unmodelled blocks remain visible; blocks that need
++ * real behaviour get their own model mapped on top (this device is mapped at
++ * priority -1000, like unimplemented-device).
++ *
++ * Storage is sparse (hash of 32-bit words) so huge windows are cheap.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/qdev-properties.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qom/object.h"
++
++#define TYPE_CXD_REGFILE "cxd90014-regfile"
++OBJECT_DECLARE_SIMPLE_TYPE(CXDRegfileState, CXD_REGFILE)
++
++struct CXDRegfileState {
++    SysBusDevice parent_obj;
++    MemoryRegion mr;
++    GHashTable *regs;
++    uint64_t size;
++    uint64_t base;          /* for log messages only */
++    char *name;
++};
++
++static uint64_t rf_read(void *opaque, hwaddr off, unsigned size)
++{
++    CXDRegfileState *s = opaque;
++    hwaddr w = off & ~3ULL;
++    uint32_t v = GPOINTER_TO_UINT(g_hash_table_lookup(s->regs,
++                                  GUINT_TO_POINTER((guint)w)));
++    v >>= (off & 3) * 8;
++    if (size < 4) {
++        v &= (1u << (size * 8)) - 1;
++    }
++    qemu_log_mask(LOG_UNIMP, "%s: rd%u 0x%08" HWADDR_PRIx " -> 0x%x\n",
++                  s->name, size, s->base + off, v);
++    return v;
++}
++
++static void rf_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    CXDRegfileState *s = opaque;
++    hwaddr w = off & ~3ULL;
++    uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->regs,
++                                    GUINT_TO_POINTER((guint)w)));
++    unsigned sh = (off & 3) * 8;
++    uint32_t mask = size >= 4 ? 0xffffffffu : ((1u << (size * 8)) - 1) << sh;
++    uint32_t nv = (old & ~mask) | (((uint32_t)v << sh) & mask);
++    g_hash_table_insert(s->regs, GUINT_TO_POINTER((guint)w),
++                        GUINT_TO_POINTER(nv));
++    qemu_log_mask(LOG_UNIMP, "%s: wr%u 0x%08" HWADDR_PRIx " = 0x%" PRIx64
++                  "\n", s->name, size, s->base + off, v);
++}
++
++static const MemoryRegionOps rf_ops = {
++    .read = rf_read, .write = rf_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 1, .max_access_size = 4 },
++    .impl = { .min_access_size = 1, .max_access_size = 4 },
++};
++
++static void rf_reset(DeviceState *dev)
++{
++    g_hash_table_remove_all(CXD_REGFILE(dev)->regs);
++}
++
++static void rf_realize(DeviceState *dev, Error **errp)
++{
++    CXDRegfileState *s = CXD_REGFILE(dev);
++    s->regs = g_hash_table_new(g_direct_hash, g_direct_equal);
++    memory_region_init_io(&s->mr, OBJECT(dev), &rf_ops, s,
++                          s->name ? s->name : "regfile", s->size);
++    sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->mr);
++}
++
++static const Property rf_props[] = {
++    DEFINE_PROP_UINT64("size", CXDRegfileState, size, 0x1000),
++    DEFINE_PROP_UINT64("base", CXDRegfileState, base, 0),
++    DEFINE_PROP_STRING("name", CXDRegfileState, name),
++};
++
++static void rf_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    dc->realize = rf_realize;
++    device_class_set_legacy_reset(dc, rf_reset);
++    device_class_set_props(dc, rf_props);
++}
++
++static const TypeInfo rf_info = {
++    .name = TYPE_CXD_REGFILE,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(CXDRegfileState),
++    .class_init = rf_class_init,
++};
++
++static void rf_register(void)
++{
++    type_register_static(&rf_info);
++}
++type_init(rf_register)
 diff --git a/hw/misc/cxd90014_sysctl.c b/hw/misc/cxd90014_sysctl.c
 new file mode 100644
 index 0000000..c17f52d
@@ -1870,14 +1997,15 @@ index 0000000..c17f52d
 +}
 +type_init(sc_register)
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index b1d8d8e..bff5582 100644
+index b1d8d8e..d135388 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -161,3 +161,4 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -161,3 +161,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
  # HPPA devices
  system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_sysctl.c'))
++system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_regfile.c'))
 diff --git a/hw/timer/Kconfig b/hw/timer/Kconfig
 index b3d823c..44c8809 100644
 --- a/hw/timer/Kconfig
