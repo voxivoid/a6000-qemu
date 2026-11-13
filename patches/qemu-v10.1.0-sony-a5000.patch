@@ -1,8 +1,8 @@
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index 2aa4b5d..247ca6f 100644
+index 2aa4b5d..7c3c431 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
-@@ -692,3 +692,16 @@ config ARMSSE
+@@ -692,3 +692,17 @@ config ARMSSE
      select UNIMP
      select SSE_COUNTER
      select SSE_TIMER
@@ -19,6 +19,7 @@ index 2aa4b5d..247ca6f 100644
 +    select CXD4115_TIMER
 +    select CXD90014_SYSCTL
 +    select CXD90014_NAND
++    select CXD90014_DMAC
 diff --git a/hw/arm/meson.build b/hw/arm/meson.build
 index dc68391..02fcce7 100644
 --- a/hw/arm/meson.build
@@ -30,10 +31,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..a20893f
+index 0000000..877bbd6
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,522 @@
+@@ -0,0 +1,570 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -80,8 +81,10 @@ index 0000000..a20893f
 +#define A5K_DDR_SIZE        (512 * MiB)
 +#define A5K_KERNEL_ADDR     0x80038000ULL
 +#define A5K_INITRD_ADDR     0x80428000ULL
-+#define A5K_ATAG_ADDR       0x80000100ULL
-+#define A5K_STUB_ADDR       0x80001000ULL
++/* boot scratch inside memrsv 0x28000@0x80000000, clear of the MUMIN
++ * hand-off (0x80000000+0x20000) and the wbimem page at 0x80021000 */
++#define A5K_ATAG_ADDR       0x80024000ULL
++#define A5K_STUB_ADDR       0x80025000ULL
 +#define A5K_MACH_ID         0xDA8
 +#define A5K_PERIPH_BASE     0xF8000000ULL
 +#define A5K_L2C_BASE        0xF8002000ULL
@@ -134,6 +137,7 @@ index 0000000..a20893f
 +    bool debug_console;
 +    char *provision;
 +    char *nand_file;
++    char *preload;
 +    MemoryRegion prov_rom;
 +    MemoryRegion iram;
 +    MemoryRegion arm7_sram;
@@ -243,7 +247,7 @@ index 0000000..a20893f
 + * address the boot CPU stored at 0xC0005010 + 4*(cpu-1)
 + * (cxd90014_smp_init writes cxd90014_secondary_entry there and issues SEV).
 + */
-+#define A5K_SMP_STUB_ADDR   0x80001100ULL
++#define A5K_SMP_STUB_ADDR   0x80025100ULL
 +static void a5k_write_smp_stub(void)
 +{
 +    uint32_t stub[] = {
@@ -401,6 +405,17 @@ index 0000000..a20893f
 +
 +    sysbus_create_simple("cxd90014-sysctl", 0xF2915000, NULL);
 +
++    /* BOSS mem-to-mem DMA: two units of four channels, GIC 189..196 */
++    for (int u = 0; u < 2; u++) {
++        dev = qdev_new("cxd90014-dmac");
++        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF0000000 + u * 0x10000);
++        for (int c = 0; c < 4; c++) {
++            sysbus_connect_irq(SYS_BUS_DEVICE(dev), c,
++                               pic[GIC_ID(189 + u * 4 + c)]);
++        }
++    }
++
 +    /* Everything not yet modelled: log accesses (-d unimp) and read 0.
 +     * These sit at priority -1000 underneath the real models above. */
 +    create_unimplemented_device("a5k.io", 0xF0000000, 0x08000000);
@@ -442,6 +457,25 @@ index 0000000..a20893f
 +                            prov_len) != prov_len) {
 +            error_report("sony-a5000: cannot read %s", s->provision);
 +            exit(1);
++        }
++    }
++
++    /* preload=FILE@ADDR[;FILE@ADDR...]: raw images placed in RAM before
++     * the kernel starts (bootloader duties, see docs/BOOT.md) */
++    if (s->preload) {
++        g_auto(GStrv) items = g_strsplit(s->preload, ";", -1);
++        for (int i = 0; items[i]; i++) {
++            char *at = strrchr(items[i], '@');
++            uint64_t addr;
++            if (!at || qemu_strtou64(at + 1, NULL, 0, &addr) < 0) {
++                error_report("sony-a5000: bad preload item '%s'", items[i]);
++                exit(1);
++            }
++            *at = 0;
++            if (load_image_targphys(items[i], addr, 64 * MiB) < 0) {
++                error_report("sony-a5000: cannot preload %s", items[i]);
++                exit(1);
++            }
 +        }
 +    }
 +
@@ -496,6 +530,17 @@ index 0000000..a20893f
 +    A5K_MACHINE(o)->debug_console = v;
 +}
 +
++static char *a5k_get_preload(Object *o, Error **errp)
++{
++    return g_strdup(A5K_MACHINE(o)->preload);
++}
++
++static void a5k_set_preload(Object *o, const char *v, Error **errp)
++{
++    g_free(A5K_MACHINE(o)->preload);
++    A5K_MACHINE(o)->preload = g_strdup(v);
++}
++
 +static char *a5k_get_nand(Object *o, Error **errp)
 +{
 +    return g_strdup(A5K_MACHINE(o)->nand_file);
@@ -522,6 +567,10 @@ index 0000000..a20893f
 +{
 +    MachineClass *mc = MACHINE_CLASS(oc);
 +
++    object_class_property_add_str(oc, "preload", a5k_get_preload,
++                                  a5k_set_preload);
++    object_class_property_set_description(oc, "preload",
++        "FILE@ADDR[;FILE@ADDR...] raw images placed in RAM at boot");
 +    object_class_property_add_str(oc, "nand", a5k_get_nand, a5k_set_nand);
 +    object_class_property_set_description(oc, "nand",
 +        "Raw NAND backing file (created erased if missing)");
@@ -569,10 +618,10 @@ index 737dbcd..c28b38b 100644
 +    bool
 diff --git a/hw/block/cxd90014_nand.c b/hw/block/cxd90014_nand.c
 new file mode 100644
-index 0000000..e2317e0
+index 0000000..b915042
 --- /dev/null
 +++ b/hw/block/cxd90014_nand.c
-@@ -0,0 +1,750 @@
+@@ -0,0 +1,758 @@
 +/*
 + * Sony CXD90014 NAND subsystem (a5000).
 + *
@@ -879,8 +928,11 @@ index 0000000..e2317e0
 +    return op;
 +}
 +
-+static uint32_t do_ldec(CXDNandState *s, hwaddr arg)
++static uint32_t do_ldec(CXDNandState *s, hwaddr api)
 +{
++    /* the API word points at the LDEC_REQ copy (lld: entry[4] = entry+5):
++     * {n_items, items*, byte_off, out_size>>12, dst_phys, dst_len} */
++    hwaddr arg = g32(api);
 +    uint32_t nitems = g32(arg), items = g32(arg + 4), off = g32(arg + 8);
 +    hwaddr dst = g32(arg + 16);
 +    uint32_t dlen = g32(arg + 20);
@@ -888,6 +940,11 @@ index 0000000..e2317e0
 +    size_t clen = 0;
 +    uint32_t res = AR_OK;
 +
++    trace_cxd_nand_op("ldec", nitems, off, dlen);
++    if (nitems > 1024 || dlen > 0x100000 || off >= 512) {
++        qemu_log_mask(LOG_GUEST_ERROR, "cxd-nand: bad ldec request\n");
++        return AR_PARAM;
++    }
 +    for (uint32_t i = 0; i < nitems; i++) {
 +        hwaddr it = items + 12 * i;
 +        hwaddr pgp = g32(it);           /* PAGEGROUP{die,plane,page,grp*} */
@@ -1360,6 +1417,199 @@ index 64bebbd..2f497e5 100644
          error_setg(errp,
                     "Cortex-A9MPCore peripheral can only use Cortex-A9 CPU");
          return;
+diff --git a/hw/dma/Kconfig b/hw/dma/Kconfig
+index 98fbb1b..76e58f5 100644
+--- a/hw/dma/Kconfig
++++ b/hw/dma/Kconfig
+@@ -30,3 +30,6 @@ config SIFIVE_PDMA
+ config XLNX_CSU_DMA
+     bool
+     select REGISTER
++
++config CXD90014_DMAC
++    bool
+diff --git a/hw/dma/cxd90014_dmac.c b/hw/dma/cxd90014_dmac.c
+new file mode 100644
+index 0000000..dd9d1ee
+--- /dev/null
++++ b/hw/dma/cxd90014_dmac.c
+@@ -0,0 +1,156 @@
++/*
++ * Sony CXD90014 "BOSS" memory-to-memory DMA controller (a5000).
++ *
++ * Two units (UDIF dmac_ch0-3 @ PA 0xF0000000, dmac_ch4-7 @ 0xF0010000),
++ * four channels each, GIC IRQ 189 + ch.  Layout from dmac.ko
++ * (boss_lld_get_base_addr_dmac_ch, boss_hw_dmac_start_wait/_transfer,
++ * boss_hw_dmac_process, boss_hw_dmac_unit_enable):
++ *
++ *   unit +0x00               unit enable (0x11000000 on / 0x10000000 off)
++ *   ch   +0x10 + 0x30*(ch%4)
++ *     +0x00..+0x14  first descriptor: {len-1, src, dst, cfg, cfg, next|1}
++ *     +0x18         start/config (dmac.ko writes 0x11102003) -> go
++ *     +0x1C         control (dmac.ko writes 17 before start)
++ *     +0x20         status: low nibble 8 = done OK; written 0 to ack
++ *
++ * In-memory descriptors (32 B, built by nand.ko muminlzp_request):
++ *   {len-1 (0xFFFFFFFF = empty), src phys, dst phys, cfg, cfg,
++ *    next phys | 1 (bit0 = another descriptor follows), -, -}
++ * cfg (0x30F00) is treated as plain incrementing byte copy [hypothesis].
++ * Transfers complete instantly.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/irq.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qom/object.h"
++#include "system/address-spaces.h"
++#include "trace.h"
++
++#define TYPE_CXD_DMAC "cxd90014-dmac"
++OBJECT_DECLARE_SIMPLE_TYPE(CXDDmacState, CXD_DMAC)
++
++#define NCH 4
++
++struct CXDDmacState {
++    SysBusDevice parent_obj;
++    MemoryRegion mr;
++    uint32_t enable;
++    uint32_t ch[NCH][12];
++    qemu_irq irq[NCH];
++};
++
++static uint32_t g32(hwaddr pa)
++{
++    return address_space_ldl_le(&address_space_memory, pa,
++                                MEMTXATTRS_UNSPECIFIED, NULL);
++}
++
++static void copy_one(uint32_t lenm1, uint32_t src, uint32_t dst)
++{
++    if (lenm1 == 0xFFFFFFFF) {
++        return;
++    }
++    uint32_t len = lenm1 + 1;
++    g_autofree uint8_t *buf = g_malloc(len);
++    address_space_read(&address_space_memory, src, MEMTXATTRS_UNSPECIFIED,
++                       buf, len);
++    address_space_write(&address_space_memory, dst, MEMTXATTRS_UNSPECIFIED,
++                        buf, len);
++}
++
++static void run_chain(CXDDmacState *s, int c)
++{
++    uint32_t *r = s->ch[c];
++    uint32_t n = 0;
++    copy_one(r[0], r[1], r[2]);
++    uint32_t next = r[5];
++    while ((next & 1) && n++ < 65536) {
++        hwaddr d = next & ~1u;
++        copy_one(g32(d), g32(d + 4), g32(d + 8));
++        next = g32(d + 20);
++    }
++    trace_cxd_dmac_done(c, n + 1);
++    r[8] = 8;                       /* status: done OK */
++    qemu_set_irq(s->irq[c], 1);
++}
++
++static uint64_t dmac_read(void *opaque, hwaddr off, unsigned size)
++{
++    CXDDmacState *s = opaque;
++    if (off == 0) {
++        return s->enable;
++    }
++    if (off >= 0x10 && off < 0x10 + 0x30 * NCH) {
++        hwaddr o = off - 0x10;
++        return s->ch[o / 0x30][(o % 0x30) / 4];
++    }
++    qemu_log_mask(LOG_UNIMP, "cxd-dmac: rd 0x%" HWADDR_PRIx "\n", off);
++    return 0;
++}
++
++static void dmac_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    CXDDmacState *s = opaque;
++    if (off == 0) {
++        s->enable = v;
++        return;
++    }
++    if (off >= 0x10 && off < 0x10 + 0x30 * NCH) {
++        hwaddr o = off - 0x10;
++        int c = o / 0x30, reg = (o % 0x30) / 4;
++        s->ch[c][reg] = v;
++        if (reg == 6 && v) {        /* start */
++            run_chain(s, c);
++        } else if (reg == 8 && v == 0) {
++            qemu_set_irq(s->irq[c], 0);
++        }
++        return;
++    }
++    qemu_log_mask(LOG_UNIMP, "cxd-dmac: wr 0x%" HWADDR_PRIx " = 0x%"
++                  PRIx64 "\n", off, v);
++}
++
++static const MemoryRegionOps dmac_ops = {
++    .read = dmac_read, .write = dmac_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void dmac_reset(DeviceState *dev)
++{
++    CXDDmacState *s = CXD_DMAC(dev);
++    s->enable = 0;
++    memset(s->ch, 0, sizeof(s->ch));
++}
++
++static void dmac_init(Object *obj)
++{
++    CXDDmacState *s = CXD_DMAC(obj);
++    memory_region_init_io(&s->mr, obj, &dmac_ops, s, "cxd-dmac", 0x10000);
++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mr);
++    for (int i = 0; i < NCH; i++) {
++        sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq[i]);
++    }
++}
++
++static void dmac_class_init(ObjectClass *klass, const void *data)
++{
++    device_class_set_legacy_reset(DEVICE_CLASS(klass), dmac_reset);
++}
++
++static const TypeInfo dmac_info = {
++    .name = TYPE_CXD_DMAC,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(CXDDmacState),
++    .instance_init = dmac_init,
++    .class_init = dmac_class_init,
++};
++
++static void dmac_register(void)
++{
++    type_register_static(&dmac_info);
++}
++type_init(dmac_register)
+diff --git a/hw/dma/meson.build b/hw/dma/meson.build
+index cc7810b..43af7f1 100644
+--- a/hw/dma/meson.build
++++ b/hw/dma/meson.build
+@@ -12,3 +12,4 @@ system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_dma.c', 'soc_dma.c'))
+ system_ss.add(when: 'CONFIG_RASPI', if_true: files('bcm2835_dma.c'))
+ system_ss.add(when: 'CONFIG_SIFIVE_PDMA', if_true: files('sifive_pdma.c'))
+ system_ss.add(when: 'CONFIG_XLNX_CSU_DMA', if_true: files('xlnx_csu_dma.c'))
++system_ss.add(when: 'CONFIG_CXD90014_DMAC', if_true: files('cxd90014_dmac.c'))
+diff --git a/hw/dma/trace-events b/hw/dma/trace-events
+index 4c09790..4d287fa 100644
+--- a/hw/dma/trace-events
++++ b/hw/dma/trace-events
+@@ -47,3 +47,6 @@ pl330_iomem_read(uint32_t addr, uint32_t data) "addr: 0x%08"PRIx32" data: 0x%08"
+ 
+ # xilinx_axidma.c
+ xilinx_axidma_loading_desc_fail(uint32_t res) "error:%u"
++
++# cxd90014_dmac.c
++cxd_dmac_done(int ch, uint32_t n) "ch0 chain of 0 done"
 diff --git a/hw/misc/Kconfig b/hw/misc/Kconfig
 index 4e35657..8a17a3a 100644
 --- a/hw/misc/Kconfig
