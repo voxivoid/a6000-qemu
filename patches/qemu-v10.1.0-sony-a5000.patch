@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..aedc83c
+index 0000000..814e9c0
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,753 @@
+@@ -0,0 +1,779 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -230,23 +230,32 @@ index 0000000..aedc83c
 +    /*
 +     * What the Sony bootloader does before entering the kernel:
 +     *  - route every SPI to CPU0 (GICD_ITARGETSR8..63 = 0x01).  Sony's
-+     *    gic_dist_init never programs targets/priorities, it inherits them;
++     *    gic_dist_init never programs targets/priorities/trigger modes, it
++     *    inherits them;
++     *  - make the ack-less frame sources edge-triggered: SYSV 98/99 and the
++     *    VPH vsyncs 101/102 (their av-cam handlers never touch the device,
++     *    as level interrupts they would re-enter endlessly) [hypothesis];
 +     *  - r0 = 0, r1 = machine id, r2 = tags, jump to the kernel.
 +     */
 +    uint32_t stub[] = {
-+        0xe59f3020,             /* ldr r3, =0xF8001820        */
-+        0xe59f4020,             /* ldr r4, =0xF8001900        */
-+        0xe59f5020,             /* ldr r5, =0x01010101        */
++        0xe59f302c,             /* ldr r3, =0xF8001820        */
++        0xe59f402c,             /* ldr r4, =0xF8001900        */
++        0xe59f502c,             /* ldr r5, =0x01010101        */
 +        0xe4835004,             /* 1: str r5, [r3], #4        */
 +        0xe1530004,             /* cmp r3, r4                 */
 +        0x3afffffc,             /* blo 1b                     */
++        0xe59f3020,             /* ldr r3, =0xF8001C18 (ICFGR6) */
++        0xe59f5020,             /* ldr r5, =0x28A0            */
++        0xe5835000,             /* str r5, [r3]               */
 +        0xe3a00000,             /* mov r0, #0                 */
-+        0xe59f1010,             /* ldr r1, =A5K_MACH_ID       */
-+        0xe59f2010,             /* ldr r2, =A5K_ATAG_ADDR     */
-+        0xe59ff010,             /* ldr pc, =A5K_KERNEL_ADDR   */
++        0xe59f1018,             /* ldr r1, =A5K_MACH_ID       */
++        0xe59f2018,             /* ldr r2, =A5K_ATAG_ADDR     */
++        0xe59ff018,             /* ldr pc, =A5K_KERNEL_ADDR   */
 +        0xf8001820,
 +        0xf8001900,
 +        0x01010101,
++        0xf8001c18,
++        0x000028a0,             /* IRQ 98, 99, 101, 102 edge-triggered */
 +        A5K_MACH_ID,
 +        (uint32_t)A5K_ATAG_ADDR,
 +        (uint32_t)A5K_KERNEL_ADDR,
@@ -516,6 +525,23 @@ index 0000000..aedc83c
 +    qdev_prop_set_bit(dev, "sd-present", sd != NULL);
 +    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
 +    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2915000);
++
++    /* SIO ch0..4 (ch0 = sub-micro link), GIC 201..205 */
++    dev = qdev_new("cxd90014-sio");
++    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2405000);
++    for (int c = 0; c < 5; c++) {
++        sysbus_connect_irq(SYS_BUS_DEVICE(dev), c, pic[GIC_ID(201 + c)]);
++    }
++
++    /* VPH display controller + SYSV frame timer: panel = console 0 */
++    dev = qdev_new("cxd90014-vph");
++    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3440000);
++    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 1, 0xF3402000);
++    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(98)]);
++    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, pic[GIC_ID(101)]);
++    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 2, pic[GIC_ID(102)]);
 +
 +    /* Debug view of guest frame buffers in a QEMU window (no MMIO; the
 +     * firmware cannot see it).  -M ...,fb=addr,w,h,stride,fmt[;...] or at
@@ -1800,6 +1826,274 @@ index 0000000..b6a386a
 +    type_register_static(&fb_info);
 +}
 +type_init(fb_register)
+diff --git a/hw/display/cxd90014_vph.c b/hw/display/cxd90014_vph.c
+new file mode 100644
+index 0000000..eacb84a
+--- /dev/null
++++ b/hw/display/cxd90014_vph.c
+@@ -0,0 +1,262 @@
++/*
++ * CXD90014 video output: VPH display controller + SYSV frame timer (a5000).
++ *
++ *   VPH  PA 0xF3440000..0xF3446FFF  (docs/RE_DISPLAY_SCANOUT.md)
++ *        0x028 = 0x111 clock enable (we start vsync once it is non-zero)
++ *        0x144 bit0 panel YUV layer on, bit1 OSD [?]; 0x404 bit0 OSD 4 B/px
++ *        AIF DMA ch51..58 @ 0xF3441200 + 0x80*k: +0x00 bit0 start/busy
++ *        (cleared by hardware at end of frame), +0x04 bit31 running,
++ *        +0x20 start address, +0x24 bytes per line, +0x2C lines-1,
++ *        +0x48 signed pitch.  ch51 = panel YUV (live view), ch53 = panel OSD.
++ *        IRQ 101 / 102 = output vsync (both pulsed; which one is the panel is
++ *        unknown), IRQ 79 = status at +0xA0 (not raised).
++ *   SYSV PA 0xF3402000 (docs/RE_AVCAM_IRQ_BOOT.md): +0x98 frame counter,
++ *        +0x3C period (av-cam writes 64800); IRQ 98 every frame.
++ *
++ * Every 1/60 s: SYSV counter++ and IRQ 98 pulse; if VPH is clocked, IRQ
++ * 101/102 pulses, AIF ch51..58 start bits cleared, and the panel is composed
++ * (YUV 4:2:2 under the OSD) into QEMU graphic console 0.
++ * Pixel formats of the OSD at 16 bpp and the YUV packing are hypotheses.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/irq.h"
++#include "qemu/timer.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "ui/console.h"
++#include "system/address-spaces.h"
++#include "qom/object.h"
++
++#define TYPE_CXD_VPH "cxd90014-vph"
++OBJECT_DECLARE_SIMPLE_TYPE(VphState, CXD_VPH)
++
++#define VPH_SIZE  0x7000
++#define AIF(k)    (0x1200 + 0x80 * (k))     /* k = 0 (ch51) .. 7 (ch58) */
++
++struct VphState {
++    SysBusDevice parent_obj;
++    MemoryRegion vph_mr, sysv_mr;
++    uint32_t vph[VPH_SIZE / 4];
++    uint32_t sysv[0x1000 / 4];
++    uint32_t frame;
++    QEMUTimer *tick, *lower;
++    qemu_irq irq_sysv, irq_v101, irq_v102;
++    QemuConsole *con;
++    uint32_t w, h;
++};
++
++#define R(o) (s->vph[(o) / 4])
++
++static void vph_lower(void *opaque)
++{
++    VphState *s = opaque;
++    qemu_set_irq(s->irq_sysv, 0);
++    qemu_set_irq(s->irq_v101, 0);
++    qemu_set_irq(s->irq_v102, 0);
++}
++
++static void vph_tick(void *opaque)
++{
++    VphState *s = opaque;
++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++
++    s->frame++;
++    qemu_set_irq(s->irq_sysv, 1);
++    /* output vsync runs whether or not VPH is configured yet: the VDF task
++     * waits for IRQ 101/102 before it programs anything */
++    for (int k = 0; k < 8; k++) {
++        R(AIF(k)) &= ~1u;
++    }
++    qemu_set_irq(s->irq_v101, 1);
++    qemu_set_irq(s->irq_v102, 1);
++    timer_mod(s->lower, now + 200 * SCALE_US);  /* no ack register: pulse */
++    timer_mod(s->tick, now + NANOSECONDS_PER_SECOND / 60);
++}
++
++static inline uint8_t clip(int v)
++{
++    return v < 0 ? 0 : v > 255 ? 255 : v;
++}
++
++static void vph_update(void *opaque)
++{
++    VphState *s = opaque;
++    DisplaySurface *surf = qemu_console_surface(s->con);
++    uint32_t W = s->w, H = s->h;
++    if (!surf || surface_width(surf) != W || surface_height(surf) != H) {
++        qemu_console_resize(s->con, W, H);
++        surf = qemu_console_surface(s->con);
++    }
++    uint32_t *dst = surface_data(surf);
++    memset(dst, 0, (size_t)W * H * 4);
++
++    /* YUV layer (ch51), packed YUYV 4:2:2 [?] */
++    if (R(0x144) & 1) {
++        uint32_t base = R(AIF(0) + 0x20), lb = R(AIF(0) + 0x24);
++        uint32_t lines = R(AIF(0) + 0x2C) + 1;
++        int32_t pitch = (int16_t)R(AIF(0) + 0x48);
++        if (!pitch) {
++            pitch = lb;
++        }
++        if (base && lb && lines < 4096) {
++            g_autofree uint8_t *row = g_malloc(lb);
++            for (uint32_t y = 0; y < MIN(lines, H); y++) {
++                address_space_read(&address_space_memory, base + y * pitch,
++                                   MEMTXATTRS_UNSPECIFIED, row, lb);
++                for (uint32_t x = 0; x + 1 < MIN(lb / 2, W); x += 2) {
++                    int y0 = row[2 * x], u = row[2 * x + 1] - 128;
++                    int y1 = row[2 * x + 2], v = row[2 * x + 3] - 128;
++                    for (int i = 0; i < 2; i++) {
++                        int yy = i ? y1 : y0;
++                        dst[y * W + x + i] = 0xff000000u |
++                            clip(yy + 1.402 * v) << 16 |
++                            clip(yy - 0.344 * u - 0.714 * v) << 8 |
++                            clip(yy + 1.772 * u);
++                    }
++                }
++            }
++        }
++    }
++    /* OSD layer (ch53) */
++    uint32_t base = R(AIF(2) + 0x20), lb = R(AIF(2) + 0x24);
++    uint32_t lines = R(AIF(2) + 0x2C) + 1;
++    int32_t pitch = (int16_t)R(AIF(2) + 0x48);
++    unsigned bpp = (R(0x404) & 1) ? 4 : 2;
++    if (!pitch) {
++        pitch = lb;
++    }
++    if (base && lb && lines < 4096) {
++        g_autofree uint8_t *row = g_malloc(lb);
++        for (uint32_t y = 0; y < MIN(lines, H); y++) {
++            address_space_read(&address_space_memory, base + y * pitch,
++                               MEMTXATTRS_UNSPECIFIED, row, lb);
++            for (uint32_t x = 0; x < MIN(lb / bpp, W); x++) {
++                uint8_t r, g, b, a;
++                if (bpp == 4) {
++                    r = row[4 * x]; g = row[4 * x + 1]; b = row[4 * x + 2];
++                    a = row[4 * x + 3];
++                } else {
++                    uint16_t v = row[2 * x] | row[2 * x + 1] << 8;
++                    r = (v >> 11) << 3; g = ((v >> 5) & 63) << 2;
++                    b = (v & 31) << 3; a = 255;
++                }
++                uint32_t *d = &dst[y * W + x];
++                uint8_t dr = *d >> 16, dg = *d >> 8, db = *d;
++                *d = 0xff000000u | ((r * a + dr * (255 - a)) / 255) << 16 |
++                     ((g * a + dg * (255 - a)) / 255) << 8 |
++                     ((b * a + db * (255 - a)) / 255);
++            }
++        }
++    }
++    dpy_gfx_update_full(s->con);
++}
++
++static void vph_invalidate(void *opaque)
++{
++}
++
++static const GraphicHwOps vph_gfx_ops = {
++    .invalidate = vph_invalidate,
++    .gfx_update = vph_update,
++};
++
++static uint64_t vph_read(void *opaque, hwaddr off, unsigned size)
++{
++    VphState *s = opaque;
++    if (off >= AIF(0) && off < AIF(8) && (off & 0x7f) == 0x04) {
++        return R(off) & ~0x80000000u;          /* never "still running" */
++    }
++    if (off == 0x1004 || off == 0x2004 || off == 0x3004) {
++        return 0;                              /* error status */
++    }
++    return R(off);
++}
++
++static void vph_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    VphState *s = opaque;
++    R(off) = v;
++}
++
++static uint64_t sysv_read(void *opaque, hwaddr off, unsigned size)
++{
++    VphState *s = opaque;
++    if (off == 0x98) {
++        return s->frame;
++    }
++    return s->sysv[off / 4];
++}
++
++static void sysv_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    VphState *s = opaque;
++    s->sysv[off / 4] = v;
++}
++
++static const MemoryRegionOps vph_ops = {
++    .read = vph_read, .write = vph_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++static const MemoryRegionOps sysv_ops = {
++    .read = sysv_read, .write = sysv_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void vph_reset(DeviceState *dev)
++{
++    VphState *s = CXD_VPH(dev);
++    memset(s->vph, 0, sizeof(s->vph));
++    memset(s->sysv, 0, sizeof(s->sysv));
++    s->frame = 0;
++    timer_mod(s->tick, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++              NANOSECONDS_PER_SECOND / 60);
++}
++
++static void vph_realize(DeviceState *dev, Error **errp)
++{
++    VphState *s = CXD_VPH(dev);
++    s->w = 640;
++    s->h = 480;
++    s->con = graphic_console_init(dev, 0, &vph_gfx_ops, s);
++    qemu_console_resize(s->con, s->w, s->h);
++}
++
++static void vph_init(Object *obj)
++{
++    VphState *s = CXD_VPH(obj);
++    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++    memory_region_init_io(&s->vph_mr, obj, &vph_ops, s, "vph", VPH_SIZE);
++    memory_region_init_io(&s->sysv_mr, obj, &sysv_ops, s, "sysv", 0x1000);
++    sysbus_init_mmio(sbd, &s->vph_mr);
++    sysbus_init_mmio(sbd, &s->sysv_mr);
++    sysbus_init_irq(sbd, &s->irq_sysv);
++    sysbus_init_irq(sbd, &s->irq_v101);
++    sysbus_init_irq(sbd, &s->irq_v102);
++    s->tick = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_tick, s);
++    s->lower = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_lower, s);
++}
++
++static void vph_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    dc->realize = vph_realize;
++    device_class_set_legacy_reset(dc, vph_reset);
++}
++
++static const TypeInfo vph_info = {
++    .name = TYPE_CXD_VPH,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(VphState),
++    .instance_init = vph_init,
++    .class_init = vph_class_init,
++};
++
++static void vph_register(void)
++{
++    type_register_static(&vph_info);
++}
++type_init(vph_register)
 diff --git a/hw/display/dmp_smaph.c b/hw/display/dmp_smaph.c
 new file mode 100644
 index 0000000..6c4c402
@@ -2047,15 +2341,16 @@ index 0000000..6c4c402
 +}
 +type_init(smaph_register)
 diff --git a/hw/display/meson.build b/hw/display/meson.build
-index 90e6c04..46c0e23 100644
+index 90e6c04..5376b31 100644
 --- a/hw/display/meson.build
 +++ b/hw/display/meson.build
-@@ -145,3 +145,5 @@ endif
+@@ -145,3 +145,6 @@ endif
  system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_lcdc.c'))
  
  modules += { 'hw-display': hw_display_modules }
 +system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('dmp_smaph.c'))
 +system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('a5k_fbview.c'))
++system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('cxd90014_vph.c'))
 diff --git a/hw/display/trace-events b/hw/display/trace-events
 index 52786e6..25e9212 100644
 --- a/hw/display/trace-events
@@ -2471,6 +2766,118 @@ index 0000000..125d026
 +    type_register_static(&rf_info);
 +}
 +type_init(rf_register)
+diff --git a/hw/misc/cxd90014_sio.c b/hw/misc/cxd90014_sio.c
+new file mode 100644
+index 0000000..ef00bf6
+--- /dev/null
++++ b/hw/misc/cxd90014_sio.c
+@@ -0,0 +1,106 @@
++/*
++ * CXD90014 SIO (SPI-style serial) controller, 5 channels (a5000).
++ * PA 0xF2405000 + 0x200*ch, GIC IRQ 201 + ch.  From av-cam.bin's driver
++ * (docs/RE_AVCAM_IRQ_BOOT.md §4):
++ *   +0x00  W config bits; R bit29 = done, bit25 = error;
++ *          W |= bit31 clears the IRQ, |= bit30 clears error, &= ~bit29
++ *   +0x10  0x01000000 = enable/start
++ * Model: a start completes immediately (done + IRQ).  No slave device is
++ * attached yet, so nothing is transferred (receive data stays as is); the
++ * sub-micro on channel 0 is a separate, future model.
++ */
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/irq.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qom/object.h"
++#include "trace.h"
++
++#define TYPE_CXD_SIO "cxd90014-sio"
++OBJECT_DECLARE_SIMPLE_TYPE(SioState, CXD_SIO)
++
++#define NCH 5
++
++struct SioState {
++    SysBusDevice parent_obj;
++    MemoryRegion mr;
++    uint32_t reg[NCH][0x200 / 4];
++    qemu_irq irq[NCH];
++};
++
++static uint64_t sio_read(void *opaque, hwaddr off, unsigned size)
++{
++    SioState *s = opaque;
++    return s->reg[off / 0x200][(off % 0x200) / 4];
++}
++
++static void sio_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    SioState *s = opaque;
++    int ch = off / 0x200;
++    uint32_t *r = s->reg[ch];
++    hwaddr o = off % 0x200;
++    if (o == 0x00) {
++        uint32_t st = r[0];
++        if (v & 0x80000000u) {
++            qemu_set_irq(s->irq[ch], 0);
++        }
++        if (v & 0x40000000u) {
++            st &= ~0x02000000u;
++        }
++        /* config bits are written, the done bit is only cleared by an
++         * explicit write without it */
++        r[0] = (v & 0x1fffffffu) | (st & 0x22000000u & v);
++        if (!(v & 0x20000000u)) {
++            r[0] &= ~0x20000000u;
++        }
++        return;
++    }
++    r[o / 4] = v;
++    if (o == 0x10 && (v & 0x01000000u)) {
++        trace_cxd_sio_xfer(ch, r[0x0C / 4] >> 24);
++        r[0] |= 0x20000000u;                /* done */
++        qemu_set_irq(s->irq[ch], 1);
++    }
++}
++
++static const MemoryRegionOps sio_ops = {
++    .read = sio_read, .write = sio_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void sio_reset(DeviceState *dev)
++{
++    memset(CXD_SIO(dev)->reg, 0, sizeof(CXD_SIO(dev)->reg));
++}
++
++static void sio_init(Object *obj)
++{
++    SioState *s = CXD_SIO(obj);
++    memory_region_init_io(&s->mr, obj, &sio_ops, s, "cxd-sio", 0x200 * NCH);
++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mr);
++    for (int i = 0; i < NCH; i++) {
++        sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq[i]);
++    }
++}
++
++static void sio_class_init(ObjectClass *klass, const void *data)
++{
++    device_class_set_legacy_reset(DEVICE_CLASS(klass), sio_reset);
++}
++
++static const TypeInfo sio_info = {
++    .name = TYPE_CXD_SIO,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(SioState),
++    .instance_init = sio_init,
++    .class_init = sio_class_init,
++};
++
++static void sio_register(void)
++{
++    type_register_static(&sio_info);
++}
++type_init(sio_register)
 diff --git a/hw/misc/cxd90014_sysctl.c b/hw/misc/cxd90014_sysctl.c
 new file mode 100644
 index 0000000..8ea2cb5
@@ -2608,15 +3015,27 @@ index 0000000..8ea2cb5
 +}
 +type_init(sc_register)
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index b1d8d8e..d135388 100644
+index b1d8d8e..839b019 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -161,3 +161,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -161,3 +161,6 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
  # HPPA devices
  system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_sysctl.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_regfile.c'))
++system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_sio.c'))
+diff --git a/hw/misc/trace-events b/hw/misc/trace-events
+index e3f64c0..a93b112 100644
+--- a/hw/misc/trace-events
++++ b/hw/misc/trace-events
+@@ -403,3 +403,6 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
+ i2c_echo_event(const char *id, const char *event) "%s: %s"
+ i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
+ i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
++
++# cxd90014_sio.c
++cxd_sio_xfer(int ch, uint32_t len) "ch%d transfer (len-1 %u)"
 diff --git a/hw/timer/Kconfig b/hw/timer/Kconfig
 index b3d823c..44c8809 100644
 --- a/hw/timer/Kconfig
