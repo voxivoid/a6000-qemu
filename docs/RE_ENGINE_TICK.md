@@ -64,3 +64,15 @@ osal_utm 0x3F045000, **osal_uipc 0x3F049000**, utimer 0x3F056000, backup 0x3F05F
 input 0x3F07E000, udate 0x3F087000, indctr 0x3F08D000, i2c 0x3F092000, sircs 0x3F097000, dmm 0x3F0C7000,
 upm 0x3F31A000, **grm_gles 0x3F346000**(sugilite_ioctl +0x8E8, ISR +0x644), hdmi 0x3F34B000, cec 0x3F372000,
 mmc_drv 0x3F3DC000, liro 0x3F400000. (gdb `module_alloc_update_bounds` 반환 0x4008E034 + .text 앞부분 매칭)
+
+## 6. 패널 출력(VPH OSD)이 열리지 않는 지점 (추가 조사)
+libObj 사용자 코드 브레이크: libObj 베이스는 실행마다 다름 → 같은 gdb 세션에서 커널 구조체로 구한다
+(`find_task_by_vpid`로 comm "im.e" 찾기 → task+0xCC = mm → mm+0 = 첫 VMA; VMA {+4 start, +8 end, +12 next, +72 pgoff};
+크기 0xE0E000·pgoff 0인 VMA = libObj 텍스트).
+- Rigel flush `sub_5DB588`은 계속 호출되지만(100 s에 32회) `sub_5DC9FA` → `sub_5D4EE4` → `sub_5D3BEC` → `sub_5D3F0C`
+  (= `sub_5D86EC(&unk_EEE630)`) 가 0 → "VDF 실행 상태 아님" 경로: `vdf_if_port_send_break`(type 1) + `send_exec`(type 3)만
+  osal 0x80003B로 보내고(커널에서 42회 확인) **`vdf_if_port_send_update`(OSD 레코드)는 한 번도 보내지 않는다**.
+- 그 상태 플래그는 CmdQueue(`sub_5D4DF4`, 0x80003B 수신)의 `sub_5D3A94`가 **DataflowInfra 메시지 id 4096**(`sub_5D4830`: 0x101/0x102/
+  0x8100/0x8101/0x8102 …)을 받아 갱신한다 → 카메라 앱의 dataflow 핀 연결(촬영 모드/라이브뷰 시작)에 의존 [?].
+  센서/ISP 라이브뷰가 모델링되지 않은 것과 연결될 가능성이 높다(미확정).
+- 즉 화면에 픽셀이 나오려면 (a) P3D 실행 (b) VDF dataflow 연결 → OSD 레코드 → VPH AIF 프로그래밍, 둘 다 필요.
