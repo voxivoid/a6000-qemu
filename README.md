@@ -9,7 +9,7 @@ Goal: run the official Sony ILCE-5000 (α5000) firmware 1.10 **unmodified**, wit
 |---|---|
 | `qemu/` | **Not in this repository** (git-ignored local checkout, see *Getting QEMU* below). QEMU v10.1.0 + the a5000 machine (`hw/arm/sony_a5000.c`, `hw/timer/cxd4115_timer.c`, `hw/misc/cxd90014_*.c`, `hw/block/cxd90014_nand.c`, `hw/display/{cxd90014_vph,dmp_smaph,dmp_shader}.c`, Cortex-A5 in `target/arm/tcg/cpu32.c`) |
 | `patches/qemu-v10.1.0-sony-a5000.patch` | All of the above as one patch against upstream QEMU v10.1.0 |
-| `run.sh` | Boots the stock kernel + initrd (`A5K_STOCK_CONSOLE=1` keeps the stock `console=ttynull`) |
+| `run.sh` | Boots the stock kernel + initrd (stock `console=ttynull` by default; `A5K_DEBUG_CONSOLE=1` = serial kernel console for boot debugging) |
 | `provision/` | Factory-style NAND programming initramfs (the Sony FTL formats an empty NAND, then writes your `NAND.BIN`) |
 | `tools/` | `mkdata.py` (build `data/` from the updater), `a5ktrace.c` (TCG trace plugin, build: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py` (HMP), `klog.py` (Sony klog ring), `wbi.py` (WBI snapshot lookup / page walk), `sym.py` (kernel symbols) |
 | `re/` | Kernel symbols (`kernel_syms.txt`). The ELF rebuild (`vmlinux.elf`) and real-camera logs stay local (not published) |
@@ -40,14 +40,14 @@ mkdir -p qemu/build
 (cd qemu/build && ../configure --target-list=arm-softmmu --disable-docs --disable-werror \
     --enable-debug-info --disable-sdl --enable-cocoa --disable-gtk --disable-fuse && ninja qemu-system-arm)  # macOS; on Linux use --enable-gtk or --enable-sdl instead of --enable-cocoa
 ./provision.sh                          # once: format an empty NAND + write NAND.BIN -> state/a5000.nand
-./run.sh -nographic                     # serial console (Ctrl-A X quits)
-./run.sh -monitor stdio                 # QEMU window shows the panel (console 0)
+./run.sh -monitor stdio                 # QEMU window = camera panel (console 0); the stock UI appears after the boot finishes
+A5K_DEBUG_CONSOLE=1 ./run.sh -nographic # boot debugging: kernel log on the serial console (Ctrl-A X quits)
 ./run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb re/vmlinux.elf -ex 'target remote :1234'
 ```
 Camera buttons from the host: arrow keys / Enter = wheel and centre, `M` = MENU, `P` = PLAY, `R` = MOVIE, Delete = DELETE (or HMP `sendkey`). SD card: `-drive if=sd` / `A5K_SD`.
 
 ## Status (2026-11-14)
-- Note: use `A5K_STOCK_CONSOLE=1` for engine work (the debug serial console collides with av-cam's UART0 monitor)
+- Note: the debug serial console (`A5K_DEBUG_CONSOLE=1`) changes the stock cmdline and shares UART0 with av-cam's monitor; the UI is only tested without it
 - ✅ Quad Cortex-A5 (VFPv4-D16), GIC, L2C-310, CXD4115 timers/WDT, SYSCTL, PL011, clock generator, USB OTG/HDC reset, BOSS DMAC
 - ✅ NAND: ARM7 NAND firmware HLE (mailbox, LDEC LZ77) + raw NAND backing file; `provision.sh` writes a NAND dump through the Sony FTL
 - ✅ Two-stage boot like the real camera (`docs/BOOT.md`): the bootloader's NAND work is replayed through the Sony NAND stack, then the **kernel read from NAND** boots

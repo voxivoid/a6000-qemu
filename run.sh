@@ -10,7 +10,9 @@
 # Needs emulator/state/a5000.nand (create with emulator/provision.sh).
 #
 # Env: A5K_NAND=<file>       NAND backing file (default state/a5000.nand)
-#      A5K_STOCK_CONSOLE=1   keep the stock console=ttynull (no serial log)
+#      A5K_DEBUG_CONSOLE=1   serial kernel console on UART0 (changes the stock
+#                            cmdline: console=ttyAM0; for boot debugging only,
+#                            the stock UI is not tested with it)
 #      A5K_DIRECT=1          old direct boot: host kernel + stock initrd
 #      A5K_SD=<img>          SD card image (FAT32, e.g. state/sd.img)
 #      A5K_HANDOFF=<file>    bootloader hand-off page (default data/handoff_80021000.bin)
@@ -21,7 +23,8 @@ FW="${A5K_FW:-$E/firmware}"; [ -d "$FW" ] || FW="$R/firmware"
 F="$FW/unpacked/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked_unpacked"
 NAND="${A5K_NAND:-$E/state/a5000.nand}"
 M="sony-a5000"
-[ "${A5K_STOCK_CONSOLE:-0}" = 1 ] || M="$M,debug-console=on"
+# stock console=ttynull by default (A5K_STOCK_CONSOLE=1 is the old spelling)
+[ "${A5K_DEBUG_CONSOLE:-0}" = 1 ] && [ "${A5K_STOCK_CONSOLE:-0}" != 1 ] && M="$M,debug-console=on"
 if [ "${A5K_DIRECT:-0}" = 1 ]; then
   exec "$E/qemu/build/qemu-system-arm" -M "$M" -m 512M \
     -kernel "$F/vmlinux.bin" -initrd "$F/initrd.img" "$@"
