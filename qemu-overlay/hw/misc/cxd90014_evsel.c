@@ -91,6 +91,9 @@ static void ev_cmp_fire(void *opaque)
 {
     Cmp *c = opaque;
     EvselState *s = c->s;
+    if (!(R(0x110 + 8 * c->k) & 1)) {
+        return;                 /* disarmed meanwhile */
+    }
     s->stb |= 1u << c->k;
     ev_update(s);
 }
@@ -135,7 +138,14 @@ static void ev_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
         break;
     default:
         R(off) = v;
-        if (off >= 0x110 && off < 0x110 + 8 * NCMP) {
+        /*
+         * Only the arm register (+0x110 + 8k) arms or disarms; a write to
+         * the compare value (+0x114 + 8k) just latches.  The IRQ 84
+         * handler disarms by writing a past compare value and then
+         * +0x110 = 0; re-evaluating on the compare write fired the
+         * comparator a second time (docs/RE_ENGINE_STABILITY.md §2).
+         */
+        if (off >= 0x110 && off < 0x110 + 8 * NCMP && !((off - 0x110) & 7)) {
             ev_cmp_arm(s, (off - 0x110) / 8);
         }
         break;

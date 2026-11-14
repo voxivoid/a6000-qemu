@@ -207,6 +207,18 @@ static uint64_t sysv_read(void *opaque, hwaddr off, unsigned size)
     if (off == 0x98) {
         return s->frame;
     }
+    if (off == 0x28) {
+        /*
+         * bit0 = frame phase, follows the frame counter parity.  In its 2V
+         * frame mode av-cam's VD_Pre (4376CFDC, phase read by 43AB5486)
+         * only hands out module requests on frames with bit0 = 1; a
+         * constant 0 stalled the mode sequencer at step 12 whenever the
+         * first mode request came after the 2V switch
+         * (docs/RE_ENGINE_STABILITY.md §1).  hypothesis: polarity/phase
+         * relative to the engine frame event.
+         */
+        return (s->sysv[off / 4] & ~1u) | (s->frame & 1);
+    }
     return s->sysv[off / 4];
 }
 
