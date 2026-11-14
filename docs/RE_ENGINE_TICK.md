@@ -117,3 +117,10 @@ libObj 사용자 코드 브레이크: libObj 베이스는 실행마다 다름 �
 - 스냅샷 프레임은 0 → `-drive if=sd`가 있으면 보드가 그 비트를 세우고 CRC 재계산(`a5k_submicro_card_inserted`).
   결과: libInfraMediaDetect → `checkinsertedmedia` → SDHCI로 카드 초기화(CMD0/8/41/2/3/9/7/16/51/6/30/42) → FAT 읽기(CMD17/18).
   아직 기록(CMD24/25) 없음: 첫 부팅 "지역/날짜/시간 설정" 대화상자에서 키 입력을 기다리는 중.
+
+## 10. 첫 화면 이후 (진행 중)
+- GPU P3D 실행(서브에이전트 2개: `RE_GPU_P3D_CMD.md`, `RE_GPU_P3D_SHADER.md`) + 패널 OSD RGBA4444 → 순정 첫 부팅 화면
+  "지역/날짜/시간을 설정합니다. [확인][취소]"가 QEMU 콘솔 0에 실기와 같은 모양으로 표시.
+- 버튼 프런트엔드(`a5k_key_event`): Enter → GPIO P10.10 low. "확인"을 누르면 UI가 반응하여 화면이 바뀐다.
+  그러나 다음 프레임은 PSC 지우기 + PPF 전송만 있고 P3D 그리기가 없다(빈 화면) → 다음 화면(지역 설정)이 그려지기 전
+  앱이 다른 무언가(모드 전환 완료 등)를 기다리는 것으로 보임 [?]. 같은 시점부터 0xF3C10xxx(CEC 블록) 폴링이 급증.
