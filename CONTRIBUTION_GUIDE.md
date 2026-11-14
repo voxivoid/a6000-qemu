@@ -33,8 +33,8 @@
 | `emulator/qemu/` (내부 repo) | QEMU v10.1.0 소스, 작업 브랜치 **`sony-a5000`** (기준 태그 `v10.1.0`) |
 
 ### 3.2 커밋 규칙
-- **의미 있는 작업 단위마다 커밋한다** (새 장치 모델, 부팅 마일스톤, 버그 원인 해결, 도구 추가, 문서 갱신). 묻지 않고 커밋한다. 푸시는 요청이 있을 때만.
-- 순서: ① `git -C qemu commit` → ② 패치 갱신 `git -C qemu diff v10.1.0 HEAD > patches/qemu-v10.1.0-sony-a5000.patch` → ③ 외부 repo 커밋.
+- **의미 있는 작업 단위마다 커밋한다** (새 장치 모델, 부팅 마일스톤, 버그 원인 해결, 도구 추가, 문서 갱신). 묻지 않고 커밋하고, **커밋할 때마다 바로 push한다**(원격 `origin` = GitHub `Oein/a5000-emulator`, private).
+- 순서: ① `git -C qemu commit` → ② 패치 갱신 `git -C qemu diff v10.1.0 HEAD > patches/qemu-v10.1.0-sony-a5000.patch` → ③ 외부 repo 커밋 → ④ `git push`.
 - 커밋은 검증된 상태에서 한다(빌드 성공 + 해당 단계 부팅 확인). 실패한 실험은 커밋하지 않는다.
 - 메시지 형식:
   ```
@@ -45,7 +45,7 @@
   ```
   영역 예: `sony-a5000`, `cxd4115`, `nand`, `provision`, `tools`, `docs`.
 - 작성자는 전역 git 설정을 그대로 쓴다. 커밋 끝의 공동 작성자 표기는 세션 지침을 따른다.
-- **커밋 금지 대상**: 펌웨어 원본·추출물(`firmware/`), `backup/NAND.BIN`·`SETTING.TAR`, 생성되는 NAND 이미지, 펌웨어에서 파생된 바이너리(`re/vmlinux.elf`, `provision/prov.cpio`, `provision/a5kcopy`), 빌드 산출물.
+- **커밋 금지 대상**: 펌웨어 원본·추출물(`firmware/`), `backup/NAND.BIN`·`SETTING.TAR`, 생성되는 NAND 이미지, 펌웨어에서 파생된 바이너리(`re/vmlinux.elf`, `provision/*.cpio`(Sony 모듈 포함), `provision/a5kcopy`), Sony 바이너리의 디컴파일 결과(`re/ida_stor/` 등), 실기에서 얻은 로그·RAM 스냅샷 데이터(`re/real_kernel_log.txt`, `data/*.bin`), 개인정보, 빌드 산출물. 새 파일은 커밋 전 `.gitignore`와 대조한다.
 
 ## 4. 코드 규칙 (QEMU)
 - QEMU 코딩 스타일(4칸 들여쓰기, `/* */` 주석, 80열 권장)을 따른다.
