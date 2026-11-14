@@ -94,3 +94,16 @@ libObj 사용자 코드 브레이크: libObj 베이스는 실행마다 다름 �
   `access_process_vm`(0x400C5AB4)을 gdb `call`로 불러 im.elf 메모리에 1로 기록(26 s, 50 s 시점 모두 성공) → 이후
   **앱 로그 0건**: Appframework 메인 루프는 poll()에서 유휴, 다음 이벤트(전원 ON 계열로 추정)를 기다린다.
   (다른 프로세스 메모리 쓰기 절차: `__kmalloc(16,0x20)`로 커널 버퍼 → `access_process_vm(task, va, kbuf, n, write)`.)
+
+## 8. 정정 + 패널 OSD 개통 (hwtimer)
+- gdb 브레이크포인트 `commands … c`는 여러 vCPU가 동시에 걸리면 "target is running"으로 세션이 끊겨 **이벤트를 놓친다**.
+  §6·§7의 "보내지 않는다/등록 안 됨" 일부는 이 때문에 틀렸다. 이후 추적은 TCG 플러그인 `tools/a5ktrace.c`로 한다
+  (`-plugin tools/liba5ktrace.dylib,words=N,pc=0x…,r0=0x… -d plugin -D log`, 빌드: README).
+- 플러그인 재측정: 앱(0x920168)·im.elf(0x920169) 모두 UPM에 등록 → UPM active(0x94016A로 0x92015C) / ObjRenderer가 OSD 핀
+  연결(0x290119) / VDF 응답 191회 / **Appframework가 `vdf_if_port_send_update` 2회**(패널, 640×480, 16 bpp, PA 0x8F7EE000).
+- 그런데 VPH 태스크(task 43, `43904274`)는 `43AC2FD0`을 2번만 실행하고 `dly_tsk(11/12)`(`sub_4355D498`)에서 영구 정지:
+  liro `dly_tsk` → 커널 `hwtimer_schedule_timeout` → 만료 콜백 `hwtimer_process_timeout`이 한 번도 불리지 않음.
+- 원인: hwtimer0..3(타이머 ch5..8, CTRL **0x1132**)은 커널의 CPU별 시계 겸 비교 타이머(`hwtimer_intr`가 +0xC를 읽어 만료 비교).
+  모델이 RELOAD(bit8) 일치 시 카운터를 0으로 리셋해 시계가 만료 시각에 도달하지 못했다. **bit5 = 일치 후에도 계속 계수**로 수정 [가설].
+- 결과: VPH 태스크가 매 프레임 실행, **패널 OSD 레이어 설정**(0x144 = 0x03000232, ch53 = 0x8F7EE000 / 0x500 B/line / 480 lines).
+  남은 검정 화면의 원인은 버퍼 내용(P3D 미실행) 하나.
