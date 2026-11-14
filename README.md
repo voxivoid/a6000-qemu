@@ -8,7 +8,9 @@ Goal: run the official Sony ILCE-5000 (α5000) firmware 1.10 **unmodified**, wit
 | Path | Contents |
 |---|---|
 | `qemu/` | **Not in this repository** (git-ignored local checkout, see *Getting QEMU* below). QEMU v10.1.0 + the a5000 machine (`hw/arm/sony_a5000.c`, `hw/timer/cxd4115_timer.c`, `hw/misc/cxd90014_*.c`, `hw/block/cxd90014_nand.c`, `hw/display/{cxd90014_vph,dmp_smaph,dmp_shader}.c`, Cortex-A5 in `target/arm/tcg/cpu32.c`) |
-| `patches/qemu-v10.1.0-sony-a5000.patch` | All of the above as one patch against upstream QEMU v10.1.0 |
+| `qemu-overlay/` | **All new QEMU source files** (machine, device models, GPU), at their QEMU paths — read the emulator code here |
+| `patches/qemu-v10.1.0-sony-a5000.patch` | Only the small edits to existing upstream files (build glue, Cortex-A5, A9MPCore, L2C-310) |
+| `setup-qemu.sh` | Creates `qemu/` = upstream v10.1.0 + overlay + patch |
 | `run.sh` | Boots the stock kernel + initrd (stock `console=ttynull` by default; `A5K_DEBUG_CONSOLE=1` = serial kernel console for boot debugging) |
 | `provision/` | Factory-style NAND programming initramfs (the Sony FTL formats an empty NAND, then writes your `NAND.BIN`) |
 | `tools/` | `mkdata.py` (build `data/` from the updater), `a5ktrace.c` (TCG trace plugin, build: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py` (HMP), `klog.py` (Sony klog ring), `wbi.py` (WBI snapshot lookup / page walk), `sym.py` (kernel symbols) |
@@ -27,23 +29,11 @@ All commands below run from the repository root.
 Step-by-step instructions: [`data/README.md`](data/README.md).
 
 ## Getting QEMU
-The `qemu/` directory is **not published**: it is a local checkout of upstream QEMU with our commits on top.
-Everything we changed in QEMU is in `patches/qemu-v10.1.0-sony-a5000.patch`, which applies cleanly to the `v10.1.0` tag:
+The `qemu/` directory is **not published**. It is rebuilt from upstream QEMU `v10.1.0` plus this repository:
 ```sh
-git clone --branch v10.1.0 --depth 1 https://gitlab.com/qemu-project/qemu.git qemu
-git -C qemu apply ../patches/qemu-v10.1.0-sony-a5000.patch
-mkdir -p qemu/build
+./setup-qemu.sh     # clone v10.1.0 into qemu/, copy qemu-overlay/, apply the patch
 ```
-
-## Build / run
-```sh
-(cd qemu/build && ../configure --target-list=arm-softmmu --disable-docs --disable-werror \
-    --enable-debug-info --disable-sdl --enable-cocoa --disable-gtk --disable-fuse && ninja qemu-system-arm)  # macOS; on Linux use --enable-gtk or --enable-sdl instead of --enable-cocoa
-./provision.sh                          # once: format an empty NAND + write NAND.BIN -> state/a5000.nand
-./run.sh -monitor stdio                 # QEMU window = camera panel (console 0); the stock UI appears after the boot finishes
-A5K_DEBUG_CONSOLE=1 ./run.sh -nographic # boot debugging: kernel log on the serial console (Ctrl-A X quits)
-./run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb re/vmlinux.elf -ex 'target remote :1234'
-```
+Developers working in `qemu/` (branch `sony-a5000`) run `tools/export-qemu.sh` after each QEMU commit to refresh `qemu-overlay/` and the patch.
 Camera buttons from the host: arrow keys / Enter = wheel and centre, `M` = MENU, `P` = PLAY, `R` = MOVIE, Delete = DELETE (or HMP `sendkey`). SD card: `-drive if=sd` / `A5K_SD`.
 
 ## Status (2026-11-14)
@@ -71,6 +61,6 @@ Camera buttons from the host: arrow keys / Enter = wheel and centre, `M` = MENU,
 - Work on real hardware is at your own risk. This emulator never writes to a real camera.
 
 ## License
-- QEMU patch (`patches/`, the changes in `qemu/`), `tools/`, `provision/` and scripts: **GPL-2.0-or-later** (`LICENSE`, same as QEMU)
+- QEMU code (`qemu-overlay/`, `patches/`), `tools/`, `provision/` and scripts: **GPL-2.0-or-later** (`LICENSE`, same as QEMU)
 - Documentation (`docs/`, `*.md`): **CC BY 4.0**
 - QEMU itself remains under its original authors' licenses (`qemu/COPYING`, `qemu/LICENSE`).

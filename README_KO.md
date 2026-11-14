@@ -8,7 +8,9 @@
 | 경로 | 내용 |
 |---|---|
 | `qemu/` | **이 저장소에 없음**(git 제외된 로컬 체크아웃, 아래 *QEMU 받기* 참고). QEMU v10.1.0 + a5000 머신 (`hw/arm/sony_a5000.c`, `hw/timer/cxd4115_timer.c`, `hw/misc/cxd90014_sysctl.c`, `hw/block/cxd90014_nand.c`, `target/arm/tcg/cpu32.c`의 cortex-a5) |
-| `patches/qemu-v10.1.0-sony-a5000.patch` | 위 변경 전체 (QEMU 원본에 재적용용) |
+| `qemu-overlay/` | **QEMU에 새로 추가한 소스 전부**(머신·장치 모델·GPU)를 QEMU 경로 그대로 — 에뮬레이터 코드는 여기서 읽으면 됨 |
+| `patches/qemu-v10.1.0-sony-a5000.patch` | 기존 업스트림 파일의 작은 수정만 (빌드 등록, Cortex-A5, A9MPCore, L2C-310) |
+| `setup-qemu.sh` | `qemu/` = 업스트림 v10.1.0 + 오버레이 + 패치 생성 |
 | `run.sh` | 순정 커널+initrd로 부팅 (기본 = 순정 `console=ttynull`; `A5K_DEBUG_CONSOLE=1` = 부팅 디버그용 시리얼 커널 콘솔) |
 | `provision/` | 공장식 NAND 프로그래밍 initramfs (Sony FTL이 빈 NAND를 포맷 → `NAND.BIN` 기록) |
 | `tools/` | `mkdata.py`(업데이터에서 `data/` 생성), `a5ktrace.c`(TCG 추적 플러그인: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py`(HMP), `klog.py`(Sony klog 링 읽기), `wbi.py`(실기 WBI 스냅샷 조회·페이지워크), `sym.py`(커널 심볼) |
@@ -27,22 +29,11 @@
 단계별 방법: [`data/README.md`](data/README.md).
 
 ## QEMU 받기
-`qemu/` 폴더는 **공개하지 않습니다**. 업스트림 QEMU의 로컬 체크아웃 위에 우리 커밋을 쌓은 것입니다.
-QEMU에서 바꾼 전부는 `patches/qemu-v10.1.0-sony-a5000.patch`에 있고, `v10.1.0` 태그에 그대로 적용됩니다:
+`qemu/` 폴더는 **공개하지 않습니다**. 업스트림 QEMU `v10.1.0`과 이 저장소로 다시 만듭니다:
 ```sh
-git clone --branch v10.1.0 --depth 1 https://gitlab.com/qemu-project/qemu.git qemu
-git -C qemu apply ../patches/qemu-v10.1.0-sony-a5000.patch
-mkdir -p qemu/build
+./setup-qemu.sh     # v10.1.0을 qemu/에 클론 → qemu-overlay/ 복사 → 패치 적용
 ```
-
-## 빌드 / 실행
-```sh
-(cd qemu/build && ../configure --target-list=arm-softmmu --disable-docs --disable-werror \
-    --enable-debug-info --disable-sdl --enable-cocoa --disable-gtk --disable-fuse && ninja qemu-system-arm)  # macOS; on Linux use --enable-gtk or --enable-sdl instead of --enable-cocoa
-./run.sh -monitor stdio                 # QEMU 창 = 카메라 패널(console 0), 부팅이 끝나면 순정 UI 표시
-A5K_DEBUG_CONSOLE=1 ./run.sh -nographic # 부팅 디버그: 시리얼 콘솔에 커널 로그 (Ctrl-A X 종료)
-./run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb re/vmlinux.elf -ex 'target remote :1234'
-```
+`qemu/`(브랜치 `sony-a5000`)에서 개발할 때는 QEMU 커밋마다 `tools/export-qemu.sh`로 `qemu-overlay/`와 패치를 갱신합니다.
 
 ## 현재 상태 (2026-11-14)
 - 주의: 디버그 시리얼 콘솔(`A5K_DEBUG_CONSOLE=1`)은 순정 cmdline을 바꾸고 UART0를 av-cam 모니터와 공유함 — UI는 이것 없이만 검증됨
@@ -77,6 +68,6 @@ A5K_DEBUG_CONSOLE=1 ./run.sh -nographic # 부팅 디버그: 시리얼 콘솔에 
 - 실기기 작업은 본인 책임입니다. 이 에뮬레이터는 실기에 아무것도 쓰지 않습니다.
 
 ## 라이선스
-- QEMU 패치(`patches/`, `qemu/`의 변경분)와 `tools/`·`provision/`·스크립트: **GPL-2.0-or-later** (`LICENSE`, QEMU와 동일)
+- QEMU 코드(`qemu-overlay/`, `patches/`)와 `tools/`·`provision/`·스크립트: **GPL-2.0-or-later** (`LICENSE`, QEMU와 동일)
 - 문서(`docs/`, `*.md`): **CC BY 4.0**
 - QEMU 자체는 원 저작권자의 라이선스(`qemu/COPYING`, `qemu/LICENSE`)를 따릅니다.

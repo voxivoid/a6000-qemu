@@ -29,12 +29,12 @@ Every hardware constant (address, IRQ, reset value, bit meaning) records its sou
 ### 3.1 Two repositories
 | Repository | Contents |
 |---|---|
-| this repository (outer) | docs, tools, provisioning, `run.sh`, `patches/` — `qemu/` is ignored (`.gitignore`) |
+| this repository (outer) | docs, tools, provisioning, `run.sh`, `setup-qemu.sh`, `qemu-overlay/` (new QEMU files), `patches/` (edits to upstream files) — `qemu/` is ignored (`.gitignore`) |
 | `qemu/` (inner, local only) | QEMU v10.1.0 source, work branch **`sony-a5000`** (base tag `v10.1.0`) |
 
 ### 3.2 Commit rules
 - **Commit after every meaningful unit of work** (new device model, boot milestone, root cause fixed, tool added, docs updated). Commit without asking, and **push right after every commit** (remote `origin` = GitHub `Oein/a5000-emulator`, **public**).
-- Order: ① `git -C qemu commit` → ② regenerate the patch `git -C qemu diff v10.1.0 HEAD > patches/qemu-v10.1.0-sony-a5000.patch` → ③ commit the outer repository → ④ `git push`.
+- Order: ① `git -C qemu commit` → ② `tools/export-qemu.sh` (refreshes `qemu-overlay/` and `patches/qemu-v10.1.0-sony-a5000.patch` from the committed QEMU HEAD; never edit those copies by hand) → ③ commit the outer repository → ④ `git push`.
 - Commit only verified states (build succeeds + boot checked up to that stage). Failed experiments are not committed.
 - Message format:
   ```
