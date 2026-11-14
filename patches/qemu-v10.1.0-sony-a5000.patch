@@ -1,8 +1,8 @@
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index 2aa4b5d..b1b58a7 100644
+index 2aa4b5d..b3359e0 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
-@@ -692,3 +692,21 @@ config ARMSSE
+@@ -692,3 +692,22 @@ config ARMSSE
      select UNIMP
      select SSE_COUNTER
      select SSE_TIMER
@@ -21,6 +21,7 @@ index 2aa4b5d..b1b58a7 100644
 +    select CXD90014_SA
 +    select CXD90014_NAND
 +    select CXD90014_DMAC
++    select CXD90014_USBHDC
 +    select DMP_SMAPH
 +    select SDHCI
 +    select SD
@@ -299,6 +300,50 @@ index c5b6db4..1e3ced9 100644
 +# cxd4115_timer.c
 +cxd4115_write(uint32_t ch, uint32_t off, uint32_t val) "ch%u +0x%x = 0x%08x"
 +cxd4115_fire(uint32_t ch, uint32_t ctrl) "ch%u match ctrl=0x%x"
+diff --git a/hw/usb/Kconfig b/hw/usb/Kconfig
+index 69c663b..cd352cf 100644
+--- a/hw/usb/Kconfig
++++ b/hw/usb/Kconfig
+@@ -147,3 +147,6 @@ config XLNX_USB_SUBSYS
+ config USB_CHIPIDEA
+     bool
+     select USB_EHCI_SYSBUS
++
++config CXD90014_USBHDC
++    bool
+diff --git a/hw/usb/meson.build b/hw/usb/meson.build
+index 17360a5..a8d3150 100644
+--- a/hw/usb/meson.build
++++ b/hw/usb/meson.build
+@@ -90,3 +90,6 @@ endif
+ system_ss.add(when: ['CONFIG_USB', 'CONFIG_XEN_BUS', libusb], if_true: files('xen-usb.c'))
+ 
+ modules += { 'hw-usb': hw_usb_modules }
++
++# Sony a5000 (CXD90014) device controller + HDMAC + VBUS glue
++system_ss.add(when: 'CONFIG_CXD90014_USBHDC', if_true: files('cxd90014_usbhdc.c'))
+diff --git a/hw/usb/trace-events b/hw/usb/trace-events
+index dd04f14..4351fd0 100644
+--- a/hw/usb/trace-events
++++ b/hw/usb/trace-events
+@@ -368,3 +368,17 @@ canokey_handle_data_out(uint8_t ep_out, uint32_t out_len) "ep %d len %d"
+ canokey_handle_data_in(uint8_t ep_in, uint32_t in_len) "ep %d len %d"
+ canokey_realize(void)
+ canokey_unrealize(void)
++
++# cxd90014_usbhdc.c
++cxd_usbhdc_read(uint64_t off, uint32_t v) "hdc read 0x%"PRIx64" -> 0x%x"
++cxd_usbhdc_write(uint64_t off, uint32_t v) "hdc write 0x%"PRIx64" = 0x%x"
++cxd_usbhdc_epcmd(int n, uint32_t v, uint32_t ctrl) "EPCMD%d = 0x%x -> EPCTRL 0x%x"
++cxd_usbhdc_dmac(int k, uint32_t v, uint32_t tci) "DMAC%d = 0x%x DMATCI %u"
++cxd_usbhdc_dma_end(int k, uint32_t tc, uint32_t tci, uint32_t dmas) "DMA ch%d end TC %u/%u DMAS 0x%x"
++cxd_usbhdc_hdmac_write(uint64_t off, uint64_t v) "hdmac write 0x%"PRIx64" = 0x%"PRIx64
++cxd_usbhdc_cable(const char *what, uint32_t gen) "%s gen %u"
++cxd_usbhdc_setup(uint8_t type, uint8_t req, uint16_t value, uint16_t index, uint16_t len) "SETUP %02x %02x %04x %04x %u"
++cxd_usbhdc_pkt(const char *dir, int n, uint32_t total) "%s EP%d total %u"
++cxd_usbhdc_au_rx(uint8_t type, uint8_t ep, uint32_t id, uint32_t arg, uint32_t len) "A5KU rx type 0x%x ep 0x%x id %u arg 0x%x len %u"
++cxd_usbhdc_au_tx(uint8_t type, uint8_t ep, uint32_t id, uint32_t arg, uint32_t len) "A5KU tx type 0x%x ep 0x%x id %u arg 0x%x len %u"
++cxd_usbhdc_req_done(uint8_t type, uint8_t ep, uint32_t id, uint32_t status) "request type 0x%x ep 0x%x id %u status %u"
 diff --git a/target/arm/tcg/cpu32.c b/target/arm/tcg/cpu32.c
 index a2a23ea..6736165 100644
 --- a/target/arm/tcg/cpu32.c

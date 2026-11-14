@@ -61,6 +61,7 @@
 - ⏳ 카메라 프런트엔드: 센서 라이터(P2S, IRQ 38)·프런트엔드 프레임 IRQ·AIF 채널 그룹(IRQ 40–50) 모델 → 캡처 오류 해소, 라이브뷰는 아직 검정(YC 출력 요청 없음, `docs/RE_SENSOR_ISP.md` §7)
 - ✅ SA DSP 코어: null 모델(`cxd90014_sa.c`)로 센서 결함표 작업 완료 → 엔진이 모니터링 상태 도달, 촬영 화면에 노출 표시(셔터/조리개 눈금). 라이브뷰는 YC 상태 2 전에서 정지(`docs/RE_LIVEVIEW_REQUEST.md` §9), PLAY·SD 동작: 카드 없음 재생 화면, 카드가 있으면 이미지 DB 생성 대화상자 → 카드에 DB 생성(첫 SD 쓰기) (`docs/RE_PLAYBACK_SWITCH.md`)
 - ✅ 라이브뷰 경로: SYSV를 마스터 V 클럭으로 바꾼 뒤 펌웨어가 패널 YUV 레이어를 켜고 ch51을 매 프레임 설정 (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51은 8비트 휘도 평면(1024×516)을 패널로 스케일; 채우는 ISP 모델이 아직 없어 렌즈 캡을 닫은 것처럼 검정; `-global cxd90014-aif.lv-source=bars|ramp|file:PATH.pgm`이면 리사이즈 출력 시점에 그 버퍼로 테스트 휘도 프레임을 기록(디버그, `docs/RE_LIVEVIEW_IMAGE.md`)
+- ✅ USB 디바이스 (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS 글루 모델과 TCP 가상 케이블("A5KU") → 카메라가 열거됨(MTP 054C:08D3), `pmca-console info -d socket`이 ILCE-5000 / 1.10 출력, `install`(연결 테스트) 완료, 업데이터 코어가 054C:03E2로 열거되어 PMCA 업데이터 셸 실행. SWITCH_MODE 후 업데이터로의 재부팅은 아직 미모델(수동 콜드 부팅)
 - ⬜ 센서/ISP(라이브뷰), 렌즈 시리얼 프로토콜, 오디오
 
 ## 사용
@@ -88,6 +89,18 @@
 HMP 모니터에서도 입력 가능: `sendkey ret`, `sendkey down`, `sendkey m`, …
 QEMU 자체 단축키: Ctrl+Opt+G = 마우스 해제, Ctrl+Opt+1 / 2 = 패널(console 0) / 디버그 프레임버퍼 화면 전환.
 첫 부팅 대화상자가 뜬 뒤 약 20초 동안 누른 키는 펌웨어가 무시합니다(입력 서비스가 아직 비활성).
+
+### USB (가상 케이블)
+USB 디바이스 컨트롤러(`cxd90014-usbhdc`, `docs/RE_USB_DEVICE_CONTROLLER.md`)가 카메라의 실제 USB 가젯을 "A5KU" 프로토콜(`docs/RE_USB_HOST_PATH.md` §5)로
+TCP에 내보낸다. TCP 클라이언트가 접속하면 케이블이 꽂힌 것(VBUS on), 접속이 끊기면 케이블을 뽑은 것이다. 클라이언트가 없으면 카메라는
+지금처럼 케이블 없음 상태다. 게스트 재부팅 중에도 케이블은 꽂힌 채 유지된다.
+```sh
+./run.sh -M usb-socket=127.0.0.1:7643        # 또는 -chardev socket,id=usb0,host=127.0.0.1,port=7643,server=on,wait=off -global cxd90014-usbhdc.chardev=usb0
+```
+호스트 쪽: `tools/pmca-socket/`의 `socket` 백엔드를 붙인 Sony-PMCA-RE (해당 README 참고):
+```sh
+python3 pmca-console.py info -d socket       # A5K_USB=host:port (기본 127.0.0.1:7643), A5K_USB_TIMEOUT=ms, A5K_USB_DEBUG=1
+```
 
 ## 펌웨어 · 법적 고지
 - 이 저장소에는 **Sony 펌웨어·바이너리·기기 덤프가 들어 있지 않습니다.** 실행하려면 **본인 소유 기기**에서 직접 추출한 NAND 덤프와 Sony가 공개 배포한 공식 업데이터에서 얻은 파일이 필요합니다(`data/README.md`). 이 파일들을 저장소나 이슈에 올리지 마세요.

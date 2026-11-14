@@ -56,6 +56,19 @@ Keys are also accepted from the HMP monitor: `sendkey ret`, `sendkey down`, `sen
 QEMU's own hot keys: Ctrl+Opt+G releases the mouse, Ctrl+Opt+1 / 2 switch between the panel (console 0) and the debug frame-buffer view.
 Keys pressed in the first ~20 s after the first-boot dialog appears are ignored by the firmware (input service not active yet).
 
+### USB (virtual cable)
+The USB device controller (`cxd90014-usbhdc`, `docs/RE_USB_DEVICE_CONTROLLER.md`) serves the camera's real USB gadget over
+TCP with the "A5KU" protocol (`docs/RE_USB_HOST_PATH.md` §5). A connected TCP client is a plugged cable (VBUS on); when the
+client disconnects the cable is pulled. Without a client the camera sees no cable, as before. The cable stays plugged across
+a guest reboot.
+```sh
+./run.sh -M usb-socket=127.0.0.1:7643        # or: -chardev socket,id=usb0,host=127.0.0.1,port=7643,server=on,wait=off -global cxd90014-usbhdc.chardev=usb0
+```
+Host side: Sony-PMCA-RE with the `socket` backend from `tools/pmca-socket/` (see its README):
+```sh
+python3 pmca-console.py info -d socket       # A5K_USB=host:port (default 127.0.0.1:7643), A5K_USB_TIMEOUT=ms, A5K_USB_DEBUG=1
+```
+
 ## Status (2026-11-14)
 - Note: the debug serial console (`A5K_DEBUG_CONSOLE=1`) changes the stock cmdline and shares UART0 with av-cam's monitor; the UI is only tested without it
 - ✅ Quad Cortex-A5 (VFPv4-D16), GIC, L2C-310, CXD4115 timers/WDT, SYSCTL, PL011, clock generator, USB OTG/HDC reset, BOSS DMAC
@@ -80,6 +93,7 @@ Keys pressed in the first ~20 s after the first-boot dialog appears are ignored 
 - ⏳ Camera front end: sensor writer (P2S, IRQ 38), front-end frame IRQs, AIF channel groups (IRQs 40–50) modelled; capture errors gone, live view still black (no YC-output request yet, `docs/RE_SENSOR_ISP.md` §7)
 - ✅ SA DSP cores: null model (`cxd90014_sa.c`) completes the imager's defect-table job → the engine reaches monitoring; the shooting screen now shows the exposure readout (shutter/aperture scales). Live view itself still stops before YC state 2 (`docs/RE_LIVEVIEW_REQUEST.md` §9); PLAY and SD work: no-card playback view; with a card the image-database dialog creates the database on the card (first SD writes) (`docs/RE_PLAYBACK_SWITCH.md`)
 - ✅ Live-view path: with SYSV as the master V clock the firmware enables the panel YUV layer and programs ch51 every frame (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51 is an 8-bit luma plane (1024×516) scaled to the panel; nothing fills it yet (no ISP model), so it is black like a capped lens; `-global cxd90014-aif.lv-source=bars|ramp|file:PATH.pgm` writes a test luma frame into that buffer at the resize output (debug, `docs/RE_LIVEVIEW_IMAGE.md`)
+- ✅ USB device (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS glue model with a TCP virtual cable ("A5KU"); the camera enumerates (MTP 054C:08D3), `pmca-console info -d socket` prints ILCE-5000 / 1.10, `install` (connection test) completes, and the updater core enumerates as 054C:03E2 and runs the PMCA updater shell. The reboot into the updater after SWITCH_MODE is not modelled yet (manual cold boot)
 - ⬜ Sensor/ISP (live view), lens serial protocol, audio
 
 ## Firmware and legal notice

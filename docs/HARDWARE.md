@@ -44,12 +44,14 @@ Every value here was recovered from the official 1.10 firmware (kernel
 | ldec (LZ decoder) | 0xF2903000 | 171 | — |
 | gpio_p0..p17 | 0xF2910000 + 0x100·n | — | unimp (`set_led` uses p0 +0x44/+0x48) |
 | system ctrl | 0xF2915000 | — | cxd90014-sysctl: +0 chip id 0x500 (S), +0x44/+0x48 rst set/clr, 0x11 = SoC reset — V |
-| otg | 0xF2920000 | — | — |
+| otg | 0xF2920000 | 232 (VBUS), 233 (ID) | cxd90014-usbhdc: +0x10 bit0 VBUS active low, bit1 ID; 3 = no cable, 2 = A5KU client connected; GIC 232 pulse on change — V (`docs/RE_USB_DEVICE_CONTROLLER.md` §6/§9) |
 | hdmi | 0xF2A24000 | — | — |
 | clkrst4 | 0xF2A30000 | — | unimp |
 | cec | 0xF3C10000 | — | — |
 | dmac ch0-3 / ch4-7 | 0xF0000000 / 0xF0010000 | 189..196 | — |
-| usb ho / h2xbb / hdmac / hdc | 0xF0200000 / F0203000 / F0204000 / F0210000 | 232,233 (fusb vbus/id) | — |
+| usb ho / h2xbb | 0xF0200000 / F0203000 | — | — (host side, unused in device mode) |
+| usb hdmac | 0xF0204000 | 228, 229 (errors only, never raised) | cxd90014-usbhdc region 1 — V for bulk DMA (`docs/RE_USB_DEVICE_CONTROLLER.md` §5/§9) |
+| usb hdc (F_USB20HDC) | 0xF0210000 (0x20000) | 227 | cxd90014-usbhdc region 0; reset values DEVC 0x00010020, EPCTRL 0x500/0x400 are H; enumeration + MTP over A5KU — V (`docs/RE_USB_DEVICE_CONTROLLER.md` §9) |
 | mmc0/1/2 | 0xF0300000/1000/2000 | 218/221/224 | — |
 | ms (Memory Stick) | 0xF0303000 | 206 | — |
 | nand_reg | 0x00020000 (64 KiB) | 172 | cxd90014-nand (reg file + logging) |

@@ -1,0 +1,28 @@
+Sony-PMCA-RE: select the A5KU socket backend with "-d socket".
+Apply in a Sony-PMCA-RE checkout (tested on a82f5ba):
+  cp <emulator>/tools/pmca-socket/socket.py pmca/usb/driver/generic/socket.py
+  patch -p1 < <emulator>/tools/pmca-socket/sony-pmca-re-socket.patch
+Sony-PMCA-RE is MIT licensed, Copyright (c) 2015 ma1co (see LICENSE).
+
+--- a/pmca-console.py
++++ b/pmca-console.py
+@@ -17,7 +17,7 @@
+  parser = argparse.ArgumentParser()
+  if version:
+   parser.add_argument('--version', action='version', version=version)
+- drivers = ['native', 'libusb', 'qemu']
++ drivers = ['native', 'libusb', 'qemu', 'socket']
+  subparsers = parser.add_subparsers(dest='command', title='commands')
+  info = subparsers.add_parser('info', description='Display information about the camera connected via USB')
+  info.add_argument('-d', dest='driver', choices=drivers, help='specify the driver')
+--- a/pmca/commands/usb.py
++++ b/pmca/commands/usb.py
+@@ -156,6 +156,8 @@
+  elif driverName == 'qemu':
+   from ..usb.driver.generic.qemu import MscContext
+   from ..usb.driver.generic.qemu import MtpContext
++ elif driverName == 'socket':
++  from ..usb.driver.generic.socket import MscContext, MtpContext, VendorSpecificContext
+  elif driverName != 'libusb':
+   raise Exception('Unknown driver')
+ 

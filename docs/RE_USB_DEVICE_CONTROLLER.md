@@ -529,3 +529,53 @@ Per function:
 7. Whether the hardware latches FADDR after the status stage (MODE bit3). Irrelevant to a virtual host.
 8. Userland stall before 0xE305 (RE_USB §4.2/§6.1) blocks any of this from being exercised. Resolve it first, or force
    `start_gadget` from gdb to test the model.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 9. Implementation status
+
+Model: `hw/usb/cxd90014_usbhdc.c` (QEMU type `cxd90014-usbhdc`), one device with three MMIO regions: hdc 0xF0210000
+(0x20000, GIC 227), HDMAC 0xF0204000 (0x1000, GIC 228/229 wired but never raised) and the OTG glue 0xF2920000 (0x1000,
++0x10 VBUS/ID, GIC 232/233). It replaces the `otg` and `usb-hdc` register files of `sony_a5000.c`. The A5KU server of
+`docs/RE_USB_HOST_PATH.md` §5 lives in the same file. Trace events: `cxd_usbhdc_*`.
+
+| Spec item | Status | Notes |
+|---|---|---|
+| CONF bit2 soft reset (§2.1, §2.11) | done | self-clearing; resets DEVC = 0x00010020, DEVS events, INTS, INTEN, FADDR, TESTC, hdc+0x18, DMA and EP state |
+| INTEN/INTS (§2.2) | done | bits 3/4/8/9 latched W0C; bit1 = OR(DEVS & DEVC)[31:24]; bits 16+n = OR(EPCTRL status & IE); IRQ 227 level over bits 1-4, 8, 9, 16-27 |
+| DEVC/DEVS (§2.3) | done | DEVS bit0 = 1, bit17 = DEVC bit0 (FS only when forced), events 24-31 W0C. Events are only raised when their DEVC enable is set |
+| FADDR, TSTAMP, TESTC, OTG* 0x3xx | done | store; TSTAMP = virtual ms & 0x7FF |
+| HDC DMA registers (§2.5) | done | DMATC/DMAS cleared when DMACk bit0 goes 0 → 1; DMAS = 3 on a short OUT packet or ZLP |
+| EPCMD (§2.6) | done | fields applied on every write, strobes one-shot, reads 0 (never busy). Strobe order: status clear, STOP, INIT, START, STALL set/clear, BUFWR, BUFRD. Bit 7 logged as LOG_UNIMP |
+| EPCTRL (§2.7) | done | live bits 6-11 computed from the buffer state; a write restores the reset state (0x500 / 0x400) |
+| EPCONF / EPCOUNT (§2.8) | done | EPCOUNT lo stored, hi owned by the model |
+| Buffer RAM, DMA ports (§2.9) | done | RAM any width; DMA ports are never accessed (option (b) of §5: the hdc copies with the HDMAC addresses). CPU accesses to them are logged |
+| Endpoint engine (§3) | done | one packet in flight per EP (double buffering not pipelined). OUT packets only when the EP is armed (DMA running for it, or IE18 for PIO). IN EPn: status26 per packet taken, status27 when all buffers are empty, and when IE19 is enabled while already empty |
+| Plug-in / pull-up (§4.1) | done | attach = VBUS && MODE bit1 && DEVC bit16 = 0 |
+| Bus reset (§4.2) | done | DEVS29 → wait for W0C → DEVS28 (bit17 = 0, HS) → wait for W0C |
+| Control transfers (§4.3) | done | SETUP clears the EP0 stall and is written to the OUT buffer even if it is full; the pre-armed status ZLP is taken only after the OUT data stage; the IN status ZLP is injected after the IN data; the reply waits until the firmware has cleared the status-stage EP0 status (or its IE) |
+| Bulk OUT/IN PIO and DMA (§4.4, §4.5) | done | IN DMA: packets of mps pulled from DMACSA + DMATC; a trailing ZLP when DMACk bit3 and the last packet was full; INTS bit(8+k) after the last packet |
+| Disconnect / re-enumeration (§4.6) | done | VBUS off, DEVC bit16 0 → 1 or a soft reset = detach |
+| HDMAC (§5) | done (b) | registers stored; EB cleared and SS = 5 at the end of a transfer |
+| VBUS glue (§6) | done | +0x10 = 2 with a client connected, 3 without; GIC 232 pulse on every change; hdc+0x104 = 0 (SDP) |
+
+Deviations from this spec, all **H**:
+* EPCONF is kept across the CONF bit2 soft reset (§2.11 lists it as 0). `transition_to_idle` performs a soft reset after
+  the probe wrote EPCONF0 = 0x80040, and the model must not end up with EP0 buffers at hdc+0x8000.
+* A SETUP also empties the EP0 IN buffer, so a status ZLP left over after a stalled or cancelled transfer cannot be sent
+  as the data of the next one.
+* An OUT packet larger than the rest of a DMA chunk: the excess is dropped and logged (never observed).
+
+Verified in the emulator (2026-11-15, firmware 1.10, pristine NAND clone, no SD card):
+* No client: boot, shooting screen, MENU, PLAY and MENU from PLAY give screendumps identical to the previous binary
+  (`158bf21`).
+* Client attached: VBUS → `ModelUsbMtp` → gadget start → pull-up within about 1 s of a running camera; bus reset;
+  GET_DESCRIPTOR returns the firmware's descriptors: device `12 01 00 02 00 00 00 40 4c 05 d3 08 00 01 01 02 03 01`
+  (**054C:08D3**, bcdDevice 1.00, strings "Sony" / "ILCE-5000" / serial), configuration 39 bytes: interface 0 class 6/1/1,
+  EP 0x81 bulk 512, EP 0x02 bulk 512, EP 0x83 interrupt 32. The PID differs from the 0x034A of `pictbridge_desc_tbl`
+  (RE_USB_HOST_PATH §1.2). It is what the unmodified firmware reports, so `DescriptorMaintainer::Overwrite` very likely
+  patches it from Backup preset data (RE_USB_HOST_PATH open question 2).
+* MTP traffic used both DMA channels (bulk OUT EP2 on channel 0 with 32768-byte chunks ended by short packets, bulk IN
+  EP1 on channel 1 with chunks up to 8192 bytes, OUT transfers up to 65548 bytes) and PIO.
+* Detach: the camera leaves the USB screen and MENU works. Five plug/unplug cycles in a row re-enumerated each time.
+* Not exercised: STALL on bulk endpoints (MSC), FS operation, EP3 interrupt IN, SENSER.

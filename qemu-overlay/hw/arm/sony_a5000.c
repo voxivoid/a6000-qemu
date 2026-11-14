@@ -116,6 +116,7 @@ struct A5KMachineState {
     char *preload;
     char *loader;
     char *fb;
+    char *usb_socket;               /* A5KU server address HOST:PORT */
     DeviceState *gpio;
     QEMUTimer *submicro_t;
     int submicro_step;
@@ -1227,13 +1228,33 @@ static void a5k_init(MachineState *ms)
     a5k_regfile("io-38", 0x38000000, 0x00100000);
     create_unimplemented_device("a5k.nandc", 0x10000000, 0x10000);
 
-    /* USB OTG glue: +0x10 bit0 VBUS (active low), bit1 ID -> 3 = no cable
-     * (docs/RE_STORAGE_USB.md: fusb_otg_get_vbus, event_cid_exec) */
-    a5k_regfile_ex("otg", 0xF2920000, 0x1000, "0x10=3", NULL, -500);
-    /* F_USB20HDC UDC: CONF bit2 = soft reset, self-clearing
-     * (f_usb20hdc_initialize_controller / transition_to_idle polls it) */
-    /* DEVS (0x204) bit0 polled after MODE |= 2 (transition_to_idle+0x430) */
-    a5k_regfile_ex("usb-hdc", 0xF0210000, 0x20000, "0x204=1", "0x0=4", -500);
+    /* USB device side (docs/RE_USB_DEVICE_CONTROLLER.md): F_USB20HDC UDC
+     * 0xF0210000 (GIC 227), its HDMAC 0xF0204000 (GIC 228/229, error only)
+     * and the VBUS/ID glue 0xF2920000 (+0x10, GIC 232/233).  The A5KU
+     * virtual cable is the device's "chardev" (usb-socket=HOST:PORT, or
+     * -global cxd90014-usbhdc.chardev=ID); no client = no cable. */
+    dev = qdev_new("cxd90014-usbhdc");
+    object_property_add_child(OBJECT(ms), "usbhdc", OBJECT(dev));
+    if (s->usb_socket) {
+        g_autofree char *spec = g_strdup_printf(
+            "tcp:%s,server=on,wait=off", s->usb_socket);
+        Chardev *chr = qemu_chr_new("a5k-usb", spec, NULL);
+        if (!chr) {
+            error_report("usb-socket=%s: cannot create the chardev",
+                         s->usb_socket);
+            exit(1);
+        }
+        qdev_prop_set_chr(dev, "chardev", chr);
+    }
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF0210000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 1, 0xF0204000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 2, 0xF2920000);
+    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(227)]);
+    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, pic[GIC_ID(228)]);
+    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 2, pic[GIC_ID(229)]);
+    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 3, pic[GIC_ID(232)]);
+    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 4, pic[GIC_ID(233)]);
 
     /* CEC (cec.ko, UDIF "cec", PA 0xF3C10000): +0x180 is the interrupt
      * status, write-1-to-clear.  Nothing on the bus raises it, so the bits
@@ -1391,6 +1412,17 @@ static bool a5k_get_rtclost(Object *o, Error **errp)
 static void a5k_set_rtclost(Object *o, bool v, Error **errp)
 {
     A5K_MACHINE(o)->rtc_lost = v;
+}
+
+static char *a5k_get_usbsock(Object *o, Error **errp)
+{
+    return g_strdup(A5K_MACHINE(o)->usb_socket);
+}
+
+static void a5k_set_usbsock(Object *o, const char *v, Error **errp)
+{
+    g_free(A5K_MACHINE(o)->usb_socket);
+    A5K_MACHINE(o)->usb_socket = g_strdup(v);
 }
 
 static char *a5k_get_lens(Object *o, Error **errp)
@@ -1583,6 +1615,12 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
     object_class_property_set_description(oc, "lens",
         "E-mount lens: none (empty mount, default) or ekit (detect low, "
         "power ack + handshake echo; no lens serial protocol yet)");
+
+    object_class_property_add_str(oc, "usb-socket", a5k_get_usbsock,
+                                  a5k_set_usbsock);
+    object_class_property_set_description(oc, "usb-socket",
+        "HOST:PORT of the A5KU USB cable server (docs/RE_USB_HOST_PATH.md); "
+        "a connected client = cable plugged");
 
     mc->desc = "Sony ILCE-5000 (CXD90014, Cortex-A5 MPCore)";
     mc->init = a5k_init;

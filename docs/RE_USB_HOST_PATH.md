@@ -431,3 +431,44 @@ Later milestones and their extra needs:
    re-discovery window in `firmwareUpdateCommandInternal` is enough.
 10. Why the old run (RE_USB §4.2, build `bab067e`) stalled. The likely cause is the model-switch hang fixed later. A
     bisect run with VBUS forced would confirm it, but it is not needed for the plan.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 9. Implementation status
+
+* **Emulator:** the A5KU server of §5 is part of `cxd90014-usbhdc` (`hw/usb/cxd90014_usbhdc.c`, controller status in
+  `docs/RE_USB_DEVICE_CONTROLLER.md` §9). Chardev property `chardev`, or the machine option `usb-socket=HOST:PORT`
+  (creates `tcp:HOST:PORT,server=on,wait=off`). All messages of §5.3 are implemented: HELLO/HELLO_ACK, RESET, CONTROL,
+  OUT (ZLP flags), IN (short packet / ZLP / N bytes, OVERFLOW), CANCEL (IN packets already taken are kept for the next
+  request on that endpoint), EVENT ATTACHED/DETACHED with the generation counter, NODEV for requests of a detached
+  device. EVENTs are sent only after HELLO.
+* **Host:** `tools/pmca-socket/socket.py` (the backend of §6) plus `sony-pmca-re-socket.patch` (`importDriver` +
+  `'socket'` in the `-d` choices), MIT like Sony-PMCA-RE.
+
+Deviations from §1.4 / §5.1 (by request of the project owner): **the TCP connection is the cable.** A client connecting
+= VBUS on (otg+0x10 = 2, GIC 232 pulse); the client going away = VBUS off. There is no `usb=off|pc|charger` property and
+no HMP plug command. Without a client the camera sees no cable, exactly as before. The VBUS state survives a machine
+reset, so the cable stays plugged across a guest reboot. Backend additions beyond §6.1: `A5K_USB_ATTACH_WAIT` (default
+180 s, the first lookup waits for the gadget's pull-up after plugging) and `A5K_USB_REATTACH_WAIT` (default 300 s: after a
+DETACHED the next lookup waits for the device to come back, because PMCA's own loops wait only 5 s for `install` and
+30 s for `firmware`/`updatershell`).
+
+Results (2026-11-15, firmware 1.10, pristine NAND clone, no SD card, host macOS, Python 3.15):
+
+| Step (§7) | Result |
+|---|---|
+| 1-6 cable → gadget start → pull-up | **works.** With the camera at the shooting screen, a connecting client gets ATTACHED in about 0.3-3 s (UI shows "USB mode / MTP") |
+| 7-10 attach, HELLO, enumeration | **works.** Device descriptor 054C:**08D3** (not 0x034A: the firmware patches it, open question 2), interface 0 class 6, EP 0x81/0x02 bulk 512, EP 0x83 interrupt 32 |
+| 11-15 `pmca-console info -d socket` | **works:** "Sony Corporation ILCE-5000 is a camera in MTP mode", Model ILCE-5000, product code, serial, **Firmware version 1.10** |
+| `install` (no file) | **works:** MTP → (5,2) → DETACHED / ATTACHED as the app-install device → proxy messages → "Task completed successfully" |
+| `updatershell`, main firmware side | INIT, CHK_GUARD, QUERY_VERSION, SWITCH_MODE accepted. The camera shows "장치를 리셋합니다" (the device will be reset) with an OK button (PMCA: "follow the instructions on the camera screen"). After OK the gadget detaches and the UI goes black, but **no board reset follows** (open question 6: the restart request does not reach any modelled reset path; the kernel log shows no restart). An HMP `system_reset` at that point does not help either: the stage-1 loader kernel then panics in `mount_block_root` (warm reset after stage 2 is not supported by the board yet, outside the USB model) |
+| `updatershell`, updater side | Cold boot from the same NAND (now holding `/setting/updater/mode`) with a client connected: the updater core's `sauu` starts the gadget **054C:03E2** (MSC, class 8), PMCA finds "Sony DSC ... in updater mode" (INQUIRY over bulk DMA). Started with `-m ILCE-5000` (no DevInfoSender in the updater, PMCA's normal behaviour): INIT, WRITE_FIRM of the FDAT (100 %) and **the updater shell prompt runs**; `help` answered. After `exit` PMCA polls WRITE_FIRM status and the camera keeps answering busy (MSC STALL → CLEAR_FEATURE → sense 9/0x81/0x81, retried); stopped after about 3 min, not investigated |
+
+Open (new):
+* Restart request after SWITCH_MODE → board reset (open question 6) and a warm reset from stage 2 back into the stage-1
+  loader. Both are needed for `firmware`/`updatershell` without a manual cold boot. The cable model itself already keeps
+  VBUS across a reset.
+* The WRITE_FIRM busy loop after leaving the updater shell.
+* Once in r1 (a run with `-d unimp` and full register tracing), after two plug cycles and a MENU open/close in playback,
+  the third plug never produced a pull-up and the screen stayed black. Not reproduced in seven further plug cycles,
+  including the same key sequence, without tracing.
