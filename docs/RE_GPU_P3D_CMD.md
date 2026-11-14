@@ -1,196 +1,196 @@
-# RE: DMP SMAPH-S30 P3D 커맨드 리스트와 고정 기능 레지스터
+# RE: DMP SMAPH-S30 P3D command lists and fixed-function registers
 
-`hw/display/dmp_smaph.c`의 P3D 엔진(커맨드 리스트 해석 + 소프트웨어 래스터라이저)의 근거 문서.
-셰이더 ISA는 별도 문서 `docs/RE_GPU_P3D_SHADER.md`(인터프리터 `hw/display/dmp_shader.c`)에서 다룬다.
-GPU 전체 구조, PSC/PPF, IRQ 계약은 `docs/RE_DISPLAY_GPU.md` §2를 본다.
+Evidence document for the P3D engine in `hw/display/dmp_smaph.c` (command list interpretation + software rasterizer).
+The shader ISA is covered separately in `docs/RE_GPU_P3D_SHADER.md` (interpreter `hw/display/dmp_shader.c`).
+For overall GPU structure, PSC/PPF and the IRQ contract, see `docs/RE_DISPLAY_GPU.md` §2.
 
-출처:
-- GLES2 드라이버는 `libObj.so`에 정적 링크되어 있다. Hex-Rays 결과는 `re/ida/libObj.so.c`이다.
-  - 커맨드 작성기: `sub_5FC750`(단일 쓰기), `sub_5FC790`(버스트), `sub_5FC720`(원시 8바이트 엔트리).
-  - 드로 상태 빌더: `sub_600EB0`(래스터/프래그먼트/프레임버퍼/텍스처 유닛 매핑), `sub_5FD990`(정점 페치, 프리미티브, 드로 킥).
-  - 텍스처: `sub_5FCED0`(샘플러), `sub_5FD100`(텍스처 유닛).
-  - 기타: `sub_611080`(glClear), 텍스처 포맷 표 `sub_637740` 주변(L1401420~).
-  - 아래 `L<n>`은 `re/ida/libObj.so.c`의 줄 번호다.
-- 실측: 에뮬레이터에서 순정 펌웨어를 부팅하고, `+0x1800` 킥마다 리스트를 덤프했다(첫 부팅 "지역/날짜/시간 설정" 화면, 45개 리스트).
-- 표기: **[?]** = 미확정/가설. **V** = 무수정 펌웨어 + 에뮬레이터로 동작 확인.
+Sources:
+- The GLES2 driver is statically linked into `libObj.so`. Hex-Rays output is `re/ida/libObj.so.c`.
+  - Command writers: `sub_5FC750` (single write), `sub_5FC790` (burst), `sub_5FC720` (raw 8-byte entry).
+  - Draw state builders: `sub_600EB0` (raster/fragment/framebuffer/texture unit mapping), `sub_5FD990` (vertex fetch, primitive, draw kick).
+  - Textures: `sub_5FCED0` (sampler), `sub_5FD100` (texture unit).
+  - Other: `sub_611080` (glClear), texture format table around `sub_637740` (L1401420~).
+  - `L<n>` below are line numbers in `re/ida/libObj.so.c`.
+- Measured: booted stock firmware in the emulator and dumped the list on every `+0x1800` kick (first-boot "Area/Date/Time setting" screen, 45 lists).
+- Notation: **[?]** = unconfirmed/hypothesis. **V** = confirmed working with unmodified firmware + emulator.
 
 ---------------------------------------------------------------------------------------------------
-## 1. 제출 경로 (요약)
-- `rm_reg_*`(libObj)가 `+0x1804 = 리스트 PA`, `+0x1800 = 엔트리 수`(8바이트 단위)를 쓴다.
-  - 리스트는 `gl_common` 힙(PA 0x8D7A0000~)에 있다.
-- 완료는 상태 bit31, IRQ 76으로 알린다. ISR은 `+0x1000 = 0`으로 ack한다(RE_DISPLAY_GPU §2.2).
-- 모델은 `+0x1800` 쓰기 시점에 리스트 전체를 **동기적으로** 실행하고 나서 완료 비트를 세운다.
+## 1. Submission path (summary)
+- `rm_reg_*` (libObj) writes `+0x1804 = list PA`, `+0x1800 = entry count` (in 8-byte units).
+  - The list lives in the `gl_common` heap (PA 0x8D7A0000~).
+- Completion is signaled by status bit31, IRQ 76. The ISR acks with `+0x1000 = 0` (RE_DISPLAY_GPU §2.2).
+- The model executes the whole list **synchronously** at the `+0x1800` write, then sets the completion bit.
 
-## 2. 커맨드 리스트 형식
-엔트리는 8바이트 `[header][value]`(리틀 엔디언 32비트 두 개)다. PICA200(`[value][header]`)과 순서가 반대다.
+## 2. Command list format
+An entry is 8 bytes `[header][value]` (two little-endian 32-bit words). Order is reversed vs PICA200 (`[value][header]`).
 
-| header 비트 | 의미 | 근거 |
+| header bits | Meaning | Evidence |
 |---|---|---|
-| 0 | **call**: `value` = 서브 리스트 PA, 비트 3-11 = 서브 리스트 엔트리 수. 실행 후 다음 엔트리로 돌아온다 | glClear 꼬리 `v47[0] = (8 * count) \| 1; v47[1] = PA` (L1372950 부근, `sub_5FC720`). 실측 `0x229 → 0x45`개 = 셰이더 코드 블록 크기와 일치 |
-| 1 | 버스트 시 레지스터 자동 증가 | `sub_5FC920`(헤더 `0x0450F026`)은 0x450..0x454에 연속으로 쓴다. 같은 내용을 단일 쓰기로 보내는 경로와 결과가 같다 |
-| 2 | **burst**: 비트 3-11 = 추가 워드 수(= 총 워드 − 1). 추가 워드는 다음 엔트리부터 채워지고 8바이트 경계까지 0으로 패딩된다 | `sub_5FC790`: `(count-1)<<3 \| 4`, 홀수면 마지막에 0을 패딩 |
-| 3-11 | call/burst의 개수 필드. 단일 쓰기에서는 0 | |
-| 12-15 | 바이트 enable(0xF = 32비트 전체). 0이면 쓰지 않는다. 패딩 엔트리 `00000000 xxxxxxxx`가 이 경우다 | `sub_5FC750`: `(reg<<16) \| 0xF000` |
-| 16-27 | 레지스터 번호(관측 최대 0x5E4) [? 상위 비트 폭] | |
+| 0 | **call**: `value` = sub-list PA, bits 3-11 = sub-list entry count. Returns to the next entry after execution | glClear tail `v47[0] = (8 * count) \| 1; v47[1] = PA` (around L1372950, `sub_5FC720`). Measured `0x229 → 0x45` entries = matches shader code block size |
+| 1 | register auto-increment on burst | `sub_5FC920` (header `0x0450F026`) writes consecutively to 0x450..0x454. Same result as the path sending the same content as single writes |
+| 2 | **burst**: bits 3-11 = extra word count (= total words − 1). Extra words fill from the next entry and are zero-padded to an 8-byte boundary | `sub_5FC790`: `(count-1)<<3 \| 4`, pads a trailing 0 if odd |
+| 3-11 | count field for call/burst. 0 for single writes | |
+| 12-15 | byte enable (0xF = full 32 bits). 0 = no write. Padding entries `00000000 xxxxxxxx` are this case | `sub_5FC750`: `(reg<<16) \| 0xF000` |
+| 16-27 | register number (max observed 0x5E4) [? upper bit width] | |
 
-- 서브 리스트는 재사용되는 블록이다. 셰이더 코드(0x458/0x459), 오퍼랜드 디스크립터(0x460/0x461), 상수 유니폼, glClear용 사전 작성 리스트 등이 있다.
-- 실측된 중첩 깊이는 1이다. 모델은 최대 4까지 허용한다.
-- 리스트 끝은 항상 `0x116 = sync PA>>4`, `0x117 = 1`, `0x44 = 0`, `0x010 = 0x12345678`이다.
-  - 0x010 = 0x12345678은 PICA의 FINALIZE와 같은 값이다.
-  - 모델에서는 이 네 쓰기가 아무 동작도 하지 않는다(리스트 끝 = 완료). [? 0x116/0x117이 가리키는 dummy 버퍼(`dword_EF0188`)에 하드웨어가 무엇을 쓰는지는 미확인]
+- Sub-lists are reused blocks: shader code (0x458/0x459), operand descriptors (0x460/0x461), constant uniforms, prebuilt lists for glClear, etc.
+- Measured nesting depth is 1. The model allows up to 4.
+- A list always ends with `0x116 = sync PA>>4`, `0x117 = 1`, `0x44 = 0`, `0x010 = 0x12345678`.
+  - 0x010 = 0x12345678 is the same value as PICA's FINALIZE.
+  - In the model these four writes do nothing (end of list = completion). [? what the hardware writes to the dummy buffer (`dword_EF0188`) pointed to by 0x116/0x117 is unconfirmed]
 
-## 3. 레지스터 맵 (P3D 레지스터 번호; MMIO 오프셋과 직접 대응하지 않음)
+## 3. Register map (P3D register numbers; not a direct match to MMIO offsets)
 
-### 3.1 래스터라이저 / 뷰포트 (`sub_600EB0` L1358757~, glClear L1372780~)
-| reg | 비트 | 의미 | 근거 |
+### 3.1 Rasterizer / viewport (`sub_600EB0` L1358757~, glClear L1372780~)
+| reg | bits | Meaning | Evidence |
 |---|---|---|---|
-| 0x41 | 0-1, 4 | 컬링. 1 = 반시계(CCW, 윈도 좌표 y-up) 삼각형 제거, 2 = 시계(CW) 제거, bit4 = front face가 CW. 점/선이면 0 | 600eb0 L416-445 |
-| 0x42 / 0x43 | f32 | 뷰포트 폭/2, 높이/2 | `v386 = w * 0.5` |
-| 0x47 | s16 x, s16 y | 시저 최소. 단위는 반 픽셀이고 원점은 뷰포트 중심이다: `2·x0 − 0x49.x` | |
-| 0x48 | s16 x, s16 y | 시저 최대(배타): `2·(x0+w) − 0x49.x` | |
-| 0x49 | u16 x, u16 y | 뷰포트 중심 ×2 = `2·vpX + W`, `2·vpY + H` | |
-| 0x4A | 24비트 | 깊이 오프셋(units/65535 × 16777000) | 모델에서 미사용 |
-| 0x44 | | 리스트 끝에서 0을 쓴다 [?] | |
+| 0x41 | 0-1, 4 | Culling. 1 = cull counter-clockwise (CCW, window coords y-up) triangles, 2 = cull clockwise (CW), bit4 = front face is CW. 0 for points/lines | 600eb0 L416-445 |
+| 0x42 / 0x43 | f32 | viewport width/2, height/2 | `v386 = w * 0.5` |
+| 0x47 | s16 x, s16 y | scissor min. Units are half pixels, origin is viewport center: `2·x0 − 0x49.x` | |
+| 0x48 | s16 x, s16 y | scissor max (exclusive): `2·(x0+w) − 0x49.x` | |
+| 0x49 | u16 x, u16 y | viewport center ×2 = `2·vpX + W`, `2·vpY + H` | |
+| 0x4A | 24 bits | depth offset (units/65535 × 16777000) | unused in model |
+| 0x44 | | written 0 at list end [?] | |
 
-윈도 좌표는 `x = 0x49.x/2 + ndc.x·0x42`, `y = 0x49.y/2 + ndc.y·0x43`이다(GL 관례, y-up).
-컬러 버퍼의 행 0은 화면 아래쪽이다. 뒤따르는 PPF 전송이 flag bit0(상하 반전)을 켜고 패널 버퍼로 옮긴다.
-실측 PPF: `0xC10 = 0x4401` = 반전, 입력/출력 포맷 4.
+Window coords are `x = 0x49.x/2 + ndc.x·0x42`, `y = 0x49.y/2 + ndc.y·0x43` (GL convention, y-up).
+Row 0 of the color buffer is the bottom of the screen. The following PPF transfer sets flag bit0 (vertical flip) and moves it to the panel buffer.
+Measured PPF: `0xC10 = 0x4401` = flip, input/output format 4.
 
-### 3.2 프래그먼트 연산 / 프레임버퍼 (`sub_600EB0` 1370~2260행)
-0x100-0x107은 PICA200과 같다(0x105 마스크 위치만 다르다). 0x10A부터는 배치가 다르다.
+### 3.2 Fragment ops / framebuffer (`sub_600EB0` lines 1370~2260)
+0x100-0x107 match PICA200 (only the 0x105 mask position differs). From 0x10A the layout differs.
 
-| reg | 비트 | 의미 |
+| reg | bits | Meaning |
 |---|---|---|
-| 0x100 | bit8 | 1 = 블렌드, 0 = 논리 연산(드라이버가 켜지 않음) |
-| 0x101 | 0-2 eqRGB, 8-10 eqA, 16-19 srcRGB, 20-23 dstRGB, 24-27 srcA, 28-31 dstA | 블렌드. 인자: 0 ZERO, 1 ONE, 2/3 (1−)SRC_COLOR, 4/5 (1−)DST_COLOR, 6/7 (1−)SRC_ALPHA, 8/9 (1−)DST_ALPHA, 10-13 CONST, 14 SATURATE. 식: 0 ADD, 1 SUB, 2 REV_SUB |
-| 0x102 | 0-3 | 논리 연산(블렌드 모드에서는 무시) |
-| 0x103 | RGBA8 | 블렌드 상수 색 |
-| 0x104 | 0 en, 4-6 func, 8-15 ref | 알파 테스트. 비교 함수: 0 NEVER, 1 ALWAYS, 2 EQ, 3 NE, 4 LT, 5 LE, 6 GT, 7 GE |
-| 0x105 | 0 en, 4-6 func, 8-15 비교 마스크, 16-23 ref, 24-31 쓰기 마스크 | 스텐실(ctrulib과 마스크 위치가 반대) [? 실기 미검증] |
-| 0x106 | 0-2 sfail, 4-6 zfail, 8-10 zpass | 스텐실 연산 |
-| 0x107 | 0 깊이 테스트, 4-6 func, 8-11 RGBA 쓰기, 12 깊이 쓰기 | |
-| 0x10A | 0xB / 0xC | 프레임버퍼 모드 [?] (FBO가 비타일 텍스처이면 0xC) |
-| 0x10B / 0x10C | 0-3 | 컬러 읽기 / 쓰기 enable |
-| 0x10D / 0x10E | bit0 스텐실, bit1 깊이 | 깊이·스텐실 읽기 / 쓰기 |
-| 0x10F | 0-1 | 깊이 포맷: 0 D16, 2 D24 [?], 3 D24S8 |
-| 0x110 | 16-18 | **컬러 포맷**: 0 RGBA8(PICA 워드 순서), 2 RGB5A1, 3 RGB565, 4 RGBA4, 5 RGBA8(GL 바이트 순서 R,G,B,A) |
-| 0x111 | PA>>4 | 깊이 버퍼 |
-| 0x112 | PA>>4 | 컬러 버퍼 |
-| 0x113 | 0-12 w, 16-28 h | 버퍼 크기 |
-| 0x115 | bit0 | 디더 |
-| 0x116 / 0x117 | PA>>4 / 1 | 리스트 끝 sync/flush (§2) |
+| 0x100 | bit8 | 1 = blend, 0 = logic op (driver never enables it) |
+| 0x101 | 0-2 eqRGB, 8-10 eqA, 16-19 srcRGB, 20-23 dstRGB, 24-27 srcA, 28-31 dstA | Blend. Factors: 0 ZERO, 1 ONE, 2/3 (1−)SRC_COLOR, 4/5 (1−)DST_COLOR, 6/7 (1−)SRC_ALPHA, 8/9 (1−)DST_ALPHA, 10-13 CONST, 14 SATURATE. Equations: 0 ADD, 1 SUB, 2 REV_SUB |
+| 0x102 | 0-3 | logic op (ignored in blend mode) |
+| 0x103 | RGBA8 | blend constant color |
+| 0x104 | 0 en, 4-6 func, 8-15 ref | Alpha test. Compare funcs: 0 NEVER, 1 ALWAYS, 2 EQ, 3 NE, 4 LT, 5 LE, 6 GT, 7 GE |
+| 0x105 | 0 en, 4-6 func, 8-15 compare mask, 16-23 ref, 24-31 write mask | Stencil (mask positions reversed vs ctrulib) [? unverified on real hardware] |
+| 0x106 | 0-2 sfail, 4-6 zfail, 8-10 zpass | stencil ops |
+| 0x107 | 0 depth test, 4-6 func, 8-11 RGBA write, 12 depth write | |
+| 0x10A | 0xB / 0xC | framebuffer mode [?] (0xC if the FBO is an untiled texture) |
+| 0x10B / 0x10C | 0-3 | color read / write enable |
+| 0x10D / 0x10E | bit0 stencil, bit1 depth | depth/stencil read / write |
+| 0x10F | 0-1 | depth format: 0 D16, 2 D24 [?], 3 D24S8 |
+| 0x110 | 16-18 | **color format**: 0 RGBA8 (PICA word order), 2 RGB5A1, 3 RGB565, 4 RGBA4, 5 RGBA8 (GL byte order R,G,B,A) |
+| 0x111 | PA>>4 | depth buffer |
+| 0x112 | PA>>4 | color buffer |
+| 0x113 | 0-12 w, 16-28 h | buffer size |
+| 0x115 | bit0 | dither |
+| 0x116 / 0x117 | PA>>4 / 1 | list-end sync/flush (§2) |
 
-- 컬러 버퍼는 **8×8 Morton 타일**이다. 패널 OSD 대상(`0x8D7B0500`, 640×480 RGBA4)을 PPF가 tiled→linear로 읽는 것과 일치한다.
-- 렌더링 결과가 화면에 맞게 나오는 것으로 확인했다(§6).
+- The color buffer is **8×8 Morton tiled**. Matches PPF reading the panel OSD target (`0x8D7B0500`, 640×480 RGBA4) tiled→linear.
+- Confirmed rendering comes out correct on screen (§6).
 
-### 3.3 정점 페치 / 드로 (`sub_5FD990`, fd990 = libObj L1355621~)
-| reg | 비트 | 의미 |
+### 3.3 Vertex fetch / draw (`sub_5FD990`, fd990 = libObj L1355621~)
+| reg | bits | Meaning |
 |---|---|---|
-| **0x202** | 0-27 개수, 28 u16, 29 u32(둘 다 0이면 u8), 31 인덱스 사용 | **드로 킥**. 상태 리스트를 모두 내보낸 뒤 마지막에 쓴다(L1361641) |
-| 0x203 | 32 | 인덱스 사용 시 인덱스 데이터 PA, 아니면 첫 정점 번호 |
-| 0x204 / 0x205 | 슬롯당 4비트 (0-7 / 8-15) | 슬롯 → VS 입력 레지스터 |
-| 0x206 / 0x207 | 슬롯당 4비트 | 타입: 0 BYTE, 1 UBYTE, 2 SHORT, 7 USHORT, 3 FLOAT. bit3 = normalized |
-| 0x208 | 슬롯당 2비트 | 성분 수 − 1 |
-| 0x209-0x20C | 슬롯당 8비트 | 버퍼 안 바이트 오프셋 |
-| 0x20D | 0-3, 16+k | 버퍼 수 − 1. bit16+k = 버퍼 k는 상수(generic attribute) 버퍼 |
-| 0x20E / 0x20F | 버퍼당 4비트 | 버퍼의 속성 수 − 1 |
-| 0x210 / 0x211 | 버퍼당 4비트 | 버퍼의 첫 슬롯 |
-| 0x212-0x215 | 버퍼당 8비트 | stride − 1 |
-| 0x216+i | 32 | 버퍼 i의 PA (i < 16) |
-| 0x400 | | 0x1000300(점/선), 0x1000200(삼각형) [?] |
-| 0x401 | | 프리미티브: 0 점, 0x10 선, 0x802 선 스트립, 0x3020 삼각형, 0x20 스트립/팬 |
-| 0x402 / 0x403 | | 선 스트립 제어 / 0xA0304(삼각형) [?] |
-| 0x404 | 0-1 | 토폴로지: 0 리스트, 1 스트립, 2 팬 (bit5 항상 1) |
-| 0x405 / 0x406 | | 셰이더 출력 수 관련 [?] (`v473[13..15]−1`) |
-| 0x408-0x410 | (크기<<16 \| 오프셋) | 내부 정점/varying 메모리 배치 [?]. 모델에 불필요 |
+| **0x202** | 0-27 count, 28 u16, 29 u32 (u8 if both 0), 31 indexed | **Draw kick**. Written last, after all state lists are emitted (L1361641) |
+| 0x203 | 32 | index data PA if indexed, else first vertex number |
+| 0x204 / 0x205 | 4 bits per slot (0-7 / 8-15) | slot → VS input register |
+| 0x206 / 0x207 | 4 bits per slot | type: 0 BYTE, 1 UBYTE, 2 SHORT, 7 USHORT, 3 FLOAT. bit3 = normalized |
+| 0x208 | 2 bits per slot | component count − 1 |
+| 0x209-0x20C | 8 bits per slot | byte offset within buffer |
+| 0x20D | 0-3, 16+k | buffer count − 1. bit16+k = buffer k is a constant (generic attribute) buffer |
+| 0x20E / 0x20F | 4 bits per buffer | buffer attribute count − 1 |
+| 0x210 / 0x211 | 4 bits per buffer | buffer's first slot |
+| 0x212-0x215 | 8 bits per buffer | stride − 1 |
+| 0x216+i | 32 | PA of buffer i (i < 16) |
+| 0x400 | | 0x1000300 (points/lines), 0x1000200 (triangles) [?] |
+| 0x401 | | primitive: 0 points, 0x10 lines, 0x802 line strip, 0x3020 triangles, 0x20 strip/fan |
+| 0x402 / 0x403 | | line strip control / 0xA0304 (triangles) [?] |
+| 0x404 | 0-1 | topology: 0 list, 1 strip, 2 fan (bit5 always 1) |
+| 0x405 / 0x406 | | related to shader output count [?] (`v473[13..15]−1`) |
+| 0x408-0x410 | (size<<16 \| offset) | internal vertex/varying memory layout [?]. Not needed by the model |
 
-UI 실측 예(`0x202 = 0x90000004`):
-- u16 인덱스 4개(0,1,2,3), 트라이앵글 스트립이다.
-- 버퍼는 1개, stride 64이고 float 속성 5개가 있다. vec3@0, vec4@12, vec2@28, vec3@36, vec3@48이다.
-- 입력 매핑 `0x204 = 0x43201`이다.
+Measured UI example (`0x202 = 0x90000004`):
+- 4 u16 indices (0,1,2,3), triangle strip.
+- 1 buffer, stride 64, 5 float attributes: vec3@0, vec4@12, vec2@28, vec3@36, vec3@48.
+- Input mapping `0x204 = 0x43201`.
 
-GL_LINE_LOOP는 드라이버가 스트립 + 2정점 LINES로 바꾼다.
+GL_LINE_LOOP is converted by the driver to a strip + a 2-vertex LINES.
 
-### 3.4 프로그래머블 유닛 (코드/상수 업로드; 의미는 SHADER 문서)
-| reg | 의미 | 근거 |
+### 3.4 Programmable unit (code/constant upload; semantics in the SHADER doc)
+| reg | Meaning | Evidence |
 |---|---|---|
 | 0x440 | 0xF0004 / 0xF0F04 [?] | L1361100 |
 | 0x441 | 0 / 0xFFFFFF00 [?] | |
-| **0x442** | 정점 프로그램 진입점(명령 인덱스) | `program+1244` (L1361133) |
-| **0x443** | 프래그먼트 프로그램 진입점. `program+1275`에 +9를 더할 수 있다: 깊이 범위가 기본값이고 polygon offset이 없으면 9명령 프롤로그를 건너뛴다 | L1361141-1361172. 실측 0x5A 적재, 진입 0x63 |
-| 0x445, 0x470-0x477 | 0 [? int/bool 유니폼 후보] | |
-| 0x450 | float 유니폼 인덱스 (관측 0..0xC9) | |
-| 0x451-0x454 | x, y, z, w (f32). 0x454 쓰기에서 커밋하고 인덱스를 +1 한다 [? 자동 증가] | glClear: c3 = 클리어 색, c4 = 깊이·2−1 |
-| 0x458 | 코드 적재 주소(명령 단위, 명령 1개 = 32비트 워드 2개) | 0x38에서 68워드 적재 후 다음 프로그램이 0x5A(= 0x38+34)에 적재된다 |
-| 0x459 | 코드 워드(쓸 때마다 주소 +1워드) | |
-| 0x460 / 0x461 | 오퍼랜드 디스크립터 인덱스 / 데이터(자동 증가) | |
+| **0x442** | vertex program entry point (instruction index) | `program+1244` (L1361133) |
+| **0x443** | fragment program entry point. +9 may be added to `program+1275`: with default depth range and no polygon offset, the 9-instruction prologue is skipped | L1361141-1361172. Measured load at 0x5A, entry 0x63 |
+| 0x445, 0x470-0x477 | 0 [? int/bool uniform candidates] | |
+| 0x450 | float uniform index (observed 0..0xC9) | |
+| 0x451-0x454 | x, y, z, w (f32). Write to 0x454 commits and increments index by 1 [? auto-increment] | glClear: c3 = clear color, c4 = depth·2−1 |
+| 0x458 | code load address (in instructions, 1 instruction = 2 32-bit words) | after loading 68 words at 0x38, the next program loads at 0x5A (= 0x38+34) |
+| 0x459 | code word (address +1 word per write) | |
+| 0x460 / 0x461 | operand descriptor index / data (auto-increment) | |
 
-- 정점·프래그먼트 프로그램은 **같은 코드 메모리와 같은 유니폼 공간**을 쓴다(통합 셰이더).
-- 모델은 `DmpShaderProg` 하나에 모든 것을 모은다.
-  - `code[2·addr + k]`, `opdesc[]`, `funif[]`를 채운다.
-  - 드로 시점에 `entry` = 0x442 또는 0x443, `extra[i]` = P3D reg `0x440+i`(i < 64)를 넣는다.
-  - `tex_sample` 콜백(§3.5)도 함께 채운다.
+- Vertex and fragment programs use **the same code memory and the same uniform space** (unified shader).
+- The model gathers everything into one `DmpShaderProg`.
+  - Fills `code[2·addr + k]`, `opdesc[]`, `funif[]`.
+  - At draw time sets `entry` = 0x442 or 0x443, `extra[i]` = P3D reg `0x440+i` (i < 64).
+  - Also fills the `tex_sample` callback (§3.5).
 
-### 3.5 텍스처 (`sub_600EB0` L630~, `sub_5FCED0`, `sub_5FD100`)
-| reg | 의미 |
+### 3.5 Textures (`sub_600EB0` L630~, `sub_5FCED0`, `sub_5FD100`)
+| reg | Meaning |
 |---|---|
-| 0x580 | 텍스처 사용 플래그(9 = 사용, 0 = 없음, 1 = 다른 경로) [?] |
-| 0x581-0x583 | 샘플러 → 유닛 매핑(슬롯마다 nibble, `65537<<n`) [?]. 모델은 샘플러 번호 = 유닛 번호로 둔다 |
+| 0x580 | texture use flag (9 = used, 0 = none, 1 = other path) [?] |
+| 0x581-0x583 | sampler → unit mapping (one nibble per slot, `65537<<n`) [?]. The model uses sampler number = unit number |
 | 0x584 | 0x11 [?] |
-| 0x585+11u | 유닛 u: 경계 색(r<<24 \| g<<16 \| b<<8 \| a) |
-| 0x586+11u | 할당 크기 `(w8<<16) \| h8` (8의 배수로 정렬, 메모리 배치) |
-| 0x587+11u | 원래 크기 `(w<<16) \| h` (좌표 스케일) |
-| 0x588+11u | LOD 바이어스(비트 0-12), min/max level(16-19, 24-27) |
-| 0x589+11u | 텍셀 PA>>3 (큐브맵이면 +X 면) |
-| 0x58A-0x58E+11u | 큐브맵 나머지 면 PA>>3 |
-| 0x58F+11u | 포맷: 비트 0-4 코드, bit9 ETC1, bit12 = 텍스처 객체 +48(비타일 레이아웃으로 추정 [?]) |
-| 0x5DD+u | 샘플러: bit0 1, bit1 mag LINEAR, bit2 min LINEAR, bit24 밉맵, 비트 8-9 wrap T, 비트 12-13 wrap S (0 edge, 1 border, 2 repeat, 3 mirror) |
+| 0x585+11u | unit u: border color (r<<24 \| g<<16 \| b<<8 \| a) |
+| 0x586+11u | allocated size `(w8<<16) \| h8` (aligned to multiples of 8, memory layout) |
+| 0x587+11u | original size `(w<<16) \| h` (coordinate scale) |
+| 0x588+11u | LOD bias (bits 0-12), min/max level (16-19, 24-27) |
+| 0x589+11u | texel PA>>3 (+X face for cubemaps) |
+| 0x58A-0x58E+11u | remaining cubemap face PA>>3 |
+| 0x58F+11u | format: bits 0-4 code, bit9 ETC1, bit12 = texture object +48 (presumed untiled layout [?]) |
+| 0x5DD+u | sampler: bit0 1, bit1 mag LINEAR, bit2 min LINEAR, bit24 mipmap, bits 8-9 wrap T, bits 12-13 wrap S (0 edge, 1 border, 2 repeat, 3 mirror) |
 
-포맷 코드(L1401420~): 0 RGBA8(PICA), 25(0x19) GL_RGBA/UNSIGNED_BYTE(바이트 R,G,B,A), 2 RGB5A1, 3 RGB565, 4 RGBA4,
-5 LA8, 7 L8, 8 A8, 12 ETC1, 24 YUV422 계열 [?].
+Format codes (L1401420~): 0 RGBA8 (PICA), 25 (0x19) GL_RGBA/UNSIGNED_BYTE (bytes R,G,B,A), 2 RGB5A1, 3 RGB565, 4 RGBA4,
+5 LA8, 7 L8, 8 A8, 12 ETC1, 24 YUV422 family [?].
 
-- 텍셀은 **8×8 Morton 타일**이고, 행 0이 이미지 위쪽(업로드 첫 행)이다.
-  - 실측 A8 텍스처 `0x8E738000`(408×40)을 디타일하면 "지역/날짜/시간을 설정합니다."가 똑바로 보인다.
-  - RGBA4 다이얼로그 프레임 `0x8DFB0200`(600×416)도 같은 방식으로 확인했다.
-- 0x1019(= 25 | bit12)는 Rigel 윈도 버퍼(`0x8E9B7B80`, 640×480)를 합성할 때 쓰인다. 버퍼 내용이 단색이어서 바이트 순서와 레이아웃은 아직 확인하지 못했다 [?].
+- Texels are **8×8 Morton tiled**, row 0 is the top of the image (first uploaded row).
+  - Detiling the measured A8 texture `0x8E738000` (408×40) shows the (Korean-locale) dialog text "Set area/date/time." upright.
+  - The RGBA4 dialog frame `0x8DFB0200` (600×416) was confirmed the same way.
+- 0x1019 (= 25 | bit12) is used when compositing the Rigel window buffer (`0x8E9B7B80`, 640×480). The buffer content is a solid color, so byte order and layout are not yet confirmed [?].
 
-## 4. 모델 파이프라인 (dmp_smaph.c)
-1. 리스트 해석(§2) → P3D 레지스터 파일(4096개). 부수 효과는 0x202, 0x450-0x461에만 있다.
-2. `0x202` 킥:
-   - 인덱스 읽기 → 정점 페치(§3.3) → `dmp_shader_run(VERTEX)`.
-   - 최근 8개 인덱스 범위에서 VS 결과를 재사용한다.
-3. 출력 레지스터 0을 클립 좌표로 간주한다 [?]. w ≤ 0인 정점이 있는 삼각형은 버린다. **near-plane 클리핑은 미구현**이다.
-4. 뷰포트 변환(§3.1) → 컬링(0x41) → 시저 + 버퍼 범위 → 픽셀 중심 샘플링 엣지 함수 래스터라이즈.
-   - varying은 전부 원근 보정 보간한다.
-   - FS 입력 k = VS 출력 k이다 [?]. 입력 0은 (x+0.5, y+0.5, z, 1/w)로 바꾼다.
-5. `dmp_shader_run(FRAGMENT)` → 출력 V1 = RGBA(V0 = 깊이), `dmp_shader.c`의 가설을 따른다 [?].
-   - 알파 테스트 → 컬러 쓰기 enable(0x10C) → 블렌드(0x100/0x101/0x103) → 채널 마스크(0x107) → 타일 버퍼에 쓴다.
-6. 미구현: 깊이·스텐실 테스트(UI는 깊이 버퍼 없이 그린다: 0x10D/0x10E = 0, 0x111 미기록), 점/선 프리미티브, 밉맵, ETC1, 디더, 논리 연산.
+## 4. Model pipeline (dmp_smaph.c)
+1. List interpretation (§2) → P3D register file (4096 entries). Side effects only on 0x202, 0x450-0x461.
+2. `0x202` kick:
+   - read indices → vertex fetch (§3.3) → `dmp_shader_run(VERTEX)`.
+   - VS results are reused within the last 8 index range.
+3. Output register 0 is taken as clip coordinates [?]. Triangles with any vertex w ≤ 0 are dropped. **Near-plane clipping not implemented**.
+4. Viewport transform (§3.1) → culling (0x41) → scissor + buffer bounds → edge-function rasterization sampled at pixel centers.
+   - All varyings are perspective-correct interpolated.
+   - FS input k = VS output k [?]. Input 0 is replaced with (x+0.5, y+0.5, z, 1/w).
+5. `dmp_shader_run(FRAGMENT)` → output V1 = RGBA (V0 = depth), following the hypothesis in `dmp_shader.c` [?].
+   - alpha test → color write enable (0x10C) → blend (0x100/0x101/0x103) → channel mask (0x107) → write to tiled buffer.
+6. Not implemented: depth/stencil test (UI draws without a depth buffer: 0x10D/0x10E = 0, 0x111 not written), point/line primitives, mipmaps, ETC1, dither, logic op.
 
-## 5. 남은 일 / 검증 계획
-- [?] 0x116/0x117 sync가 메모리에 실제로 쓰는 값. 드라이버가 폴링하지 않으므로 지금은 무해하다.
-- [?] 0x450 자동 증가, 0x581-0x584 샘플러 매핑, 0x10A, 0x400/0x402/0x403/0x405/0x406.
-- [?] 셰이더 출력/입력 레지스터 의미(위치·색·깊이·discard). `RE_GPU_P3D_SHADER.md`와 맞춰야 한다.
-- 깊이/스텐실 구현(Android GL 앱, 3D 효과 `SequenceApp3DZoomCmd` 등이 쓸 가능성이 있다).
+## 5. Remaining work / verification plan
+- [?] The value 0x116/0x117 sync actually writes to memory. Harmless for now since the driver does not poll it.
+- [?] 0x450 auto-increment, 0x581-0x584 sampler mapping, 0x10A, 0x400/0x402/0x403/0x405/0x406.
+- [?] Shader output/input register semantics (position, color, depth, discard). Must be reconciled with `RE_GPU_P3D_SHADER.md`.
+- Depth/stencil implementation (likely used by Android GL apps, 3D effects such as `SequenceApp3DZoomCmd`, etc.).
 
-## 6. 실측 결과 (2026-11-14, 무수정 펌웨어, 첫 부팅 "지역/날짜/시간" 화면)
-- 부팅 ~60 s 후 P3D 리스트 44개와 드로 32개가 실행된다(`-trace dmp_smaph_job`의 `p3d-draw`).
-  - 27개는 640×480 OSD 타깃 `0x8D7B0500`에 그리는 4-인덱스 사각형이다.
-  - 3개는 88-인덱스 9-patch 버튼이다.
-  - 2개는 RGBA8 타깃 `0x8D858080`(Rigel 윈도 합성)에 그린다.
-  - 해석되지 않은 헤더 비트(LOG_UNIMP)는 없다.
-- PPF가 컬러 버퍼를 패널 버퍼 `0x8F758000` / `0x8F7EE000`으로 옮긴다. 패널 버퍼는 더 이상 0이 아니다(307200/307200 픽셀).
-  - **RGBA4로 디코드하면 순정 UI 그대로**다. 검은 배경, 얇은 테두리의 다이얼로그 상자, 흰 글자 "지역/날짜/시간을 설정합니다.",
-    선택된 주황색 "확인" 버튼, 회색 "취소" 버튼, 하단 가이드 "◆선택 ●확인"이 보인다.
-- **V**(이번 실측으로 확인):
-  - 리스트 형식(call/burst/byte enable)
-  - 정점 페치(stride 64, float 5속성)
-  - 뷰포트 / 시저 / 컬링(0x41 = 2)
-  - 타일 컬러 버퍼(RGBA4, 행 0 = 아래, PPF flip)
-  - A8·RGBA4 타일 텍스처와 bilinear 샘플링
-  - SRC_ALPHA / ONE_MINUS_SRC_ALPHA 블렌드
-- 패널 포맷:
-  - 이 버퍼는 **RGBA4444**이다. 근거는 P3D 0x110 = 4, PPF `0xC10 = 0x4401`(입력·출력 포맷 4), 배경 픽셀 `0x000F` = 불투명 검정.
-  - 반면 현재 VPH 스캔아웃 모델(console 0 / `screendump`)은 이 버퍼를 RGB565로 읽는다. 그래서 같은 화면이 남색 배경과 색이 틀어진 버튼으로 보인다.
-  - VPH 채널 포맷 해석을 RGBA4로 고쳐야 한다(cxd90014_vph.c 담당).
-- 미해결: Rigel 윈도 합성 프로그램(`0x8D858080` 대상)은 셰이더 op 0x1E에서 인터프리터가 멈춘다(`dmp_shader.c` 미구현 opcode). 그래서 그 2개 드로는 픽셀을 쓰지 않는다.
+## 6. Measured results (2026-11-14, unmodified firmware, first-boot "Area/Date/Time" screen)
+- ~60 s after boot, 44 P3D lists and 32 draws execute (`p3d-draw` in `-trace dmp_smaph_job`).
+  - 27 are 4-index quads drawn to the 640×480 OSD target `0x8D7B0500`.
+  - 3 are 88-index 9-patch buttons.
+  - 2 draw to the RGBA8 target `0x8D858080` (Rigel window composite).
+  - No unhandled header bits (LOG_UNIMP).
+- PPF moves the color buffer to panel buffers `0x8F758000` / `0x8F7EE000`. Panel buffers are no longer zero (307200/307200 pixels).
+  - **Decoded as RGBA4 it is exactly the stock UI**: black background, thin-bordered dialog box, white text "Set area/date/time.",
+    selected orange "OK" button, gray "Cancel" button, bottom guide "◆Select ●OK" (on-screen text is Korean; English glosses here).
+- **V** (confirmed by this measurement):
+  - list format (call/burst/byte enable)
+  - vertex fetch (stride 64, 5 float attributes)
+  - viewport / scissor / culling (0x41 = 2)
+  - tiled color buffer (RGBA4, row 0 = bottom, PPF flip)
+  - A8 and RGBA4 tiled textures with bilinear sampling
+  - SRC_ALPHA / ONE_MINUS_SRC_ALPHA blend
+- Panel format:
+  - This buffer is **RGBA4444**. Evidence: P3D 0x110 = 4, PPF `0xC10 = 0x4401` (input/output format 4), background pixel `0x000F` = opaque black.
+  - However, the current VPH scanout model (console 0 / `screendump`) reads this buffer as RGB565, so the same screen appears with a navy background and color-shifted buttons.
+  - VPH channel format interpretation must be fixed to RGBA4 (cxd90014_vph.c's responsibility).
+- Unresolved: the Rigel window composite program (target `0x8D858080`) stops the interpreter at shader op 0x1E (opcode not implemented in `dmp_shader.c`), so those 2 draws write no pixels.
