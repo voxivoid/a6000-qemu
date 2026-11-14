@@ -327,3 +327,228 @@ Observed (unmodified firmware, pristine NAND, no SD; BL Info at PA 0x83D707C8):
   (TX DMA), no "POWER SEQ TIME OUT". P5.4 stays 1, UART1 CR = 0x300 and DMACR = 0. The source of the next event is
   not known: P2.10 has no pin interrupt in the model (only p0.0–16 and p1.0–6 do), or the event may come from a
   timer. That needs RE before stage C.
+
+---
+
+## 9. Handshake completion and stage C spec
+
+Method: IDA 9.4 on a copy of the lens IDB (`C:\a5000\emu\lens2\`), plus runs of the unmodified firmware with
+`lens=ekit` (pristine NAND, no SD). Runs used `-trace cxd4115_*`, the a5ktrace plugin and gdb breakpoints that only
+read memory. One experiment also wrote a timer register from gdb to imitate the hardware behaviour proposed in §9.1
+(that is a debugger poke, not a model change). Facts carry their evidence; guesses are marked [?].
+
+### 9.0 Corrections to earlier sections
+* §8: the second handshake event is **not** the P0.5 edge (GIC 126). It is the expiry of a 5 ms software timer.
+  The handshake code never waits on a pin interrupt (§9.1).
+* §1.3: the two DMA channels are the other way round. **ch0 (`4399387c`) is RX** (UART1 → 512-byte ring) and
+  **ch1 (`43993bd4`) is TX** (packet buffer → UART1). Evidence in §9.4.
+* §3.2: both lengths in the block table **include the id byte**. A = body→lens block length, B = lens→body block
+  length (§9.5).
+
+### 9.1 What produces the third event: timer ch10 one-shot, and the START bit must self-clear
+* `436b7a98` (handshake) ends every call that has not finished with `43a4a7ac(5000, 43a4a861)` →
+  `43ae2088(us, cb)`. That call programs **cxd4115 timer channel 10** (0xF2403A00, GIC **163** = 153 + 10) as a
+  one-shot with a 5000-count compare: `439193b0(10, {5000, 2, 1, 0}, cb)` + `43919404(10)`. The timer is registered
+  at init by `43ae206a` (IRQ 0xA3 = 163 and 0xA8 = 168, channels 10 and 15). On expiry, ISR `4391926c(10)` writes
+  CLR (+4) bit0 and calls the callback. `43a4a860` → `436bbeb0(255)` posts the event that runs `436b8b10` →
+  `436b7a98` again.
+* av-cam timer driver (`43919xxx`, base 0xF2403000 + 0x100·ch). The setup sequence writes:
+  `CTRL[2:0] = cfg[1]` (2 here), `CTRL[5:4] = cfg[2]` (1 = one-shot), `CTRL[16] = cfg[3]`, `CMP = cfg[0]`,
+  `CTRL[8] = 0`. The start sequence writes: CLR |= 1, CLR |= 0x10, `CTRL[8] = 1` if a callback is registered, and
+  CTRL |= 0x1000 (START). The trace shows 0x0, 0x2, 0x12, 0x12, CMP=0x1388, CLR=1, CLR=0x10, 0x112, 0x1112.
+* **Both `439193b0` (setup) and `43919404` (start) return -3 ("busy") without touching the channel when CTRL bit12
+  (START) reads 1** (`439194b0` = `UBFX CTRL,#12,#1`, checked at `439193c4`/`43919414`). Nothing in the ISR, in the
+  callback or in the driver clears bit12 after a match. So on the real chip, **a one-shot match (CTRL bit4 set)
+  must clear CTRL bit12 in hardware**. Without that, no one-shot user could ever re-arm.
+* Run-time proof (plugin on `439193b0`/`439193f4`/`43919404`/`4391944e`): the first arm works and fires
+  (`cxd4115_fire ch10 match ctrl=0x1112`). The second arm, from the callback-driven call, **returns -3 at
+  `439193f4` and `4391944e`**, because the model's `chan_tick` sets `running = false` but leaves `ctrl` = 0x1112.
+  So the "event-driven" behaviour in §8 is really "the timer could not be re-armed".
+* The same bug hits **channel 11** (GIC 164). It is the `[Imager]PowerOn/PowerOff` wait timer (`436b0a1c`, called
+  from `436af414`/`436af632`, logs "PowerOn Wait No.xx TimerError!!"). Its second arm also returns -3 in the trace.
+* **Experiment.** A gdb breakpoint at `439193b0` cleared CTRL bit12 of ch10/ch11 before every arm, which imitates the
+  proposed hardware behaviour. The handshake then **completes**: `436b7a44` (UART1 open, 750 kbaud) runs,
+  `436b4908(1)` runs, the body sends its first packet (§9.6), and the RX ring is armed. With no lens answering, the
+  firmware logs `[BL]SYNC TIMEOUT` → `DETACH RETRY count:1..4` → `FORCE LENS DETACH count:4` (av-cam log ring, PA
+  ~0x830E6000) and ends in BL state **0xF2 (242)**, with +4 = 0xF1. `POWER SEQ TIME OUT` never appears.
+
+**Spec (timer model, `cxd4115_timer.c`):** when a channel matches and CTRL bit4 (one-shot) is set, clear CTRL
+bit12 in the register value (so a read of +0x00 shows START = 0) as well as stopping the counter. Keep the pending
+flag and the IRQ as they are now. The kernel's use (it writes 0x0112 and then 0x1112 itself every time) is
+compatible with this. [?] Whether a match with bit4 = 0 and bit8 = 1 also auto-stops is not needed by anything
+seen here.
+
+### 9.2 GPIO direction register, pin mux, interrupt lines
+* **+0x00 bit = 1 means output.** av-cam's read helper `43ac774c(port, pin)` returns the output latch (+0x40) when
+  the +0x00 bit is set (`43917cd4`), and otherwise the pad input (+0x10). The UART open table also sets dir = 1 on
+  TXD and dir = 0 on RXD.
+* **P5.4 is driven with dir = 0.** Nothing in av-cam writes the P5 +0x00/+0x30 bits for pin 4. At UART open the
+  run shows `P5: +0x00 = 0x4000, +0x30 = 0x4040, latch = 0x4010`. Most likely the boot loader or kernel board code
+  makes P5.4 an output, and the model's all-zero reset does not do that [?]. Keep the current rule: the board echo
+  follows the latch, not latch AND dir.
+* **Pin configuration call `43ac76be(port, pin, cfg)`, cfg = {u8 mode, s32 dir, u8 ien, s32 pull}:**
+  `mode` → GPIO +0x34 (1) or +0x38 (0). `dir` ≥ 0 → +0x04/+0x08, and then `ien` → +0x24/+0x28. dir < 0 → input
+  enable cleared. `pull` ≥ 0 → pad +0x48 (clear), then pad +0x54 (pull = 1) or +0x58 (pull = 0). pull < 0 →
+  pad +0x44 (set) and pad +0x58 (clear) [? pull enable / pull select].
+* **Second register bank ("pad/function") at 0xF2912000 + 0x100·port**, triples (value / +4 set / +8 clear) at
+  +0x00, +0x10, +0x20, +0x30, +0x40, +0x50. Accessors are `43917d78`…`43917e94`. Today the emulator backs this
+  range with a plain RAM-like `io-f0` region, so set/clear writes are not folded into the value.
+* **UART1 mux (`43993910`, table 0x43ED70E4; close `43993b44`, table 0x43ED70AC).** Both tables hold 28-byte entries
+  `{port, pin, mode, dir, ien, pull, action}`. Port and pin are patched at boot from Backup (P2.11, P2.10). Action 1
+  → `43ac7778` → pad +0x04 (set) for ports in mask 0x1BFDE. Action 0 → `43ac7784` → pad +0x14 (set) for ports in
+  mask 0x3F76E.
+
+  | pin | open (UART) | close (GPIO) |
+  |---|---|---|
+  | P2.11 (TXD) | mode 0, dir 1, ien 0, pull 1, pad+0x00 bit set | mode 1, dir 1, ien 0, pull -1, pad+0x00 bit set |
+  | P2.10 (RXD) | mode 0, dir 0, ien 1, pull 1, pad+0x10 bit set | mode 1, dir 0, ien 1, pull 0, pad+0x10 bit set |
+
+  **The bit that switches the pin between UART and GPIO is GPIO +0x30 (the "mode/pull" triple): 0 = peripheral
+  function, 1 = GPIO.** The pad bits are set in both tables, so they do not select the mode. Run values: after
+  close, P2 +0x30 = 0xC20 and pad 0xF2912240..58 hold 0x800/0x400. After open, P2 +0x30 = 0x020. Before the first
+  open, P2 +0x30 bits 10/11 are already 0, only because the model's reset value is 0 [?: real reset/boot value].
+* **Interrupts.** The handshake needs none. P0.5 gets GIC 126 (121 + 5), set up by `43993ad4(1)` only when cfg byte
+  `43CC5B30[10]` == 1, and its handler is null (§1.1). `43ac7784(0, 5)` is a no-op for port 0 (not in mask
+  0x3F76E). **No GPIO IRQ is needed on port 2.**
+* **Spec (board echo, for `lens=ekit`).** Keep P0.5 := latch(P5.4) after 1 ms. Make the P2.11 → P2.10 echo part
+  of the lens model's state instead of a fixed wire: echo only while the lens is in "handshake" state. The lens
+  leaves that state when P5.4 falls after P2.10 has been echoed high (step 2 → 3 of §2.4). After that, P2.10 is the
+  lens TX line (UART RXD of the body) and must not follow P2.11. Optionally, gate the echo on GPIO P2 +0x30 bit
+  11 == 1 as well, once the reset values are settled [?].
+
+### 9.3 Sequence after the handshake (observed with the timer fix, plus static)
+1. `436b7a98` step 2 → `436b7a44`: `43a4bc60` (reset the TX/RX slot tables, `439931bc`), `43993910` (pins to UART,
+   clocks, `43919d70(1)`, `43993798(0)` = 750 000 baud), `43a4bc64`/`43a4bd18` (pick an RX slot), then
+   **`4399387c(PA 0x83CC96F0)` = arm the RX ring** (ch0, 512 bytes). P5.4 := 0. P0.5 is expected to fall.
+2. The step-3 timer expires → `436b4908(1)` (comm enabled) → the main handler (state 1, sub-state at BL+8 = 0)
+   sends **block 1** (the body's capability bitmap, `436b7c34`) → sub-state 15.
+3. Each request goes through `436b5188(blocks, cb)` → a queued packet. Event 2 (`436b5618`) copies it to the TX
+   buffer (PA 0x83CC70B0, `43992bf0`) and starts **TX DMA ch1** (`43993bd4`), which also drives **P5.4 := 1**.
+   - TX DMA done → `43993828` → ch10 450 µs (`dword_43ED711C` = 0x1C2) → `43993c7c`: TX DMA off, ch1 stopped,
+     UART flush (`4391a0dc`), ch10 re-armed for 300 µs with the callback passed to `43993bd4` (`43a4a52b`), then
+     **P5.4 := 0** (tail call `43993ad4(0)`). So P5.4 is high for the body's whole transmission + ~450 µs. The
+     0x1C2 value is set by `43993798` for 750 k (mode 0); mode 1 uses 225.
+   - 300 µs after P5.4 falls, `43a4a52b` posts event 3 → `43a4a680` → `436b4ef0`, `436b4a1c(0)`.
+   - Event 7 (`436b4e38`) arms the **sync timeout**: ch15, `43a4a7b0(0xE4E1C, 43a4a565)`, mode 7 [? clock; ~1 s
+     if 1 MHz]. Its expiry runs `436bbe60(-1)` → parser `436b61d8(-1)` → `[BL]SYNC TIMEOUT` when a request is
+     pending.
+4. **RX path.** `43a4a730` runs in IRQ context (lr = kernel IRQ return 0x3F40127C). It has no static caller [?:
+   registered at run time, most likely on the VD interrupt, see §3.3]. It calls `43993840`: received = (ch0 **+0x04
+   current dst pointer** − ring start) + up to 16 bytes read from the UART RX FIFO by PIO (`4391a006`) and appended
+   at that pointer. Then ch0 is stopped. If 1..512 bytes arrived, it moves to the next RX slot, re-arms ch0 and
+   posts `436bbe60(slot)` → `436b61d8(slot)`. Otherwise it only re-arms. **One RX slot = one packet.** The parser
+   rejects the slot with DATASIZE_NG when the header length ≠ the received count.
+5. Init order (state 1, sub-state = BL+8; class-1 path through the sub-micro). The handlers are in `436b8b10`:
+
+   | sub | body sends (A bytes) | waits for lens block (B bytes) | then |
+   |---|---|---|---|
+   | 0 | handshake, then **[01 + 32-byte body bitmap]** (33) | – | 15 |
+   | 15 | – | **01** (33) → copied to lensInfo+0 (`436b7ca0`) | sends [07, x] (2) → 16 |
+   | 16 | – | **07** (35) → lensInfo+33 and +278 (`436b7cd8`) | lensInfo[35] bit1 set: sends [0C, 02] → 23 (baud change). Otherwise `436b7e5c`: class 1 → P3.24/26 mode 1, wait 100·tbl[64] µs; class 2 → mode 2, wait 100·tbl[65] µs → 10 |
+   | 10 | [0B, 0x60, 1] (3) (`436b767c(96,…)`) | – | 21 |
+   | 21 | – | **0B** (3) present | lens supports 50 → [32 …] (8) → 30; supports 61 → [3D, 0×23] (24) → 31; neither → clear lensInfo+313, send [08 …] (9) (`436b89ec`) → 17 |
+   | 30 / 31 | – | **32** (8) → lensInfo+270 / **3D** (64) → lensInfo+313 | → 31 or send [08 …] → 17 |
+   | 17 | – | **08** (202) → lensInfo+68, `436b74b4` | sends [09 …] (5) (`436b8970`) → 18 |
+   | 18 | – | **09** (12) startup info (`436b7ef8`) | sends [0D, class] (2) (`436b7768`) → 24 |
+   | 24 | – | **0D** (2) present (`43a4a890`) | sends [10, flags] (2) (`436b787c`) → 25 |
+   | 25 | – | **10** (2) (`436b7c60`): data[0] bit0 = 0 is OK | sends [0A + 16 bytes camera info] (17) (`436b8084(1)`) → 19 |
+   | 19 | – | **0A** (17) (`43a4a8f2` → `436b70cc`) | BL+8 = 1 (done), posts (5, 0x2000/0x2001) |
+
+   The lensInfo layout follows from the copy lengths (B, id included): +0 blk 1 (33), +33 blk 7 (35), +68 blk 8
+   (202), +270 blk 50 (8), +278 blk 7 copy (35), +313 blk 61 (64).
+
+### 9.4 DMA (0xF0102000 unit, channel k at +0x100 + 0x20·k), as programmed for the lens
+Registers read back right after `439174d0` (the run used the current model, which stores the writes):
+
+| ch | role | +0x00 | +0x04 | +0x0C cfg | +0x10 ctl |
+|---|---|---|---|---|---|
+| 0 | **RX** UART1 → ring | 0xF2001000 (UART1 DR) | 0x83CC96F0 (ring) | 0x9940B200 | 0x0100D018 |
+| 1 | **TX** buffer → UART1 | 0x83CC70B0 (buffer) | 0xF2001000 | 0x1609900C, then 0x9609900C | 0x01000B40, then 0x0100CB40 |
+
+* **+0x00 = source, +0x04 = destination**, the same as for entry_pre's memory copy and the existing model. The
+  driver's descriptor is `{src, dst, cfg}`, and `43917944` writes it to +0x00/+0x04/+0x0C. The earlier "TX"/"RX"
+  naming in §1.3 was swapped. Proof: ch1 copies the packet that `43992bf0` has just placed in 0x83CC70B0 (§9.6),
+  and `43993840` measures RX progress through ch0 +0x04.
+* cfg (+0x0C, packed by `439174d2`): **bits[11:0] = count in source units**: ch0 = 0x200 = 512 bytes, ch1 = 0x00C
+  = 12 words = 48 bytes. **bit31 = completion IRQ enable** (`43917a4c`). The other fields [?] come from the
+  driver descriptor byte {bit0 src-increment, bit1 dst-increment, [4:2] src width, [7:5] dst width}: ch0 descriptor
+  0x65 (src fixed, dst incr, src width 1 = byte [?], dst width 3), ch1 descriptor 0x2E (src incr, dst fixed, src
+  width 3 = word [?], dst width 1).
+* Channel config (`439173f8`, byte 0 bits[4:2] = transfer type, byte 1 = source request line, byte 2 =
+  destination request line). ch0: type 2, src request **12** (UART1 RX). ch1: type 1, dst request **13** (UART1
+  TX). [?] Which bits of +0x10 carry the request numbers: compare 0x0100D018 and 0x01000B40.
+* Callbacks: ch0 `nullsub_344` (does nothing; cfg bit31 is set). ch1 `43993828` on completion, through GIC
+  173 + 1 = **174** (unit status +0x00 bit1, ack +0x08). Unit status read 0x41/0x43 in the run (ch0, ch1, ch6 bits).
+* PL011 side: `4391a08c(1, 1, 0)` after arming ch0 = DMACR RXDMAE on, DMAONERR off. `4391a040(1, 0/1)` around ch1
+  = DMACR TXDMAE off/on (standard PL011 bit meanings [?]).
+* **Why the current model breaks this:** `cxd90014-mdma` copies at once on start, taking the word count from
+  cfg[11:0]. That turns ch0 into a 2048-byte copy *from* the UART1 register file *into* the RX ring: the run shows
+  the ring filled with the PL011 register image (0x90 = FR at +0x18, IMSC 0xFF0 …). It also makes ch1 write 48
+  bytes over UART1's registers.
+
+**Spec (mdma peripheral mode).** Treat a channel whose source or destination is 0xF2001000 as peripheral-paced.
+* TX (dst = UART1 DR): hand `count` bytes (word source: 4·count bytes, little endian) to the lens model. Raise
+  done (+0x00 bit k, GIC 173 + k) after the serial time (10 bits/byte at 750 kbaud ≈ 13.3 µs/byte), or at once if
+  that is simpler.
+* RX (src = UART1 DR): do not copy. Keep the channel armed. As the lens model emits bytes, write them to
+  dst + n and **advance +0x04 (current destination) to dst + n**. Stop at `count` bytes. Done for ch0 (GIC 173) only
+  reaches a no-op callback; the firmware never waits for it.
+* Leave the memory→memory path unchanged.
+
+### 9.5 Frame and block rules for the lens side (static `436b61d8`, block table §3.2)
+* Frame: `F0 | u16 len LE | type | b4 | blocks | u16 sum LE | 55`, sum = Σ bytes[1 .. len-4]. Checked in this
+  order: header, footer, checksum, len == received count, `(type & 7) ∈ 1..3`.
+* Blocks are walked from byte 5. Each block is `{id, data}` and its total length = table **B** of that id (id
+  byte included). Ids 5 and 6 are variable (`436b7110`/`436b7128`). An id with A or B = 0 aborts with
+  `MOUNT_ERR_ANALYSE_NG`.
+* **Reply to a request:** type 2. **Byte 5 (the first block id) must equal the pending command id** (BL comm
+  struct +0x28). Then the registered callback runs. Byte 4: not checked for type 2 [?]; echo the request's byte 4.
+* **Capability bitmap = block 1.** `436cc6b0(id)`: id 1 is always allowed. For other ids,
+  `lensInfo[1 + ((id-1)>>3)] >> ((id-1)&7) & 1` must be 1, and the body's own per-mode table (`dword_43EDCE68` +
+  32·`byte_43E6452E`) must allow the id too. So the lens's block 1 = `01 | b0 | 32-byte bitmap`, where bit (id-1)
+  of the bitmap = "id supported" (lensInfo[0] = the id byte 01). The body sends the same form with ids 1..0x3D
+  set (§9.6).
+* Block 7 (35 bytes) → lensInfo[33..67]: [34] bits1:0 = **power class** (1 or 2, else LENS_TYPE_UNKNOWN), [35]
+  bit1 = 1.5 Mbaud capable (use 0), [38] = firmware error (must be 0, else 241 LENS FIRMERR). [?] Other fields used
+  later: [43..44] u16 compared with 0x8019 and [62] bit0 (`436b767c`), [59] bits 2 and 6 (`436b787c`,
+  `436b89ec`). The lens id / focal length / F-number are **not decoded**. They are in blocks 7/8/50/61 or in the
+  periodic blocks 5/6 [?].
+* Block 9 (12 bytes): pointer v = block start (id at v[0]). For a class 2 lens, v[1] & 3 selects the drive mode
+  (1 → 5, 2 → 2). **v[8] and v[9] must be 0** (or camera power state 0xC06), else "SYNC START UP INFO ERR".
+* Block 16 (2 bytes): v[1] bit0 = 0 is accepted. Blocks 0x0B (3), 0x0D (2), 0x0A (17) only need to be present (the
+  body copies 17 bytes of 0x0A into `436b70cc`, content [?]). Block 8 (202 bytes) goes through `436b74b4`, which
+  calls a hook and then checks the capability of id 59 [?: zero-filled content untested].
+
+### 9.6 First packet on the wire (captured)
+At `43993bd4` (ch1 arm), TX buffer PA 0x83CC70B0, ch1 count 12 words = 48 bytes:
+```
+F0 29 00 02 00 01 FF FF FF FF FF FF FF 1F 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 44 07 55  + 7 x 00 padding
+```
+len 0x29 = 41, type 2, b4 = 0, block 1 = {01, bitmap ids 1..61}. The sum Σ bytes[1..37] = 0x0744 checks.
+Identical on all 4 retries. **A minimal lens reply** (type 2, block 1, 41 bytes):
+`F0 29 00 02 00 | 01 b0 <32-byte bitmap> | sum16 | 55`. Its bitmap needs bits for ids 1, 5, 6, 7, 8, 9, 0x0A,
+0x0B, 0x0D, 0x10 (plus 0x0C only if 1.5 M is offered). Leaving 0x32 and 0x3D clear skips sub-states 30/31.
+Value of b0: [?] (use 0).
+
+### 9.7 Lens HLE (stage C) checklist for the code agent
+1. Timer fix (§9.1). Without it nothing after the handshake runs.
+2. mdma peripheral mode for 0xF2001000 (§9.4). PL011 at UART1 needs no IRQ (callbacks are null). The RX FIFO can
+   stay empty if all bytes go through the ring.
+3. Lens state machine: idle → echo H1/H2 (§9.2) → UART. In UART mode, parse body frames from ch1 and answer each
+   request with one type-2 frame. Start the reply after the body's frame has fully left (P5.4 is high during TX,
+   and the reply can go out after P5.4 falls [?]). Finish it well inside one VD period (the poll in `43a4a730`
+   takes whatever has arrived). Real timing [?]: replying ~0.5–1 ms after P5.4 falls is a safe target.
+4. Replies per §9.3 table / §9.5. The content after the startup sequence (periodic type-1 frames with blocks 5/6,
+   AF/zoom/aperture) is still undecoded.
+
+### 9.8 Open questions
+1. The IRQ source that calls `43a4a730` (RX poll), and so its period (VD [?]). Find it with a plugin probe that
+   also prints the GIC IAR, or by finding where av-cam registers the pointer.
+2. ch15 / mode 7 timer clock (the sync timeout is 0xE4E1C counts).
+3. Meaning of the timer CTRL bits 8 and 16 and of bits[2:0] above 3 (the model uses `ctrl & 3` as the prescaler).
+4. The GPIO/pad reset state that the boot loader leaves (P5.4 direction, P2 +0x30 bits). Needs a register snapshot
+   from a real camera or the kernel board setup.
+5. Content of blocks 8, 10, 50, 61 and of the periodic blocks 5/6 (focal length, F-number, lens id). Next step: with
+   §9.1 and §9.4 implemented, capture each body request in turn (gdb on `43993bd4` dumping PA 0x83CC70B0) while
+   replying minimally, and decode the consumers of lensInfo+68/+270/+313.
+6. Exact bit layout of DMA +0x10 (request lines, type) and of cfg bits[30:12].
