@@ -283,8 +283,8 @@ later), and an optional `hw/misc/a5k_imgsrc.c` (host image/test-pattern source u
 
 All new models are hardware-level (no firmware patches); every value below comes from the av-cam code cited, the rest
 is marked `[?]`. QEMU files: `hw/misc/cxd90014_p2s.c`, `hw/misc/cxd90014_campig.c` (Pig blocks + SIF),
-`hw/dma/cxd90014_aif.c`, wiring in one block "camera front end" of `hw/arm/sony_a5000.c`, debug option in
-`hw/display/cxd90014_vph.c`. Trace events: `cxd_p2s_*`, `cxd_campig_frame`, `cxd_aif_start/done/status`.
+`hw/dma/cxd90014_aif.c`, wiring in one block "camera front end" of `hw/arm/sony_a5000.c`, debug live-view source in
+`hw/dma/cxd90014_aif.c` (`lv-source`). Trace events: `cxd_p2s_*`, `cxd_campig_frame`, `cxd_aif_start/done/status`.
 
 ### 7.1 What is modelled
 
@@ -295,7 +295,7 @@ is marked `[?]`. QEMU files: `hw/misc/cxd90014_p2s.c`, `hw/misc/cxd90014_campig.
 | SIF 0xF3122000–0xF3123FFF | sync-code counters `+0x330`, `+0x224`, `+0x1330`, `+0x1224` return the number of frames of the 0xF3120000 unit [? semantics]; rest read back as written | `ReadSIFScodeCnt 436B2474` → `436B26E8/289C/2AD4/2C88` |
 | AIF channel groups (table `0x43B278D4`, all except VPH 0xF3441000) | channel `+0x00` bit0 = start/busy, `+0x04` bit31 = running. On completion both clear and status nibble bit0 sets in group `+0x000` (W1C). Channel k's sysbus IRQ = `(+0x000 & +0x008) nibble k != 0`. Front-end groups 0xF3002000 / 0xF3102000 complete at their Pig unit's frame end; all others 2 ms after start [? trigger not decoded]. `+0x004` reads 0. No data is moved | `438965E8`, `43896588/43896614`, `43896650`; status read `43896484`/`43AB98B6`, ack `0xF << 4k` `43AB98C6`, Pig done hook `438964B6`; `+0x008` nibble RMW `43896442` (0xF3881008 = 0xF000 while ch3 is waited for) |
 | AIF completion IRQs 40–50 | ch1 / ch3 of the resize ("RC") groups: 0xF3881000 → 40 / 41, 0xF3891000 → 42 / 43, 0xF3981000 → 44 / 45, ch1 of 0xF30A1000 / 0xF30B1000 / 0xF31A1000 / 0xF31B1000 / 0xF31C1000 → 46 / 47 / 48 / 49 / 50 | ISR table `0x43E94D04` (`{irq, 0, handler, attr}`): 40..50 → `438CB804, 858, 73C, 790, 8CC, 920, 598, 5EC, 640, 694, 6E8`; each handler checks one or two RC objects (e.g. IRQ 41 → objects `0x43DFFDF4`/`0x43E002CC`); at run time those objects' status descriptor (`obj+252` → `+20` register, `+64` nibble) is `{0xF3881000, 3}` (read with HMP `xp` from guest RAM). Objects of IRQ 40/42/44/46..50 point at ch1 of the groups listed |
-| VPH (debug only) | `-global cxd90014-vph.pattern=bars` composes 75 % colour bars instead of the ch51 buffer whenever `0x144` bit0 is set; guest memory is not touched | — |
+| live-view test frame (debug only) | the former VPH `pattern=bars` option is gone; `-global cxd90014-aif.lv-source=bars\|ramp\|file:PATH` writes a luma frame into guest memory when RC ch26 completes (`RE_LIVEVIEW_IMAGE.md`, Implementation status) | — |
 
 Notes:
 * The RC IRQ lines are level-sensitive in the guest's GIC configuration (a pure `qemu_irq_pulse` is lost; a 10 µs level
@@ -357,4 +357,5 @@ reset (main tree `357e485`; before it the camera booted with S1/S2 held, which p
   camera engine in some long runs with the trace plugin loaded (seen in 2 runs; not seen in the runs without the
   plugin). Same code
   area as the oops in `RE_ENGINE_TICK.md` §11.4 [? timing race, aggravated by slow emulation].
-* 4.b step 1 (test pattern) is implemented but cannot show anything until VDF programs ch51 (`0x144` bit0 is clear).
+* 4.b step 1 (test pattern): the VPH-side version was replaced by `cxd90014-aif.lv-source`, which writes guest
+  memory at the RC output once VDF programs ch51 (`RE_LIVEVIEW_IMAGE.md`, Implementation status).

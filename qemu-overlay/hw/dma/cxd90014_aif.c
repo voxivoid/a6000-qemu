@@ -37,9 +37,21 @@
  * resize engines is not decoded).  No data is moved: front-end channels
  * may point at the IIB (+0x20 = 0x6xxxxxxx), and image data is not
  * modelled.
+ *
+ * Debug option (not hardware), docs/RE_LIVEVIEW_IMAGE.md §4 option (a):
+ * lv-source=bars|ramp|file:PATH writes one 8-bit luma frame into guest
+ * DRAM when channel lv-ch completes, just before its status nibble / IRQ
+ * are raised.  The board sets lv-ch = 3 only on the resize group
+ * 0xF3881000 (ch26 = RC output = the ch51 live-view buffer); every other
+ * instance has lv-ch = -1 and never writes.  The frame follows the
+ * channel's own address generator (+0x20 address, +0x24 bytes per line,
+ * +0x28 skip after each line, +0x2C lines - 1, outer loops +0x30..+0x44).
+ * file: is a binary PGM (P5, maxval <= 255), scaled nearest-neighbour to
+ * the programmed geometry.  Default (empty): nothing is written.
  */
 
 #include "qemu/osdep.h"
+#include "qemu/cutils.h"
 #include "hw/sysbus.h"
 #include "hw/irq.h"
 #include "hw/qdev-properties.h"
@@ -47,6 +59,7 @@
 #include "qemu/timer.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
+#include "system/address-spaces.h"
 #include "qom/object.h"
 #include "trace.h"
 
@@ -68,7 +81,17 @@ struct AifState {
     bool frame_sync;
     QEMUTimer *done;
     qemu_irq irq[AIF_MAXCH];
+    /* debug live-view source (see header) */
+    char *lv_source;
+    int32_t lv_ch;
+    int lv_mode;                    /* LV_* */
+    uint8_t *lv_img;                /* file: luma, lv_w x lv_h */
+    uint32_t lv_w, lv_h;
+    uint32_t lv_frame;
+    bool lv_c_warned;
 };
+
+enum { LV_NONE, LV_BARS, LV_RAMP, LV_FILE };
 
 #define R(o) (s->r[(o) / 4])
 
@@ -79,12 +102,99 @@ static void aif_update(AifState *s)
     }
 }
 
+/* luma of the 75 % colour bars (BT.601, full range, black 0x10) */
+static const uint8_t lv_bars[8] = { 191, 170, 134, 112, 79, 57, 22, 16 };
+
+static uint8_t lv_sample(AifState *s, uint32_t x, uint32_t y,
+                         uint32_t w, uint32_t h)
+{
+    switch (s->lv_mode) {
+    case LV_BARS:
+        return lv_bars[(uint64_t)x * 8 / w];
+    case LV_RAMP:
+        /* diagonal gradient that moves 4 levels per frame */
+        return (uint8_t)(((uint64_t)x * 256 / w + (uint64_t)y * 64 / h +
+                          s->lv_frame * 4) & 0xff);
+    case LV_FILE:
+        return s->lv_img[(uint64_t)y * s->lv_h / h * s->lv_w +
+                         (uint64_t)x * s->lv_w / w];
+    }
+    return 0;
+}
+
+/*
+ * Write one luma frame along channel k's address generator.  Address
+ * generator (docs/RE_LIVEVIEW_IMAGE.md §1.2): after each transfer of +0x24
+ * bytes the address advances by +0x24 + ofs0, count0 + 1 times; level n
+ * (1..3) repeats level n-1 countn + 1 times and adds ofsn after each
+ * repetition.  hypothesis: the outer-loop rule (counts 1..3 are 0 in live
+ * view, so only the inner loop is exercised).
+ * Bus address A is seen by the CPU at 0x80000000 + A (the RC job gets
+ * 0x8CF34000, ch26 is programmed 0x0CF34000; docs/RE_LIVEVIEW_IMAGE.md
+ * §2.2).  hypothesis: the bus -> CPU alias.
+ */
+static void aif_lv_inject(AifState *s, int k)
+{
+    uint32_t ctrl = R(CH(k)), a = R(CH(k) + 0x20), sz = R(CH(k) + 0x24);
+    int32_t ofs[4];
+    uint32_t cnt[4];
+
+    for (int n = 0; n < 4; n++) {
+        ofs[n] = (int32_t)R(CH(k) + 0x28 + 8 * n);
+        cnt[n] = R(CH(k) + 0x2C + 8 * n) + 1;
+    }
+    /* IIB mode (ctrl bit11) or non-DRAM bus address: not a memory frame */
+    if ((ctrl & 0x800) || a >= 0x20000000 || !sz || sz > 16384) {
+        return;
+    }
+    uint64_t lines = (uint64_t)cnt[0] * cnt[1] * cnt[2] * cnt[3];
+    if (lines > 16384) {
+        return;
+    }
+    trace_cxd_aif_inject(s->base, k, a, sz, (uint32_t)lines);
+
+    g_autofree uint8_t *row = g_malloc(sz);
+    uint64_t addr = 0x80000000ull + a;
+    uint32_t y = 0;
+    for (uint32_t i3 = 0; i3 < cnt[3]; i3++) {
+        for (uint32_t i2 = 0; i2 < cnt[2]; i2++) {
+            for (uint32_t i1 = 0; i1 < cnt[1]; i1++) {
+                for (uint32_t i0 = 0; i0 < cnt[0]; i0++, y++) {
+                    for (uint32_t x = 0; x < sz; x++) {
+                        row[x] = lv_sample(s, x, y, sz, (uint32_t)lines);
+                    }
+                    address_space_write(&address_space_memory, addr,
+                                        MEMTXATTRS_UNSPECIFIED, row, sz);
+                    addr += sz + (int64_t)ofs[0];
+                }
+                addr += (int64_t)ofs[1];
+            }
+            addr += (int64_t)ofs[2];
+        }
+        addr += (int64_t)ofs[3];
+    }
+    s->lv_frame++;
+}
+
 static void aif_complete(AifState *s)
 {
     if (!s->busy) {
         return;
     }
     trace_cxd_aif_done(s->base, s->busy);
+    if (s->lv_mode != LV_NONE && s->lv_ch >= 0 && s->lv_ch < s->nch &&
+        (s->busy & (1u << s->lv_ch))) {
+        /* chroma is not invented: report a second write channel (ch25 =
+         * nibble 1 of the RC group, never started in live view) once */
+        if ((s->busy & 2) && !(R(CH(1)) & 0x800) && !s->lv_c_warned) {
+            s->lv_c_warned = true;
+            qemu_log_mask(LOG_UNIMP, "cxd90014-aif: 0x%08" PRIx64
+                          " ch1 (C plane?) started with the live-view "
+                          "channel, addr 0x%08x size 0x%x: not filled\n",
+                          s->base, R(CH(1) + 0x20), R(CH(1) + 0x24));
+        }
+        aif_lv_inject(s, s->lv_ch);
+    }
     for (int k = 0; k < s->nch; k++) {
         if (s->busy & (1u << k)) {
             R(CH(k)) &= ~1u;
@@ -185,12 +295,103 @@ static void aif_reset(DeviceState *dev)
     aif_update(s);
 }
 
+/* binary PGM: "P5" ws width ws height ws maxval single-ws data (# comments) */
+static bool lv_load_pgm(AifState *s, const char *path, Error **errp)
+{
+    g_autofree char *buf = NULL;
+    gsize len;
+    g_autoptr(GError) gerr = NULL;
+    unsigned long v[3];
+    size_t p = 2;
+
+    if (!g_file_get_contents(path, &buf, &len, &gerr)) {
+        error_setg(errp, "cxd90014-aif: lv-source: %s", gerr->message);
+        return false;
+    }
+    if (len < 2 || buf[0] != 'P' || buf[1] != '5') {
+        error_setg(errp, "cxd90014-aif: lv-source: '%s' is not a binary "
+                   "PGM (P5)", path);
+        return false;
+    }
+    for (int i = 0; i < 3; i++) {
+        for (;;) {
+            while (p < len && g_ascii_isspace(buf[p])) {
+                p++;
+            }
+            if (p < len && buf[p] == '#') {
+                while (p < len && buf[p] != '\n') {
+                    p++;
+                }
+                continue;
+            }
+            break;
+        }
+        if (p >= len || !g_ascii_isdigit(buf[p])) {
+            error_setg(errp, "cxd90014-aif: lv-source: '%s': bad PGM "
+                       "header", path);
+            return false;
+        }
+        v[i] = 0;
+        while (p < len && g_ascii_isdigit(buf[p]) && v[i] < 100000) {
+            v[i] = v[i] * 10 + (buf[p++] - '0');
+        }
+    }
+    if (p >= len || !g_ascii_isspace(buf[p])) {
+        error_setg(errp, "cxd90014-aif: lv-source: '%s': bad PGM header",
+                   path);
+        return false;
+    }
+    p++;
+    if (!v[0] || !v[1] || v[0] > 16384 || v[1] > 16384) {
+        error_setg(errp, "cxd90014-aif: lv-source: '%s': bad size %lux%lu",
+                   path, v[0], v[1]);
+        return false;
+    }
+    if (!v[2] || v[2] > 255) {
+        error_setg(errp, "cxd90014-aif: lv-source: '%s': maxval %lu "
+                   "(only 8-bit PGM is supported)", path, v[2]);
+        return false;
+    }
+    if (len - p < (size_t)v[0] * v[1]) {
+        error_setg(errp, "cxd90014-aif: lv-source: '%s': truncated "
+                   "(%zu of %lu data bytes)", path, len - p, v[0] * v[1]);
+        return false;
+    }
+    s->lv_w = v[0];
+    s->lv_h = v[1];
+    s->lv_img = g_malloc((size_t)s->lv_w * s->lv_h);
+    for (size_t i = 0; i < (size_t)s->lv_w * s->lv_h; i++) {
+        s->lv_img[i] = MIN(255u, (uint8_t)buf[p + i] * 255u / v[2]);
+    }
+    return true;
+}
+
 static void aif_realize(DeviceState *dev, Error **errp)
 {
     AifState *s = CXD_AIF(dev);
     if (s->nch < 1 || s->nch > AIF_MAXCH) {
         error_setg(errp, "cxd90014-aif: nch must be 1..%d", AIF_MAXCH);
         return;
+    }
+    s->lv_mode = LV_NONE;
+    if (s->lv_source && *s->lv_source) {
+        const char *path;
+        if (!strcmp(s->lv_source, "bars")) {
+            s->lv_mode = LV_BARS;
+        } else if (!strcmp(s->lv_source, "ramp")) {
+            s->lv_mode = LV_RAMP;
+        } else if (strstart(s->lv_source, "file:", &path) && *path) {
+            s->lv_mode = LV_FILE;
+            /* -global reaches every group: load only where it is used */
+            if (s->lv_ch >= 0 && !lv_load_pgm(s, path, errp)) {
+                return;
+            }
+        } else {
+            error_setg(errp, "cxd90014-aif: lv-source must be empty, "
+                       "'bars', 'ramp' or 'file:PATH' (got '%s')",
+                       s->lv_source);
+            return;
+        }
     }
     memory_region_init_io(&s->mr, OBJECT(dev), &aif_ops, s, "aif",
                           CH(s->nch));
@@ -212,6 +413,9 @@ static const Property aif_props[] = {
     DEFINE_PROP_UINT32("nch", AifState, nch, AIF_MAXCH),
     DEFINE_PROP_UINT32("delay-us", AifState, delay_us, 2000),
     DEFINE_PROP_BOOL("frame-sync", AifState, frame_sync, false),
+    /* debug, not hardware: live-view frame source (see header) */
+    DEFINE_PROP_STRING("lv-source", AifState, lv_source),
+    DEFINE_PROP_INT32("lv-ch", AifState, lv_ch, -1),  /* set by the board */
 };
 
 static void aif_class_init(ObjectClass *klass, const void *data)

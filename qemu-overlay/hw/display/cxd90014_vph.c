@@ -19,10 +19,8 @@
  * (live-view luma plane under the OSD) into QEMU graphic console 0.
  * OSD at 16 bpp = RGBA4444 (A low nibble); ch51 = 8-bit luma plane.
  *
- * Debug option (not hardware): pattern=bars composes 75% colour bars in
- * place of the guest's YUV buffer whenever the panel YUV layer is enabled
- * (-global cxd90014-vph.pattern=bars).  Nothing is written to guest memory,
- * so the firmware sees the same machine with or without it.
+ * Test images go through guest memory: -global cxd90014-aif.lv-source=...
+ * fills the buffer at the resize output (hw/dma/cxd90014_aif.c).
  */
 
 #include "qemu/osdep.h"
@@ -53,7 +51,6 @@ struct VphState {
     qemu_irq vd_out;                /* -> evsel engine frame (source 29) */
     QemuConsole *con;
     uint32_t w, h;
-    char *pattern;                  /* debug: "bars" */
 };
 
 #define R(o) (s->vph[(o) / 4])
@@ -126,18 +123,7 @@ static void vph_update(void *opaque)
     memset(dst, 0, (size_t)W * H * 4);
 
     /* YUV layer (ch51) */
-    if ((R(0x144) & 1) && s->pattern && !strcmp(s->pattern, "bars")) {
-        static const uint32_t bars[8] = {
-            0xbfbfbf, 0xbfbf00, 0x00bfbf, 0x00bf00,
-            0xbf00bf, 0xbf0000, 0x0000bf, 0x101010,
-        };
-        uint32_t lines = MIN(R(AIF(0) + 0x2C) + 1, H);
-        for (uint32_t y = 0; y < lines; y++) {
-            for (uint32_t x = 0; x < W; x++) {
-                dst[y * W + x] = 0xff000000u | bars[x * 8 / W];
-            }
-        }
-    } else if (R(0x144) & 1) {
+    if (R(0x144) & 1) {
         /*
          * ch51 as programmed for live view: one 8-bit luma plane, +0x24
          * bytes per line, +0x28 bytes skipped after each line, +0x2C
@@ -304,15 +290,10 @@ static void vph_init(Object *obj)
     qdev_init_gpio_out(DEVICE(obj), &s->vd_out, 1);
 }
 
-static const Property vph_props[] = {
-    DEFINE_PROP_STRING("pattern", VphState, pattern),
-};
-
 static void vph_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     dc->realize = vph_realize;
-    device_class_set_props(dc, vph_props);
     device_class_set_legacy_reset(dc, vph_reset);
 }
 

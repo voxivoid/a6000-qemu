@@ -291,3 +291,55 @@ the host converts. A static source is fine; a sequence can advance one frame per
 * gdb breakpoint `*0x438F6CF4` → `x/40wx $r2` gives the VPH descriptor. **Detaching gdb stopped the engine for good:**
   no AIF starts after it, so the run had to be killed (as `RE_LIVEVIEW_PIPELINE.md` §7 warns). Do all gdb reads in
   one session and then kill QEMU.
+
+---
+
+## Implementation status
+
+Option (a) of §4 is implemented in `hw/dma/cxd90014_aif.c` (QEMU branch `lv-inject`, commit `158bf21`), and the VPH-side
+`pattern=bars` option has been removed from `hw/display/cxd90014_vph.c`. The VPH decoder (C-less ch51 = Y8 shown as grey,
+§4.3) was already in place.
+
+**Usage (debug only, not hardware):**
+
+```
+emulator/run.sh ... -global cxd90014-aif.lv-source=bars          # 8 luma steps (75 % colour bars, BT.601 Y)
+emulator/run.sh ... -global cxd90014-aif.lv-source=ramp          # diagonal gradient, +4 levels per frame
+emulator/run.sh ... -global cxd90014-aif.lv-source=file:img.pgm  # binary PGM (P5, maxval <= 255), loaded once
+```
+
+| item | behaviour |
+|---|---|
+| where | `aif_complete()`: when the channel selected by the device property `lv-ch` is among the completing channels, the frame is written **before** the status nibble is set and IRQ 41 is raised. The completion time (2 ms after start) and the order of the other channels are unchanged |
+| which channel | `lv-source` reaches every `cxd90014-aif` instance via `-global`, but only the instance the board marks `lv-ch = 3` writes. The board sets it on group `0xF3881000` only (ch26 = RC output, §2.1). All other instances keep `lv-ch = -1` |
+| geometry | taken from the channel registers at completion: `A = +0x20`, `S = +0x24`, `ofs0 = (int32)+0x28`, `count0 = +0x2C + 1`, and outer loops `ofs1..3 / count1..3` at `+0x30..+0x44`. Each line writes `S` bytes, then the address advances by `S + ofs0`. After each repetition of level n−1, level n adds `ofsn` [? outer-loop rule, not exercised: counts 1..3 are 0 in live view] |
+| destination | `0x80000000 + A` (bus → CPU alias, §2.2 [?]). Skipped when ctrl bit11 (IIB mode) is set, when `A >= 0x20000000`, or when the size/line count is implausible (> 16384) |
+| scaling | the source is sampled nearest-neighbour onto `S × lines` samples. Bars and ramp are generated at that size, and a PGM is scaled to it (a 320 × 160 file fills 1024 × 516, with the aspect ratio not kept) |
+| errors | an unknown `lv-source`, a missing file, a non-P5 header, a maxval > 255 or truncated data fail realize with a `cxd90014-aif: lv-source: ...` message. The file is only loaded on the `lv-ch` instance |
+| default | empty `lv-source`: nothing is written and the machine is as before (§4.3) |
+| chroma | not generated. If the RC group's ch1 (= ch25, the possible C output, §2.1) is started in the same job, a one-time `LOG_UNIMP` line reports its address and size (`-d unimp`) |
+| trace | `cxd_aif_inject(base, ch, addr, size, lines)` per written frame |
+
+**Verification** (unmodified firmware 1.10, pristine NAND clone, `-display none`, HMP `screendump` ~55 s after start,
+then MENU, MENU, PLAY via `sendkey ... 400`):
+
+| run | live view | MENU | PLAY |
+|---|---|---|---|
+| no `lv-source` | black under the OSD (NO CARD …), same as before | opens (6 tiles) | "no memory card" view |
+| `bars` | 8 grey steps over the full 640-px panel width under the OSD | opens | "no memory card" view |
+| `ramp` | gradient over the full width. Two dumps ~1 s apart differ (the bands move) | opens | "no memory card" view |
+| `file:` (320 × 160 checker + circle PGM) | the image stretched to the full panel | opens | "no memory card" view |
+
+Trace: `cxd_aif_inject group 0xf3881000 ch3 live-view frame at bus 0x0ce00000 / 0x0cf34000, 0x400 B x 516 lines`,
+alternating, about one per engine frame. No other group or channel injects.
+
+C channel: in a `-trace cxd_aif_start -d unimp` run of the RC group `0xF3881000`, only ch0 (= ch23, ctrl `0x2803`, IIB
+input) and ch3 (= ch26, ctrl `0x3`, output) are started. ch1 (= ch25) never starts, and the C-plane warning never
+appears, so the firmware programs no chroma channel in this mode (§3, possibility A or B still open).
+
+Notes:
+* In some runs the UI is slow or stalls (once the boot never enabled the panel layers, once the menu stopped
+  drawing after one tile). The same happens with the unmodified pre-change binary (a baseline run stopped with an
+  empty tile grid). Retries with the same build passed, so it is run-to-run variance and not caused by injection.
+* The OSD is not changed by the injected image. AE/AWB statistics are taken before the RC (§5), so the
+  exposure values do not react to it, as expected.

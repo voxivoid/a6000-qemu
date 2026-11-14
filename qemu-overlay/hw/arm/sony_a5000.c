@@ -1112,6 +1112,12 @@ static void a5k_init(MachineState *ms)
             qdev_prop_set_uint64(aif[i], "base", aifg[i].base);
             qdev_prop_set_uint32(aif[i], "nch", aifg[i].nch);
             qdev_prop_set_bit(aif[i], "frame-sync", i < 2);
+            if (aifg[i].base == 0xF3881000) {
+                /* RC output ch26 = nibble 3 writes the ch51 live-view
+                 * buffer; debug lv-source frames go there only
+                 * (docs/RE_LIVEVIEW_IMAGE.md §2.1, §4) */
+                qdev_prop_set_int32(aif[i], "lv-ch", 3);
+            }
             sysbus_realize_and_unref(SYS_BUS_DEVICE(aif[i]), &error_fatal);
             sysbus_mmio_map(SYS_BUS_DEVICE(aif[i]), 0, aifg[i].base);
             if (aifg[i].irq1) {

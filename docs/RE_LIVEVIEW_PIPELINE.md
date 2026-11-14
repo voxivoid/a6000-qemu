@@ -182,7 +182,7 @@ state 2 and ch51 programming (r5 reached ch51 without them). They may matter lat
 3. `437737D4` hit from `435475F5`. Then `43661BC8` and `438F6CF4` hit. No `43A23668` hits with `r3 = 0x21D` and
    `r1 = 5` for most frames.
 4. `xp /2wx 0xF3440140` → `+0x144` bit0 = 1, and `0xF3441220` (ch51 Y address) is non-zero. With
-   `-global cxd90014-vph.pattern=bars` the bars become visible.
+   `-global cxd90014-aif.lv-source=bars` (formerly `cxd90014-vph.pattern=bars`, now removed) the bars become visible.
 5. Regression: the boot still passes sequencer step 12 (`RE_ENGINE_STABILITY.md` §1, the copy gate needs
    `cfg+0xC == 1` on some frames, which alternation provides) and step 42.
 

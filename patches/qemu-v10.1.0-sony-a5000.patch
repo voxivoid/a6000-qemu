@@ -137,10 +137,10 @@ index cc7810b..50434c1 100644
 +system_ss.add(when: 'CONFIG_CXD90014_DMAC', if_true: files('cxd90014_mdma.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_DMAC', if_true: files('cxd90014_aif.c'))
 diff --git a/hw/dma/trace-events b/hw/dma/trace-events
-index 4c09790..9371226 100644
+index 4c09790..27b67ea 100644
 --- a/hw/dma/trace-events
 +++ b/hw/dma/trace-events
-@@ -47,3 +47,12 @@ pl330_iomem_read(uint32_t addr, uint32_t data) "addr: 0x%08"PRIx32" data: 0x%08"
+@@ -47,3 +47,13 @@ pl330_iomem_read(uint32_t addr, uint32_t data) "addr: 0x%08"PRIx32" data: 0x%08"
  
  # xilinx_axidma.c
  xilinx_axidma_loading_desc_fail(uint32_t res) "error:%u"
@@ -153,6 +153,7 @@ index 4c09790..9371226 100644
 +cxd_aif_start(uint64_t base, int ch, uint32_t ctrl, uint32_t addr, uint32_t size) "group 0x%08" PRIx64 " ch%d start ctrl 0x%x addr 0x%08x size 0x%x"
 +cxd_aif_done(uint64_t base, uint32_t mask) "group 0x%08" PRIx64 " channels 0x%x done"
 +cxd_aif_status(uint64_t base, uint32_t v) "group 0x%08" PRIx64 " status read 0x%x"
++cxd_aif_inject(uint64_t base, int ch, uint32_t addr, uint32_t size, uint32_t lines) "group 0x%08" PRIx64 " ch%d live-view frame at bus 0x%08x, 0x%x B x %u lines"
 diff --git a/hw/gpio/meson.build b/hw/gpio/meson.build
 index 7484061..bde66bb 100644
 --- a/hw/gpio/meson.build

@@ -58,9 +58,9 @@
 - ✅ 셔터 대기 레벨 수정(카메라가 S1/S2를 누른 채로 부팅하고 있었음): 촬영 모드에서 MENU·휠 가운데 버튼 동작, 셔터·줌 레버 연결 (`docs/RE_ENGINE_TICK.md` §12)
 - ⏳ SD 있음: 이미지 DB 자동 복구 뷰(AUTOREPAIR)가 빈 화면, 메뉴의 포맷도 멈춤 — 둘 다 SD 명령을 내지 않음, 조사 중
 - ✅ 업데이터 모드: 에뮬레이션 NAND에 `/setting/updater/mode`가 있으면 1단계 로더가 부트로더처럼 업데이터 코어(nflasha1)로 부팅 → 루트 셸·UFP USB 대기까지 (`docs/RE_UPDATER_BOOT.md`)
-- ⏳ 카메라 프런트엔드: 센서 라이터(P2S, IRQ 38)·프런트엔드 프레임 IRQ·AIF 채널 그룹(IRQ 40–50) 모델 → 캡처 오류 해소, 라이브뷰는 아직 검정(YC 출력 요청 없음, `docs/RE_SENSOR_ISP.md` §7). 테스트 컬러바: `-global cxd90014-vph.pattern=bars`
+- ⏳ 카메라 프런트엔드: 센서 라이터(P2S, IRQ 38)·프런트엔드 프레임 IRQ·AIF 채널 그룹(IRQ 40–50) 모델 → 캡처 오류 해소, 라이브뷰는 아직 검정(YC 출력 요청 없음, `docs/RE_SENSOR_ISP.md` §7)
 - ✅ SA DSP 코어: null 모델(`cxd90014_sa.c`)로 센서 결함표 작업 완료 → 엔진이 모니터링 상태 도달, 촬영 화면에 노출 표시(셔터/조리개 눈금). 라이브뷰는 YC 상태 2 전에서 정지(`docs/RE_LIVEVIEW_REQUEST.md` §9), PLAY·SD 동작: 카드 없음 재생 화면, 카드가 있으면 이미지 DB 생성 대화상자 → 카드에 DB 생성(첫 SD 쓰기) (`docs/RE_PLAYBACK_SWITCH.md`)
-- ✅ 라이브뷰 경로: SYSV를 마스터 V 클럭으로 바꾼 뒤 펌웨어가 패널 YUV 레이어를 켜고 ch51을 매 프레임 설정 (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51은 8비트 휘도 평면(1024×516)을 패널로 스케일; 채우는 ISP 모델이 아직 없어 렌즈 캡을 닫은 것처럼 검정; `-global cxd90014-vph.pattern=bars`면 OSD 아래 컬러바
+- ✅ 라이브뷰 경로: SYSV를 마스터 V 클럭으로 바꾼 뒤 펌웨어가 패널 YUV 레이어를 켜고 ch51을 매 프레임 설정 (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51은 8비트 휘도 평면(1024×516)을 패널로 스케일; 채우는 ISP 모델이 아직 없어 렌즈 캡을 닫은 것처럼 검정; `-global cxd90014-aif.lv-source=bars|ramp|file:PATH.pgm`이면 리사이즈 출력 시점에 그 버퍼로 테스트 휘도 프레임을 기록(디버그, `docs/RE_LIVEVIEW_IMAGE.md`)
 - ⬜ 센서/ISP(라이브뷰), 렌즈 시리얼 프로토콜, 오디오
 
 ## 사용
