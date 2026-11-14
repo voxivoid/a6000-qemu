@@ -118,7 +118,9 @@ struct A5KMachineState {
     int submicro_step;
     bool submicro;
     uint8_t *submicro_frames;
-    int adc_key[2];                 /* qcode holding each ADC key ladder */
+    int adc_key[4];                 /* qcode holding each ADC key ladder */
+    bool key_shift;                 /* host Shift held (zoom speed) */
+    bool key_s2;                    /* shutter fully pressed */
     DeviceState *adc[2];
     char *submicro_file;
     char *cmdline;
@@ -436,10 +438,16 @@ static void a5k_submicro_tick(void *opaque)
  *     0..91 ENTER (0x1AC), 92..273 UP (0x03), 274..439 LEFT (0x15),
  *     440..599 DOWN (0x30), 600..772 RIGHT (0x1AF); released = 1023
  *   ADC ch 0x0C (= unit 1 ch 0) 0..91 DELETE (0x1F8)
+ *   ADC ch 0x0F (= unit 1 ch 3) zoom lever, one key 0x1BF whose value is
+ *     the band: 80..244 = 2, 245..358 = 0x8002, 359..442 = 0x8001,
+ *     443..514 = 1, 515..1023 = 0 (centre).  Reading 1/2 = tele slow/fast,
+ *     0x8001/0x8002 = wide slow/fast [? sign bit = wide, not verified]
  *   GPIO P10.10 active low = STARTSTOP (0x1F0, the MOVIE button)
  *   sub-micro slot A byte 28 bit 2 MENU (0x1AB), bit 1 PLAY (0x1F7)
+ *   GPIO p0.1/p0.11 S1 (0x1F1), p1.5/p0.13 S2 (0xA7), all active low
  * Host keys: arrows, Enter = centre, M = MENU, P = PLAY,
- * Delete/Backspace = delete, R = MOVIE.
+ * Delete/Backspace = delete, R = MOVIE, T/W = zoom tele/wide (slow; with
+ * Shift held = fast), S = shutter half press, Shift+S or S+Space = full.
  * Band mid-points are used.
  */
 static void a5k_adc_key(A5KMachineState *s, int ch, int qcode, bool down,
@@ -457,6 +465,22 @@ static void a5k_adc_key(A5KMachineState *s, int ch, int qcode, bool down,
     }
 }
 
+/*
+ * Shutter: S1 (half) = p0.1 + p0.11, S2 (full) = p1.5 + p0.13, active low
+ * (see hw/gpio/cxd90014_gpio.c reset).  Each switch drives both of its
+ * interrupt lines [? two lines per switch inferred from av-cam's IRQ set].
+ */
+static void a5k_shutter(A5KMachineState *s, bool s1, bool s2)
+{
+    if (!s->gpio) {
+        return;
+    }
+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 1), !s1);
+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 11), !s1);
+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 1 * 32 + 5), !s2);
+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 13), !s2);
+}
+
 static void a5k_key_event(DeviceState *dev, QemuConsole *src,
                           InputEvent *evt)
 {
@@ -466,6 +490,34 @@ static void a5k_key_event(DeviceState *dev, QemuConsole *src,
     bool down = key->down;
 
     switch (qcode) {
+    case Q_KEY_CODE_SHIFT:
+    case Q_KEY_CODE_SHIFT_R:
+        s->key_shift = down;
+        break;
+    case Q_KEY_CODE_S:
+        /* S = half press, Shift+S = full press (passes through S1) */
+        if (down) {
+            s->key_s2 = s->key_shift;
+            a5k_shutter(s, true, s->key_s2);
+        } else {
+            s->key_s2 = false;
+            a5k_shutter(s, false, false);
+        }
+        break;
+    case Q_KEY_CODE_SPC:
+        /* Space while S is held = full press */
+        s->key_s2 = down;
+        a5k_shutter(s, true, down);
+        if (!down) {
+            a5k_shutter(s, false, false);
+        }
+        break;
+    case Q_KEY_CODE_T:
+        a5k_adc_key(s, 3, qcode, down, s->key_shift ? 162 : 478);
+        break;
+    case Q_KEY_CODE_W:
+        a5k_adc_key(s, 3, qcode, down, s->key_shift ? 301 : 400);
+        break;
     case Q_KEY_CODE_RET:
     case Q_KEY_CODE_KP_ENTER:
         a5k_adc_key(s, 1, qcode, down, 45);
@@ -834,6 +886,13 @@ static void a5k_init(MachineState *ms)
     /* DEVS (0x204) bit0 polled after MODE |= 2 (transition_to_idle+0x430) */
     a5k_regfile_ex("usb-hdc", 0xF0210000, 0x20000, "0x204=1", "0x0=4", -500);
 
+    /* CEC (cec.ko, UDIF "cec", PA 0xF3C10000): +0x180 is the interrupt
+     * status, write-1-to-clear.  Nothing on the bus raises it, so the bits
+     * written there must not read back; otherwise cec.ko sees a phantom
+     * RX-ready, reads an RX count of 0, fails the receive and libObj's CEC
+     * Msg Thread power-cycles CEC forever (docs/RE_HDMI.md section 4a). */
+    a5k_regfile_ex("cec", 0xF3C10000, 0x1000, NULL, "0x180=0xf", -500);
+
     /* clock generators (PLL lock / self-clearing update request) */
     static const hwaddr clkgen[] = {
         0xF2A01000, 0xF2A02000, 0xF2A11000, 0xF2A12000, 0xF2A21000,
@@ -975,6 +1034,49 @@ static void a5k_set_smcf(Object *o, const char *v, Error **errp)
     A5K_MACHINE(o)->submicro_file = g_strdup(v);
 }
 
+/*
+ * Debug only: "submicro-poke" = "IDX=VAL" patches one byte of the replayed
+ * slot-A frame at run time (qom-set /machine submicro-poke 30=0x08), CRC
+ * recomputed.  Used to locate which slot-A fields carry which inputs; never
+ * set by default.
+ */
+static char *a5k_get_smpoke(Object *o, Error **errp)
+{
+    return g_strdup("");
+}
+
+static void a5k_set_smpoke(Object *o, const char *v, Error **errp)
+{
+    A5KMachineState *s = A5K_MACHINE(o);
+    char *e;
+    unsigned long idx = strtoul(v, &e, 0);
+    if (*e != '=' || idx >= 126 || !s->submicro_frames) {
+        error_setg(errp, "submicro-poke: expected IDX=VAL, IDX < 126");
+        return;
+    }
+    s->submicro_frames[idx] = strtoul(e + 1, NULL, 0);
+    a5k_submicro_crc(s->submicro_frames);
+}
+
+/* Debug only: "gpio-poke" = "PORT.PIN=LEVEL" drives an external GPIO input
+ * (qom-set /machine gpio-poke 0.1=1); used to identify unmodelled inputs. */
+static char *a5k_get_gpoke(Object *o, Error **errp)
+{
+    return g_strdup("");
+}
+
+static void a5k_set_gpoke(Object *o, const char *v, Error **errp)
+{
+    A5KMachineState *s = A5K_MACHINE(o);
+    unsigned port, pin, level;
+    if (sscanf(v, "%u.%u=%u", &port, &pin, &level) != 3 || port >= 18 ||
+        pin >= 32 || !s->gpio) {
+        error_setg(errp, "gpio-poke: expected PORT.PIN=LEVEL");
+        return;
+    }
+    qemu_set_irq(qdev_get_gpio_in(s->gpio, port * 32 + pin), level);
+}
+
 static bool a5k_get_smc(Object *o, Error **errp)
 {
     return A5K_MACHINE(o)->submicro;
@@ -1049,6 +1151,14 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
         "Sub-micro (power micro) HLE replaying the real camera's frames");
     object_class_property_add_str(oc, "submicro-frames", a5k_get_smcf,
                                   a5k_set_smcf);
+    object_class_property_add_str(oc, "gpio-poke", a5k_get_gpoke,
+                                  a5k_set_gpoke);
+    object_class_property_set_description(oc, "gpio-poke",
+        "Debug: PORT.PIN=LEVEL drives an external GPIO input");
+    object_class_property_add_str(oc, "submicro-poke", a5k_get_smpoke,
+                                  a5k_set_smpoke);
+    object_class_property_set_description(oc, "submicro-poke",
+        "Debug: IDX=VAL patches a byte of the replayed slot-A frame");
     object_class_property_add_str(oc, "fb", a5k_get_fb, a5k_set_fb);
     object_class_property_set_description(oc, "fb",
         "Debug frame-buffer view: addr,w,h,stride,fmt[;...]");

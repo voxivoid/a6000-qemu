@@ -155,6 +155,17 @@ index 7484061..bde66bb 100644
  system_ss.add(when: 'CONFIG_SIFIVE_GPIO', if_true: files('sifive_gpio.c'))
  system_ss.add(when: 'CONFIG_PCF8574', if_true: files('pcf8574.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_gpio.c'))
+diff --git a/hw/gpio/trace-events b/hw/gpio/trace-events
+index cea896b..f7a5229 100644
+--- a/hw/gpio/trace-events
++++ b/hw/gpio/trace-events
+@@ -46,3 +46,6 @@ stm32l4x5_gpio_read(char *gpio, uint64_t addr) "GPIO%s addr: 0x%" PRIx64 " "
+ stm32l4x5_gpio_write(char *gpio, uint64_t addr, uint64_t data) "GPIO%s addr: 0x%" PRIx64 " val: 0x%" PRIx64 ""
+ stm32l4x5_gpio_update_idr(char *gpio, uint32_t old_idr, uint32_t new_idr) "GPIO%s from: 0x%x to: 0x%x"
+ stm32l4x5_gpio_pins(char *gpio, uint16_t disconnected, uint16_t high) "GPIO%s disconnected pins: 0x%x levels: 0x%x"
++
++# cxd90014_gpio.c
++cxd90014_gpio_in(int port, uint32_t value) "P%d in 0x%08x"
 diff --git a/hw/misc/Kconfig b/hw/misc/Kconfig
 index 4e35657..8a17a3a 100644
 --- a/hw/misc/Kconfig

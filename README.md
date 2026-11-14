@@ -41,11 +41,15 @@ SD card: `-drive if=sd` / `A5K_SD`.
 |---|---|---|
 | Enter (or keypad Enter) | control wheel centre (OK) | ADC unit 1 ch 1 (ch 0x0D) ladder, level 45 |
 | ↑ / ← / ↓ / → | control wheel up / left / down / right | same ladder, levels 182 / 356 / 520 / 686 |
-| Delete / Backspace (Mac: ⌫) | DELETE (trash) | ADC unit 0 ch 1 (ch 0x0C) ladder, level 45 |
+| Delete / Backspace (Mac: ⌫) | DELETE (trash) | ADC unit 1 ch 0 (ch 0x0C) ladder, level 45 |
 | `M` | MENU | sub-micro slot A frame byte 28 bit 2 |
 | `P` | PLAY (playback) | sub-micro slot A frame byte 28 bit 1 |
 | `R` | MOVIE (record) | GPIO P10.10, active low |
-| — | shutter half / full, zoom lever, wheel rotation | not wired yet |
+| `S` | shutter half press (S1, key 0x1F1) | GPIO P0.1 + P0.11 low (active low) |
+| `Shift+S`, or `Space` | shutter full press (S1 + S2, key 0xA7) | additionally GPIO P1.5 + P0.13 low |
+| `T` / `W` | zoom lever tele / wide (slow) | ADC unit 1 ch 3 (ch 0x0F), level 478 / 400 (value 1 / 0x8001) |
+| `Shift+T` / `Shift+W` | zoom lever tele / wide (fast) | same channel, level 162 / 301 (value 2 / 0x8002) |
+| — | control wheel rotation | not wired yet (av-cam JogTpu counter) |
 
 Keys are also accepted from the HMP monitor: `sendkey ret`, `sendkey down`, `sendkey m`, ...
 QEMU's own hot keys: Ctrl+Opt+G releases the mouse, Ctrl+Opt+1 / 2 switch between the panel (console 0) and the debug frame-buffer view.
@@ -65,7 +69,8 @@ Keys pressed in the first ~20 s after the first-boot dialog appears are ignored 
 - ✅ SD card: sub-micro slot switch model → stock media stack initialises the card and reads FAT
 - ✅ Camera buttons (`docs/RE_ENGINE_TICK.md` §11): wheel/centre = ADC ladder ch 0x0D, DELETE = ch 0x0C, MOVIE = GPIO P10.10, MENU/PLAY = sub-micro slot A byte 28
 - ✅ First-boot setup completes: area (world map) → date/time → PlayMemories notice → shooting mode (no SD: lens warning → shooting-screen OSD)
-- ⏳ With SD: blank screen in what is probably the image-database repair view; menu/wheel unresponsive in shooting mode — under investigation
+- ✅ Shutter idle level fixed (the camera had booted with S1/S2 held): MENU and the wheel centre button now work in shooting mode; shutter and zoom lever wired (`docs/RE_ENGINE_TICK.md` §12)
+- ⏳ With SD: the image-database repair view (AUTOREPAIR) stays blank, and Format from the menu hangs; neither issues an SD command — under investigation
 - ✅ GPU: all 779 draws from first boot to the shooting screen render (Rigel compositing included); depth/stencil, mipmaps, border wrap added and tested with synthetic lists (`tools/test_dmp_p3d.py`, `tools/test_dmp_shader.c`)
 - ⏳ GPU: geometry programs (real point/line drawing), 14 GLES1-package shader opcodes, ETC1, depth/mip memory layouts unconfirmed (`docs/RE_GPU_P3D_CMD.md` §7)
 - ⬜ Sensor/ISP (live view), lens, audio, RTC

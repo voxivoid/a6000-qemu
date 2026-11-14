@@ -53,7 +53,8 @@
 - ✅ SD 카드: 서브마이컴 슬롯 스위치 모델 → 순정 미디어 스택이 카드 초기화·FAT 읽기 (`-drive if=sd` / `A5K_SD`)
 - ✅ 카메라 버튼(`docs/RE_ENGINE_TICK.md` §11): 휠·가운데 = ADC 래더 ch 0x0D, DELETE = ch 0x0C, MOVIE = GPIO P10.10, MENU/PLAY = 서브마이컴 slot A 바이트 28 (호스트: 방향키/Enter/M/P/R/Delete, HMP `sendkey`)
 - ✅ 첫 부팅 설정 완주: 지역 설정(세계 지도) → 날짜/시간 → PlayMemories 안내 → 촬영 모드 (SD 없음: 렌즈 경고 → 촬영 OSD)
-- ⏳ SD 있음: 이미지 DB 자동 복구 뷰(추정)에서 빈 화면 / 촬영 모드에서 메뉴·휠 무반응 — 조사 중
+- ✅ 셔터 대기 레벨 수정(카메라가 S1/S2를 누른 채로 부팅하고 있었음): 촬영 모드에서 MENU·휠 가운데 버튼 동작, 셔터·줌 레버 연결 (`docs/RE_ENGINE_TICK.md` §12)
+- ⏳ SD 있음: 이미지 DB 자동 복구 뷰(AUTOREPAIR)가 빈 화면, 메뉴의 포맷도 멈춤 — 둘 다 SD 명령을 내지 않음, 조사 중
 - ⬜ 센서/ISP(라이브뷰), 렌즈, 오디오
 
 ## 사용
@@ -67,11 +68,15 @@
 |---|---|---|
 | Enter (키패드 Enter 포함) | 컨트롤 휠 가운데 (확인) | ADC 유닛 1 ch 1 (ch 0x0D) 래더, 레벨 45 |
 | ↑ / ← / ↓ / → | 컨트롤 휠 위 / 왼쪽 / 아래 / 오른쪽 | 같은 래더, 레벨 182 / 356 / 520 / 686 |
-| Delete / Backspace (Mac: ⌫) | 삭제(휴지통) | ADC 유닛 0 ch 1 (ch 0x0C) 래더, 레벨 45 |
+| Delete / Backspace (Mac: ⌫) | 삭제(휴지통) | ADC 유닛 1 ch 0 (ch 0x0C) 래더, 레벨 45 |
 | `M` | MENU | 서브마이컴 slot A 프레임 바이트 28 비트 2 |
 | `P` | 재생 | 서브마이컴 slot A 프레임 바이트 28 비트 1 |
 | `R` | MOVIE (동영상 녹화) | GPIO P10.10, active low |
-| — | 셔터 반/완, 줌 레버, 휠 회전 | 아직 미연결 |
+| `S` | 셔터 반누름 (S1, 키 0x1F1) | GPIO P0.1 + P0.11 low (active low) |
+| `Shift+S` 또는 `Space` | 셔터 완전 누름 (S1 + S2, 키 0xA7) | 추가로 GPIO P1.5 + P0.13 low |
+| `T` / `W` | 줌 레버 망원 / 광각 (저속) | ADC 유닛 1 ch 3 (ch 0x0F), 레벨 478 / 400 (값 1 / 0x8001) |
+| `Shift+T` / `Shift+W` | 줌 레버 망원 / 광각 (고속) | 같은 채널, 레벨 162 / 301 (값 2 / 0x8002) |
+| — | 컨트롤 휠 회전 | 아직 미연결 (av-cam JogTpu 카운터) |
 
 HMP 모니터에서도 입력 가능: `sendkey ret`, `sendkey down`, `sendkey m`, …
 QEMU 자체 단축키: Ctrl+Opt+G = 마우스 해제, Ctrl+Opt+1 / 2 = 패널(console 0) / 디버그 프레임버퍼 화면 전환.

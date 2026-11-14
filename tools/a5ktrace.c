@@ -42,13 +42,34 @@ static int ncomms;
  * resets itself so that already translated blocks are instrumented again.
  * Each address logs at most "fncap=N" hits (default 4) as one "A5KF" line.
  * Meant for user-space code whose load address is only known at run time.
+ * "fnwords=N" adds N words at r0, "fnstr=K" the C string at *(r0 + 4K),
+ * "fnr1s=1" the C string at r1.
  */
 static char *fnpath;
 static int fncap = 4;
+static int fnwords;           /* "fnwords=N": also dump N words at r0 */
+static int fnstr = -1;        /* "fnstr=K": print the string *(r0 + 4K) */
+static int fnr1s;             /* "fnr1s=1": print the string at r1 */
 static GHashTable *fnset;          /* pc -> FnProbe */
 static gint64 fn_mtime, fn_checked;
 static qemu_plugin_id_t self_id;
 typedef struct { uint64_t pc; int hits; char label[48]; } FnProbe;
+/*
+ * "libobj=1" (2 = also list all im.elf file mappings): find the load address of /usr/lib/libObj.so in im.elf without a
+ * debugger.  At the first probe hit from an im.elf thread ("Appframework"),
+ * walk task->mm's VMA list (3.0 kernel: task+0xCC mm, mm+0 mmap, vma +4 start,
+ * +8 end, +12 next, +72 pgoff) for the 0xE0E000-byte text mapping at pgoff 0.
+ * Then "poke=OFF:VAL" (repeatable) writes byte VAL at base+OFF (diagnostic
+ * switches such as appFw's debug print byte 0xF13D88), and fn= lines that
+ * start with '+' are offsets relative to this base; a fn= line "!OFF VAL"
+ * queues such a poke at run time.
+ */
+static int want_libobj;
+static uint32_t libobj_base;
+static uint32_t pokes[8][2];
+static int npokes;
+static bool pokes_pending;
+static bool vma_rescan;            /* fn= line "?": list im.elf VMAs again */
 
 typedef struct {
     struct qemu_plugin_register *r[16];
@@ -88,8 +109,95 @@ static void rdstr(uint32_t va, char *out, int n)
     g_byte_array_free(b, TRUE);
 }
 
+static void find_libobj(unsigned int cpu)
+{
+    uint32_t sp = rd_reg(cpu, 13);
+    char comm[17] = "";
+    if (sp < 0x40000000u) {
+        return;
+    }
+    uint32_t task = rd32((sp & ~0x1fffu) + 12);
+    if (!task) {
+        return;
+    }
+    rdstr(task + 0x1e8, comm, sizeof(comm));
+    if (strncmp(comm, "Appframework", 12)) {
+        return;
+    }
+    uint32_t mm = rd32(task + 0xcc), v = mm ? rd32(mm) : 0;
+    for (int n = 0; v && n < 2000; n++, v = rd32(v + 12)) {
+        uint32_t a = rd32(v + 4), e = rd32(v + 8);
+        if (want_libobj > 1 && rd32(v + 72) == 0 && rd32(v + 76)) {
+            /* "libobj=2": list every file mapping at offset 0 */
+            g_autofree char *t = g_strdup_printf("A5KB vma %08x size %x\n",
+                                                 a, e - a);
+            qemu_plugin_outs(t);
+        }
+        if (e - a == 0xe0e000 && rd32(v + 72) == 0) {
+            libobj_base = a;
+            if (want_libobj < 2) {
+                break;
+            }
+        }
+    }
+    if (!libobj_base) {
+        return;
+    }
+    g_autofree char *m = g_strdup_printf("A5KB libObj base %08x\n",
+                                         libobj_base);
+    qemu_plugin_outs(m);
+    pokes_pending = npokes > 0;
+    fn_mtime = 0;                       /* reload fn= with the base */
+    fn_checked = 0;
+}
+
+/* apply queued pokes from an im.elf thread (its user mapping is live) */
+static void do_pokes(unsigned int cpu)
+{
+    uint32_t sp = rd_reg(cpu, 13);
+    char comm[17] = "";
+    if (sp < 0x40000000u) {
+        return;
+    }
+    uint32_t task = rd32((sp & ~0x1fffu) + 12);
+    rdstr(task + 0x1e8, comm, sizeof(comm));
+    if (strncmp(comm, "Appframework", 12)) {
+        return;
+    }
+    pokes_pending = false;
+    for (int k = 0; k < npokes; k++) {
+        GByteArray *b = g_byte_array_new();
+        uint8_t val = pokes[k][1];
+        g_byte_array_append(b, &val, 1);
+        bool ok = qemu_plugin_write_memory_vaddr(libobj_base + pokes[k][0], b);
+        g_byte_array_free(b, TRUE);
+        g_autofree char *t = g_strdup_printf("A5KB poke +%x = %02x %s\n",
+                                             pokes[k][0], val, ok ? "ok" : "FAILED");
+        qemu_plugin_outs(t);
+    }
+    npokes = 0;
+}
+
 static void hit(unsigned int cpu, void *udata)
 {
+    if (want_libobj && (!libobj_base || vma_rescan)) {
+        uint32_t keep = libobj_base;
+        int w = want_libobj;
+        if (vma_rescan) {
+            want_libobj = 2;
+            libobj_base = 0;
+        }
+        find_libobj(cpu);
+        want_libobj = w;
+        if (libobj_base) {
+            vma_rescan = false;
+        } else {
+            libobj_base = keep;
+        }
+    }
+    if (pokes_pending && libobj_base) {
+        do_pokes(cpu);
+    }
     int i = GPOINTER_TO_INT(udata);
     uint32_t r[4];
     for (int k = 0; k < 4; k++) {
@@ -109,10 +217,10 @@ static void hit(unsigned int cpu, void *udata)
             return;
         }
     }
-    uint32_t sp = rd_reg(cpu, 13), lr = rd_reg(cpu, 14);
+    uint32_t sp = rd_reg(cpu, 13), lr = rd_reg(cpu, 14), task = 0;
     char comm[17] = "";
     if (sp >= 0x40000000u) {
-        uint32_t task = rd32((sp & ~0x1fffu) + 12);
+        task = rd32((sp & ~0x1fffu) + 12);
         if (task) {
             rdstr(task + 0x1e8, comm, sizeof(comm));
         }
@@ -134,7 +242,8 @@ static void hit(unsigned int cpu, void *udata)
     }
     g_autofree char *s = g_strdup_printf(
         "A5KT cpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
-        "[%s] m=", cpu, probes[i].pc, r[0], r[1], r[2], r[3], lr, comm);
+        "[%s] t=%08x m=", cpu, probes[i].pc, r[0], r[1], r[2], r[3], lr, comm,
+        task);
     GString *g = g_string_new(s);
     for (int k = 0; k < nwords; k++) {
         g_string_append_printf(g, "%08x ", m[k]);
@@ -161,11 +270,33 @@ static void fn_hit(unsigned int cpu, void *udata)
         return;
     }
     f->hits++;
-    g_autofree char *s = g_strdup_printf(
+    uint32_t r0 = rd_reg(cpu, 0);
+    GString *g = g_string_new(NULL);
+    g_string_printf(g,
         "A5KF cpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
-        "n=%d %s\n", cpu, f->pc, rd_reg(cpu, 0), rd_reg(cpu, 1),
+        "n=%d %s", cpu, f->pc, r0, rd_reg(cpu, 1),
         rd_reg(cpu, 2), rd_reg(cpu, 3), rd_reg(cpu, 14), f->hits, f->label);
-    qemu_plugin_outs(s);
+    if (r0 >= 0x1000) {
+        if (fnwords) {
+            g_string_append(g, " w=");
+            for (int k = 0; k < MIN(fnwords, 16); k++) {
+                g_string_append_printf(g, "%08x ", rd32(r0 + 4 * k));
+            }
+        }
+        if (fnstr >= 0) {
+            char t[64];
+            rdstr(rd32(r0 + 4 * fnstr), t, sizeof(t));
+            g_string_append_printf(g, " s=\"%s\"", t);
+        }
+    }
+    if (fnr1s && rd_reg(cpu, 1) >= 0x1000) {
+        char t[64];
+        rdstr(rd_reg(cpu, 1), t, sizeof(t));
+        g_string_append_printf(g, " s1=\"%s\"", t);
+    }
+    g_string_append_c(g, '\n');
+    qemu_plugin_outs(g->str);
+    g_string_free(g, TRUE);
 }
 
 static void tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb);
@@ -197,10 +328,31 @@ static bool fn_reload(void)
                                           NULL, g_free);
     g_auto(GStrv) lines = g_strsplit(txt, "\n", -1);
     for (int i = 0; lines[i]; i++) {
-        char *e;
-        uint64_t pc = g_ascii_strtoull(lines[i], &e, 16);
-        if (e == lines[i]) {
+        char *e, *l = lines[i];
+        if (!strncmp(l, "#cap ", 5)) {       /* "#cap N": per-probe hit cap */
+            fncap = atoi(l + 5);
             continue;
+        }
+        if (*l == '?') {
+            vma_rescan = true;
+            continue;
+        }
+        if (*l == '!' && npokes < 8) {      /* "!OFF VAL": poke libObj+OFF */
+            pokes[npokes][0] = g_ascii_strtoull(l + 1, &e, 16);
+            pokes[npokes++][1] = g_ascii_strtoull(e, NULL, 16);
+            pokes_pending = true;
+            continue;
+        }
+        bool rel = *l == '+';
+        if (rel && !libobj_base) {
+            continue;
+        }
+        uint64_t pc = g_ascii_strtoull(l + rel, &e, 16);
+        if (e == l + rel) {
+            continue;
+        }
+        if (rel) {
+            pc += libobj_base;
         }
         FnProbe *f = g_new0(FnProbe, 1);
         f->pc = pc & ~1ull;
@@ -273,6 +425,18 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
             nwords = MIN(20, atoi(argv[i] + 6));
         } else if (!strncmp(argv[i], "fn=", 3)) {
             fnpath = g_strdup(argv[i] + 3);
+        } else if (!strncmp(argv[i], "libobj=", 7)) {
+            want_libobj = atoi(argv[i] + 7);
+        } else if (!strncmp(argv[i], "poke=", 5) && npokes < 8) {
+            char *e;
+            pokes[npokes][0] = g_ascii_strtoull(argv[i] + 5, &e, 16);
+            pokes[npokes++][1] = *e == ':' ? g_ascii_strtoull(e + 1, NULL, 16) : 1;
+        } else if (!strncmp(argv[i], "fnwords=", 8)) {
+            fnwords = atoi(argv[i] + 8);
+        } else if (!strncmp(argv[i], "fnr1s=", 6)) {
+            fnr1s = atoi(argv[i] + 6);
+        } else if (!strncmp(argv[i], "fnstr=", 6)) {
+            fnstr = atoi(argv[i] + 6);
         } else if (!strncmp(argv[i], "fncap=", 6)) {
             fncap = atoi(argv[i] + 6);
         } else if (!strncmp(argv[i], "x=", 2) && nxr0 < 32) {

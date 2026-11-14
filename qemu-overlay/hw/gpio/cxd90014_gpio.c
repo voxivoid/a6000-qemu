@@ -7,8 +7,9 @@
  *   +0x40/44/48 output latch
  * Input data = output latch on output pins, external level on inputs.
  * External levels are set through qdev GPIO inputs (32 per port, port-major)
- * by board-level models (keys, sub-micro handshake).  Reset levels: P5.2 and
- * P10.10 high (active-low keys released).
+ * by board-level models (keys, sub-micro handshake).  Reset levels: P5.2,
+ * P10.10 and the shutter lines P0.1/P0.11/P0.13/P1.5 high (active-low keys
+ * released).
  * Pin interrupts (gpiopin_to_irq): p0.0..15 -> GIC 121+pin, p0.16 -> 144,
  * p1.0..6 -> 137+pin; pulsed on every edge of the pin.
  */
@@ -19,6 +20,7 @@
 #include "qemu/timer.h"
 #include "qemu/module.h"
 #include "qom/object.h"
+#include "trace.h"
 
 #define TYPE_CXD_GPIO "cxd90014-gpio"
 OBJECT_DECLARE_SIMPLE_TYPE(GpioState, CXD_GPIO)
@@ -86,6 +88,7 @@ static uint64_t gpio_read(void *opaque, hwaddr off, unsigned size)
     int p = off / 0x100;
     hwaddr o = off % 0x100;
     if (o == 0x10) {
+        trace_cxd90014_gpio_in(p, pin_in(s, p));
         return pin_in(s, p);
     }
     uint32_t *t = triple(s, p, o);
@@ -145,6 +148,15 @@ static void gpio_reset(DeviceState *dev)
     memset(s->ext, 0, sizeof(s->ext));
     s->ext[5] |= 1u << 2;           /* key (active low) released */
     s->ext[10] |= 1u << 10;         /* key (active low) released */
+    /*
+     * Shutter release, active low (av-cam 436FC740 reads the level and
+     * inverts it): S1 (half press, key 0x1F1) on p0.1 with second interrupt
+     * line p0.11, S2 (full press, key 0xA7) on p1.5 with p0.13 (IRQ set
+     * chosen in 436FCA80: 122/142/132/134).  Idle = high; with these low the
+     * camera booted with the shutter held fully down.
+     */
+    s->ext[0] |= (1u << 1) | (1u << 11) | (1u << 13);
+    s->ext[1] |= 1u << 5;
 }
 
 static void gpio_init(Object *obj)
