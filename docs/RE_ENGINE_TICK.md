@@ -76,3 +76,15 @@ libObj 사용자 코드 브레이크: libObj 베이스는 실행마다 다름 �
   0x8100/0x8101/0x8102 …)을 받아 갱신한다 → 카메라 앱의 dataflow 핀 연결(촬영 모드/라이브뷰 시작)에 의존 [?].
   센서/ISP 라이브뷰가 모델링되지 않은 것과 연결될 가능성이 높다(미확정).
 - 즉 화면에 픽셀이 나오려면 (a) P3D 실행 (b) VDF dataflow 연결 → OSD 레코드 → VPH AIF 프로그래밍, 둘 다 필요.
+
+## 7. 앱이 "정상 동작" 상태로 가지 않는 정황 (추가 조사, 미해결)
+- 0x80003B(libObj dmpNative CmdQueue)로 보내는 쪽은 im.elf 자신뿐(초기화 type 2/4/6/8/9 + 매 flush break/exec).
+  OSD 핀 connect(DataflowInfra id 4096)는 어디서도 오지 않는다. 0x61003C = av-cam **AVBBC** 명령 큐(libObj `ObjAvbbcCmn`).
+- SD: 카드 감지(0xF2915010 = 0x0C010000)·SDHCI 모델은 있음. 그러나 `mcmnd_core_checkinsertedmedia`(mcmn_drv 0x3F3958C4)가
+  한 번도 불리지 않음 → 사용자 공간이 미디어 감지를 시작하지 않는다. 서브마이컴 task 48은 부팅 초기에 front-media
+  notify(0x28017C)를 1회 보냄: payload `02 00 00 07 00 00 00`(byte3 = 7). mcmn 콜백은 등록된 사용자 큐(dword_AD6C)가
+  없으면 버린다 [?, 등록 이전에 도착했을 가능성].
+- UPM → im.elf 전원 상태 통지 큐(0x920169, im.elf가 0x920021/0x92016E로 등록)로 가는 메시지가 관측되지 않음.
+  UPM 서비스(0x9241C2/0x9243D8 배터리 레벨, 0x924126 전원 상태, 0x924223 발열)만 task 48에서 갱신된다.
+- 가설: 앱의 기동 상태 전이는 부트 사유/전원 상태(hand-off 페이지의 스냅샷 값: boot factor 7, loader mode 12)와
+  서브마이컴 상태에 달려 있다. 다음 단계 = appFw(Appframework) 상태 머신이 어떤 이벤트를 기다리는지 특정.
