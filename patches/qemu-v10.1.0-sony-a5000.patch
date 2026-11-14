@@ -329,3 +329,45 @@ index a2a23ea..6736165 100644
      { .name = "cortex-a9",   .initfn = cortex_a9_initfn },
      { .name = "cortex-a15",  .initfn = cortex_a15_initfn },
      { .name = "cortex-r5",   .initfn = cortex_r5_initfn },
+diff --git a/ui/cocoa.m b/ui/cocoa.m
+index 23b7a73..aa8ef70 100644
+--- a/ui/cocoa.m
++++ b/ui/cocoa.m
+@@ -1004,21 +1004,22 @@ - (bool) handleEventLocked:(NSEvent *)event
+ 
+             // handle control + alt Key Combos (ctrl+alt+[1..9,g] is reserved for QEMU)
+             if (([event modifierFlags] & NSEventModifierFlagControl) && ([event modifierFlags] & NSEventModifierFlagOption)) {
+-                NSString *keychar = [event charactersIgnoringModifiers];
+-                if ([keychar length] == 1) {
+-                    char key = [keychar characterAtIndex:0];
+-                    switch (key) {
+-
+-                        // enable graphic console
+-                        case '1' ... '9':
+-                            [self selectConsoleLocked:key - '0' - 1]; /* ascii math */
+-                            return true;
+-
+-                        // release the mouse grab
+-                        case 'g':
+-                            [self ungrabMouse];
+-                            return true;
+-                    }
++                /*
++                 * Match the physical key, not the character: with a
++                 * non-Latin input source (e.g. Korean) the G key yields
++                 * another character and the hot keys never fired.
++                 */
++                switch (keycode) {
++                case Q_KEY_CODE_1 ... Q_KEY_CODE_9:
++                    /* enable graphic console */
++                    [self selectConsoleLocked:keycode - Q_KEY_CODE_1];
++                    return true;
++                case Q_KEY_CODE_G:
++                    /* release the mouse grab */
++                    [self ungrabMouse];
++                    return true;
++                default:
++                    break;
+                 }
+             }
+ 
