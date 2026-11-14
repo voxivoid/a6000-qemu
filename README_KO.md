@@ -11,9 +11,9 @@
 | `qemu-overlay/` | **QEMU에 새로 추가한 소스 전부**(머신·장치 모델·GPU)를 QEMU 경로 그대로 — 에뮬레이터 코드는 여기서 읽으면 됨 |
 | `patches/qemu-v10.1.0-sony-a5000.patch` | 기존 업스트림 파일의 작은 수정만 (빌드 등록, Cortex-A5, A9MPCore, L2C-310) |
 | `setup-qemu.sh` | `qemu/` = 업스트림 v10.1.0 + 오버레이 + 패치 생성 |
-| `run.sh` | 순정 커널+initrd로 부팅 (기본 = 순정 `console=ttynull`; `A5K_DEBUG_CONSOLE=1` = 부팅 디버그용 시리얼 커널 콘솔) |
+| `run.sh` | 순정 커널+initrd로 부팅 (기본 = 순정 `console=ttynull`; `A5K_SHELL=<port>` = UART2의 루트 셸을 TCP 소켓으로, `A5K_DEBUG_CONSOLE=1` = 같은 콘솔을 stdio로) |
 | `provision/` | 공장식 NAND 프로그래밍 initramfs (Sony FTL이 빈 NAND를 포맷 → `NAND.BIN` 기록) |
-| `tools/` | `mkdata.py`(업데이터에서 `data/` 생성), `a5ktrace.c`(TCG 추적 플러그인: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py`(HMP), `klog.py`(Sony klog 링 읽기), `wbi.py`(실기 WBI 스냅샷 조회·페이지워크), `sym.py`(커널 심볼) |
+| `tools/` | `mkdata.py`(업데이터에서 `data/` 생성), `a5ktrace.c`(TCG 추적 플러그인: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py`(HMP), `klog.py`(Sony klog 링 읽기), `a5kshell.py`(게스트 셸 + 파일 push/pull), `wbi.py`(실기 WBI 스냅샷 조회·페이지워크), `sym.py`(커널 심볼) |
 | `re/` | 커널 심볼(`kernel_syms.txt`). ELF 복원본(`vmlinux.elf`)·실기 커널 로그는 로컬 전용(비공개) |
 | `docs/HARDWARE.md` | SoC 모델 전체와 각 값의 출처(V/S/H) |
 
@@ -36,7 +36,7 @@
 `qemu/`(브랜치 `sony-a5000`)에서 개발할 때는 QEMU 커밋마다 `tools/export-qemu.sh`로 `qemu-overlay/`와 패치를 갱신합니다.
 
 ## 현재 상태 (2026-11-15)
-- 주의: 디버그 시리얼 콘솔(`A5K_DEBUG_CONSOLE=1`)은 순정 cmdline을 바꾸고 UART0를 av-cam 모니터와 공유함 — UI는 이것 없이만 검증됨
+- ✅ 순정 UI 옆의 게스트 루트 셸(`docs/RE_GUEST_SHELL.md`): `console=ttyAM1` + `shell-socket=`(UART2), `tools/a5kshell.py` push/pull과 md5 확인. `/android/a5k`에 push한 정적 ARM 바이너리가 촬영 화면이 떠 있는 채로 실행됨. `debug-console=on`은 이제 UART2로 연결(UART0 = av-cam 모니터 포트; `console=ttyAM0`은 UI가 뜨지 않는다고 경고)
 - ✅ 쿼드 Cortex-A5(VFPv4-D16) · GIC · L2C-310 · CXD4115 타이머/WDT · SYSCTL · PL011 · 클럭 생성기 · USB OTG/HDC 리셋 · BOSS DMAC · GPU(SMAPH-S30: fill/transfer, 3D는 완료 신호만)
 - ✅ NAND: ARM7 NAND 펌웨어 HLE(메일박스, LDEC LZ77) + raw NAND 백킹 파일. `provision.sh`로 `backup/NAND.BIN`을 Sony FTL 경유 기록
 - ✅ 실기 방식 2단계 부팅(`docs/BOOT.md`): 부트로더의 NAND 작업을 Sony NAND 스택으로 재현 → **NAND에서 읽은 커널**로 순정 부팅
@@ -101,6 +101,25 @@ TCP에 내보낸다. TCP 클라이언트가 접속하면 케이블이 꽂힌 것
 ```sh
 python3 pmca-console.py info -d socket       # A5K_USB=host:port (기본 127.0.0.1:7643), A5K_USB_TIMEOUT=ms, A5K_USB_DEBUG=1
 ```
+
+### 게스트 셸 (트랙 B)
+순정 UI가 도는 상태에서 게스트 안의 루트 셸(`docs/RE_GUEST_SHELL.md`). `A5K_SHELL=<port>`는 머신 옵션 `console=ttyAM1`을 켠다:
+순정 cmdline에서 `console=ttynull` 토큰 하나만 `console=ttyAM1 amba2.console=1`로 바뀌고, 순정 시스템이 쓰지 않는 UART2가 TCP
+소켓으로 나온다. 그러면 순정 init이 그 포트에서 자체 루트 `ash`를 띄우고 UI는 평소대로 뜬다. 옵션이 없으면 cmdline은 그대로다.
+```sh
+A5K_SHELL=46310 ./run.sh                      # = -M console=ttyAM1,shell-socket=127.0.0.1:46310 -serial null
+python3 tools/a5kshell.py --port 46310        # 대화형 (Ctrl-] 종료); --job-control 이면 Ctrl-C 동작
+python3 tools/a5kshell.py --port 46310 push hello            # -> /android/a5k/hello (tmpfs, 실행 가능), md5 확인
+python3 tools/a5kshell.py --port 46310 run '/android/a5k/hello; echo rc=$?'
+python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
+```
+- 전송은 순정 busybox만 쓴다(`stty raw` + `cat`, 약 50 KB/s). md5로 확인한다. `/android` 밖으로의 push는 거부한다(`--force`
+  필요). `/android`는 tmpfs라서 push한 파일은 전원이 꺼지면 사라진다.
+- 기타 머신 옵션: `console=ttynull|ttyAM1|ttyAM0`, `debug-console=on`(= `console=ttyAM1`; `run.sh`에서는 `A5K_DEBUG_CONSOLE=1`
+  이면 stdio로). `shell-socket=` 없이 쓰면 UART2는 세 번째 `-serial`이다(`-serial null -serial null -serial tcp:...`).
+  `console=ttyAM0`(`A5K_DEBUG_CONSOLE=ttyAM0`)은 초기 부팅 로그 전용: UART0는 av-cam 모니터 포트라서 UI가 뜨지 않는다.
+- 키 입력 없이 약 5분이 지나면 펌웨어의 유휴 절전이 게스트를 껐다 켠다. 셸 세션과 `/android/a5k`는 사라진다.
+  `a5kshell.py`는 이를 알려준다(종료 코드 3). HMP로 가끔 무해한 키를 보내거나, 그 시간 안에 작업한다.
 
 ## 펌웨어 · 법적 고지
 - 이 저장소에는 **Sony 펌웨어·바이너리·기기 덤프가 들어 있지 않습니다.** 실행하려면 **본인 소유 기기**에서 직접 추출한 NAND 덤프와 Sony가 공개 배포한 공식 업데이터에서 얻은 파일이 필요합니다(`data/README.md`). 이 파일들을 저장소나 이슈에 올리지 마세요.

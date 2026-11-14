@@ -72,10 +72,10 @@
 #define GIC_ID(n)           ((n) - 32)
 
 /* Exact command line passed by the real bootloader (recovered from the
- * WBI RAM snapshot).  "-M sony-a5000,debug-console=on" swaps
- * console=ttynull for a live serial console on UART0 (ttyAM0); the Sony
- * PL011 driver additionally needs amba2.console=1 to emit anything.
- * Override completely with -append. */
+ * WBI RAM snapshot; byte-identical to the updater's /setting/kemco.txt).
+ * "-M sony-a5000,console=ttyAM1|ttyAM0" swaps only the console=ttynull
+ * token (see a5k_console_token); the Sony PL011 driver additionally needs
+ * amba2.console=1 to emit anything.  Override completely with -append. */
 static const char a5k_default_cmdline[] =
     "ramdisk_size=8192 rw noatime noalign lpj=1671168 "
     "heap_profile.records=0 dma_mapping.l2th=0x80000 "
@@ -111,7 +111,9 @@ struct A5KMachineState {
     MachineState parent;
     ARMCPU *cpu[4];
     hwaddr entry;
-    bool debug_console;
+    bool debug_console;             /* alias for console=ttyAM1 */
+    char *console;                  /* ttynull / ttyAM1 / ttyAM0, NULL=unset */
+    char *shell_socket;             /* UART2 server address HOST:PORT */
     char *provision;
     char *nand_file;
     char *preload;
@@ -1135,6 +1137,50 @@ static void a5k_init_done(Notifier *n, void *data)
 
 /* ---- machine ---- */
 
+/*
+ * Kernel console selection (docs/RE_GUEST_SHELL.md sections 2, 4, 6.1).
+ * Only the console=ttynull token of the stock cmdline is replaced:
+ * - ttynull: stock, the cmdline stays exactly a5k_default_cmdline.
+ * - ttyAM1 (UART2, 0xF2002000, GIC 152): nobody else uses this port
+ *   (/proc/interrupts 152 = cxd90014-uart, 150 = liro-150).  Stock init
+ *   reopens fds 0-2 on /dev/console and runs its own root shell there
+ *   (/sbin/init shell_loop_pvt@0x96a4); the UI comes up normally.
+ * - ttyAM0 (UART0): init parse_cmdline@0x934c matches console=ttyAM0 and
+ *   opens /dev/ttycons, so Linux takes IRQ 150 before av-cam; av-cam's
+ *   monitor def_inh(150) then returns -33 and the system ends in the
+ *   exception monitor at ~70 s.  Early-boot logs only, no UI.
+ * Returns the replacement text, or NULL for the stock token.
+ */
+static const char *a5k_console_token(A5KMachineState *s)
+{
+    const char *con = s->console;
+
+    if (!con) {
+        if (s->shell_socket) {
+            con = "ttyAM1";
+        } else if (s->debug_console) {
+            con = "ttyAM1";
+        } else {
+            con = "ttynull";
+        }
+    }
+    if (s->shell_socket && strcmp(con, "ttyAM1") != 0) {
+        error_report("sony-a5000: shell-socket needs console=ttyAM1 "
+                     "(got console=%s)", con);
+        exit(1);
+    }
+    if (!strcmp(con, "ttynull")) {
+        return NULL;
+    }
+    if (!strcmp(con, "ttyAM1")) {
+        return "console=ttyAM1 amba2.console=1";
+    }
+    warn_report("sony-a5000: console=ttyAM0 conflicts with av-cam's "
+                "monitor on UART0; the stock UI will not start "
+                "(docs/RE_GUEST_SHELL.md section 2)");
+    return "console=ttyAM0 amba2.console=1";
+}
+
 static void a5k_init(MachineState *ms)
 {
     A5KMachineState *s = A5K_MACHINE(ms);
@@ -1235,9 +1281,26 @@ static void a5k_init(MachineState *ms)
 
     sysbus_create_varargs("l2x0", A5K_L2C_BASE, NULL);
 
+    /* UART0..2 = -serial #1..#3.  UART2 can also be a TCP server
+     * (shell-socket=HOST:PORT) for the init shell on ttyAM1. */
     for (int i = 0; i < 3; i++) {
-        pl011_create(A5K_UART_BASE + i * 0x1000, pic[GIC_ID(150 + i)],
-                     serial_hd(i));
+        Chardev *chr = serial_hd(i);
+        if (i == 2 && s->shell_socket) {
+            if (chr) {
+                error_report("sony-a5000: shell-socket and a third -serial "
+                             "both claim UART2");
+                exit(1);
+            }
+            g_autofree char *spec = g_strdup_printf(
+                "tcp:%s,server=on,wait=off", s->shell_socket);
+            chr = qemu_chr_new("a5k-shell", spec, NULL);
+            if (!chr) {
+                error_report("shell-socket=%s: cannot create the chardev",
+                             s->shell_socket);
+                exit(1);
+            }
+        }
+        pl011_create(A5K_UART_BASE + i * 0x1000, pic[GIC_ID(150 + i)], chr);
     }
 
     dev = qdev_new("cxd4115-timer");
@@ -1688,11 +1751,12 @@ static void a5k_init(MachineState *ms)
     }
     g_autofree char *dbg = NULL;
     const char *cmd = a5k_default_cmdline;
+    const char *con = a5k_console_token(s);
     if (ms->kernel_cmdline && *ms->kernel_cmdline) {
         cmd = ms->kernel_cmdline;
-    } else if (s->debug_console) {
+    } else if (con) {
         g_autoptr(GString) g = g_string_new(a5k_default_cmdline);
-        g_string_replace(g, "console=ttynull", "console=ttyAM0 amba2.console=1", 1);
+        g_string_replace(g, "console=ttynull", con, 1);
         dbg = g_string_free(g_steal_pointer(&g), false);
         cmd = dbg;
     }
@@ -1749,6 +1813,33 @@ static bool a5k_get_dbgcon(Object *o, Error **errp)
 static void a5k_set_dbgcon(Object *o, bool v, Error **errp)
 {
     A5K_MACHINE(o)->debug_console = v;
+}
+
+static char *a5k_get_console(Object *o, Error **errp)
+{
+    A5KMachineState *s = A5K_MACHINE(o);
+    return g_strdup(s->console ? s->console : "ttynull");
+}
+
+static void a5k_set_console(Object *o, const char *v, Error **errp)
+{
+    if (strcmp(v, "ttynull") && strcmp(v, "ttyAM1") && strcmp(v, "ttyAM0")) {
+        error_setg(errp, "console=%s: expected ttynull, ttyAM1 or ttyAM0", v);
+        return;
+    }
+    g_free(A5K_MACHINE(o)->console);
+    A5K_MACHINE(o)->console = g_strdup(v);
+}
+
+static char *a5k_get_shellsock(Object *o, Error **errp)
+{
+    return g_strdup(A5K_MACHINE(o)->shell_socket);
+}
+
+static void a5k_set_shellsock(Object *o, const char *v, Error **errp)
+{
+    g_free(A5K_MACHINE(o)->shell_socket);
+    A5K_MACHINE(o)->shell_socket = g_strdup(v);
 }
 
 static char *a5k_get_smcf(Object *o, Error **errp)
@@ -1923,7 +2014,19 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
     object_class_property_add_bool(oc, "debug-console", a5k_get_dbgcon,
                                    a5k_set_dbgcon);
     object_class_property_set_description(oc, "debug-console",
-        "Serial console on UART0 instead of the stock console=ttynull");
+        "Alias for console=ttyAM1 (root shell on UART2, UI still runs)");
+    object_class_property_add_str(oc, "console", a5k_get_console,
+                                  a5k_set_console);
+    object_class_property_set_description(oc, "console",
+        "Kernel console: ttynull (stock, default), ttyAM1 (UART2 = third "
+        "-serial: stock init root shell, UI runs) or ttyAM0 (UART0: "
+        "early-boot log only, conflicts with av-cam, the UI does not "
+        "start)");
+    object_class_property_add_str(oc, "shell-socket", a5k_get_shellsock,
+                                  a5k_set_shellsock);
+    object_class_property_set_description(oc, "shell-socket",
+        "HOST:PORT TCP server on UART2 (when no third -serial is given); "
+        "implies console=ttyAM1");
 
     object_class_property_add_bool(oc, "rtc-lost", a5k_get_rtclost,
                                    a5k_set_rtclost);

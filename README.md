@@ -11,9 +11,9 @@ Goal: run the official Sony ILCE-5000 (α5000) firmware 1.10 **unmodified**, wit
 | `qemu-overlay/` | **All new QEMU source files** (machine, device models, GPU), at their QEMU paths — read the emulator code here |
 | `patches/qemu-v10.1.0-sony-a5000.patch` | Only the small edits to existing upstream files (build glue, Cortex-A5, A9MPCore, L2C-310) |
 | `setup-qemu.sh` | Creates `qemu/` = upstream v10.1.0 + overlay + patch |
-| `run.sh` | Boots the stock kernel + initrd (stock `console=ttynull` by default; `A5K_DEBUG_CONSOLE=1` = serial kernel console for boot debugging) |
+| `run.sh` | Boots the stock kernel + initrd (stock `console=ttynull` by default; `A5K_SHELL=<port>` = root shell on UART2 as a TCP socket, `A5K_DEBUG_CONSOLE=1` = the same console on stdio) |
 | `provision/` | Factory-style NAND programming initramfs (the Sony FTL formats an empty NAND, then writes your `NAND.BIN`) |
-| `tools/` | `mkdata.py` (build `data/` from the updater), `a5ktrace.c` (TCG trace plugin, build: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py` (HMP), `klog.py` (Sony klog ring), `wbi.py` (WBI snapshot lookup / page walk), `sym.py` (kernel symbols) |
+| `tools/` | `mkdata.py` (build `data/` from the updater), `a5ktrace.c` (TCG trace plugin, build: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py` (HMP), `klog.py` (Sony klog ring), `a5kshell.py` (guest shell + file push/pull), `wbi.py` (WBI snapshot lookup / page walk), `sym.py` (kernel symbols) |
 | `re/` | Kernel symbols (`kernel_syms.txt`). The ELF rebuild (`vmlinux.elf`) and real-camera logs stay local (not published) |
 | `docs/` | Reverse-engineering notes (English). `docs/HARDWARE.md` = SoC model with the source of every value (V/S/H) |
 
@@ -69,8 +69,30 @@ Host side: Sony-PMCA-RE with the `socket` backend from `tools/pmca-socket/` (see
 python3 pmca-console.py info -d socket       # A5K_USB=host:port (default 127.0.0.1:7643), A5K_USB_TIMEOUT=ms, A5K_USB_DEBUG=1
 ```
 
+### Guest shell (Track B)
+A root shell inside the running guest, next to the stock UI (`docs/RE_GUEST_SHELL.md`). `A5K_SHELL=<port>` sets the machine
+option `console=ttyAM1`: only the `console=ttynull` token of the stock cmdline becomes `console=ttyAM1 amba2.console=1`, and
+UART2 (unused by the stock system) is served as a TCP socket. Stock init then runs its own root `ash` there; the UI comes up
+as usual. Without the option the cmdline is unchanged.
+```sh
+A5K_SHELL=46310 ./run.sh                      # = -M console=ttyAM1,shell-socket=127.0.0.1:46310 -serial null
+python3 tools/a5kshell.py --port 46310        # interactive (Ctrl-] quits); --job-control makes Ctrl-C work
+python3 tools/a5kshell.py --port 46310 push hello            # -> /android/a5k/hello (tmpfs, exec ok), md5 checked
+python3 tools/a5kshell.py --port 46310 run '/android/a5k/hello; echo rc=$?'
+python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
+```
+- Transfers use stock busybox only (`stty raw` + `cat`, ~50 KB/s) and are checked with md5. Push targets outside `/android`
+  are refused (needs `--force`); `/android` is a tmpfs, so pushed files are lost at power-off.
+- Other machine options: `console=ttynull|ttyAM1|ttyAM0`, `debug-console=on` (= `console=ttyAM1`; with `run.sh`:
+  `A5K_DEBUG_CONSOLE=1` puts it on stdio). Without `shell-socket=` UART2 is the third `-serial`
+  (`-serial null -serial null -serial tcp:...`). `console=ttyAM0` (`A5K_DEBUG_CONSOLE=ttyAM0`) is for early-boot logs only:
+  UART0 belongs to av-cam's monitor and the UI does not start.
+- The firmware's idle power save cycles the guest after about 5 minutes without key input; the shell session and
+  `/android/a5k` are lost. `a5kshell.py` reports this (exit status 3). Send a harmless key over HMP now and then, or work
+  within that window.
+
 ## Status (2026-11-15)
-- Note: the debug serial console (`A5K_DEBUG_CONSOLE=1`) changes the stock cmdline and shares UART0 with av-cam's monitor; the UI is only tested without it
+- ✅ Guest root shell next to the stock UI (`docs/RE_GUEST_SHELL.md`): `console=ttyAM1` + `shell-socket=` (UART2), `tools/a5kshell.py` push/pull with md5 check; a static ARM binary pushed to `/android/a5k` runs while the shooting screen stays up. `debug-console=on` now maps to UART2 (UART0 = av-cam's monitor port; `console=ttyAM0` warns that the UI will not start)
 - ✅ Quad Cortex-A5 (VFPv4-D16), GIC, L2C-310, CXD4115 timers/WDT, SYSCTL, PL011, clock generator, USB OTG/HDC reset, BOSS DMAC
 - ✅ NAND: ARM7 NAND firmware HLE (mailbox, LDEC LZ77) + raw NAND backing file; `provision.sh` writes a NAND dump through the Sony FTL
 - ✅ Two-stage boot like the real camera (`docs/BOOT.md`): the bootloader's NAND work is replayed through the Sony NAND stack, then the **kernel read from NAND** boots
