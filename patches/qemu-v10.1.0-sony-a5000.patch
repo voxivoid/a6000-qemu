@@ -4189,10 +4189,10 @@ index b3d823c..44c8809 100644
 +    bool
 diff --git a/hw/timer/cxd4115_timer.c b/hw/timer/cxd4115_timer.c
 new file mode 100644
-index 0000000..7eb8fda
+index 0000000..a9e6510
 --- /dev/null
 +++ b/hw/timer/cxd4115_timer.c
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,262 @@
 +/*
 + * Sony CXD4115-style timer block as found in the CXD90014 (a5000) SoC.
 + *
@@ -4205,6 +4205,11 @@ index 0000000..7eb8fda
 + *                  observed values: 0x1031 free-run clocksource (2 MHz),
 + *                                   0x1102 periodic tick (1 MHz),
 + *                                   0x0112/0x1112 one-shot event (1 MHz)
++ *                                   0x1132 hwtimer0..3 (ch5..8): the kernel
++ *                                   reads +0xC as its clock and compares
++ *                                   expiry against it (hwtimer_intr), so the
++ *                                   counter must keep running through a
++ *                                   match: bit5 = free-running [hypothesis]
 + *     +0x4  CLR    bit0 clear interrupt, bit4 clear counter (kernel writes 0x11)
 + *     +0x8  CMP    compare value
 + *     +0xC  COUNT  current count (read)
@@ -4237,6 +4242,7 @@ index 0000000..7eb8fda
 +#define CTRL_RELOAD (1u << 8)
 +#define CTRL_ONESHT (1u << 4)
 +#define CTRL_IRQEN  (1u << 1)
++#define CTRL_FREE   (1u << 5)   /* keep counting through a match [hypothesis] */
 +
 +typedef struct CXDChan {
 +    struct CXD4115TimerState *s;
@@ -4289,7 +4295,8 @@ index 0000000..7eb8fda
 +    uint32_t now_cnt = chan_count(c);
 +    uint32_t delta = c->cmp - now_cnt;   /* wraps naturally */
 +    if (delta == 0) {
-+        delta = (c->ctrl & CTRL_RELOAD) ? c->cmp : 0xffffffffu;
++        delta = ((c->ctrl & CTRL_RELOAD) && !(c->ctrl & CTRL_FREE)) ?
++                c->cmp : 0xffffffffu;
 +        if (delta == 0) {
 +            delta = 1;
 +        }
@@ -4312,7 +4319,7 @@ index 0000000..7eb8fda
 +        c->running = false;
 +        return;
 +    }
-+    if (c->ctrl & CTRL_RELOAD) {
++    if ((c->ctrl & CTRL_RELOAD) && !(c->ctrl & CTRL_FREE)) {
 +        c->base_count = 0;
 +        c->base_ns = now;
 +        if (c->ctrl & CTRL_ONESHT) {
