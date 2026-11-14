@@ -822,6 +822,19 @@ static void a5k_boot_reset(void *opaque)
         if (s->initrd_len) {
             address_space_write(as, A5K_INITRD_ADDR, MEMTXATTRS_UNSPECIFIED,
                                 s->initrd, s->initrd_len);
+            /*
+             * The cmdline declares an 8 MiB initrd window and the kernel
+             * unpacks all of it; after a warm reset the rest still held
+             * the previous kernel's data ("junk in compressed archive",
+             * then a panic in mount_block_root).  The real bootloader's
+             * ext2 initrd ignores trailing bytes; ours is a cpio, so clear
+             * the remainder of the window (docs/RE_REBOOT.md).
+             */
+            if (s->initrd_len < 8 * MiB) {
+                address_space_set(as, A5K_INITRD_ADDR + s->initrd_len, 0,
+                                  8 * MiB - s->initrd_len,
+                                  MEMTXATTRS_UNSPECIFIED);
+            }
         }
         if (s->loader) {
             info_report("sony-a5000: stage 1 (loader)");
