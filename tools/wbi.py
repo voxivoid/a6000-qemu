@@ -2,7 +2,10 @@
 """Read words from the real-camera WBI RAM snapshot by physical or kernel VA.
 usage: wbi.py <addr> [nwords]   (addr < 0x80000000 is treated as kernel VA)"""
 import sys, struct, os
-R = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../re/wbi')
+_E = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# WBI snapshot of your own camera: $A5K_WBI, else <repo>/data/wbi, else ../re/wbi
+R = os.environ.get('A5K_WBI') or next((d for d in (os.path.join(_E, 'data/wbi'),
+        os.path.join(os.path.dirname(_E), 're/wbi')) if os.path.isdir(d)), 'data/wbi')
 secs = [tuple(int(x, 16) for x in l.split()) for l in open(os.path.join(R, 'map.tsv'))]
 ram = open(os.path.join(R, 'ram.bin'), 'rb').read()
 def rd(addr, n=1):

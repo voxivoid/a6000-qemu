@@ -14,9 +14,11 @@
 #      A5K_DIRECT=1          old direct boot: host kernel + stock initrd
 #      A5K_SD=<img>          SD card image (FAT32, e.g. state/sd.img)
 #      A5K_HANDOFF=<file>    bootloader hand-off page (default data/handoff_80021000.bin)
-R="$(cd "$(dirname "$0")/.." && pwd)"
-E="$R/emulator"
-F="$R/firmware/unpacked/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked_unpacked"
+E="$(cd "$(dirname "$0")" && pwd)"
+R="$(dirname "$E")"   # optional parent checkout (firmware/, backup/ next to this repo)
+# unpacked official updater: $A5K_FW, else ./firmware, else ../firmware
+FW="${A5K_FW:-$E/firmware}"; [ -d "$FW" ] || FW="$R/firmware"
+F="$FW/unpacked/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked_unpacked"
 NAND="${A5K_NAND:-$E/state/a5000.nand}"
 M="sony-a5000"
 [ "${A5K_STOCK_CONSOLE:-0}" = 1 ] || M="$M,debug-console=on"

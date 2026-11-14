@@ -15,11 +15,19 @@
 | `re/` | 커널 심볼(`kernel_syms.txt`). ELF 복원본(`vmlinux.elf`)·실기 커널 로그는 로컬 전용(비공개) |
 | `docs/HARDWARE.md` | SoC 모델 전체와 각 값의 출처(V/S/H) |
 
+아래 명령은 모두 저장소 루트에서 실행합니다.
+
+## 직접 준비할 입력 (이 저장소에 없음)
+| 경로 | 내용 |
+|---|---|
+| `firmware/unpacked/...` | Sony 공식 업데이터 `Update_ILCE5000V110.exe`를 푼 것 (fwtool 구조, 또는 `A5K_FW` 지정) |
+| `data/NAND.BIN` | **본인 소유** 카메라의 NAND 덤프 (또는 `provision.sh`에 경로 인자로) |
+| `data/*.bin`, `data/wbi/` | 본인 카메라의 hand-off 페이지·서브마이컴 프레임·RAM 스냅샷 (`data/README.md`) |
+
 ## QEMU 받기
 `qemu/` 폴더는 **공개하지 않습니다**. 업스트림 QEMU의 로컬 체크아웃 위에 우리 커밋을 쌓은 것입니다.
 QEMU에서 바꾼 전부는 `patches/qemu-v10.1.0-sony-a5000.patch`에 있고, `v10.1.0` 태그에 그대로 적용됩니다:
 ```sh
-cd emulator
 git clone --branch v10.1.0 --depth 1 https://gitlab.com/qemu-project/qemu.git qemu
 git -C qemu apply ../patches/qemu-v10.1.0-sony-a5000.patch
 mkdir -p qemu/build
@@ -27,10 +35,10 @@ mkdir -p qemu/build
 
 ## 빌드 / 실행
 ```sh
-cd emulator/qemu/build && ../configure --target-list=arm-softmmu --disable-docs --disable-werror \
-    --enable-debug-info --disable-sdl --enable-cocoa --disable-gtk --disable-fuse && ninja qemu-system-arm
-emulator/run.sh -nographic                     # 시리얼 콘솔 (Ctrl-A X 종료)
-emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulator/re/vmlinux.elf -ex 'target remote :1234'
+(cd qemu/build && ../configure --target-list=arm-softmmu --disable-docs --disable-werror \
+    --enable-debug-info --disable-sdl --enable-cocoa --disable-gtk --disable-fuse && ninja qemu-system-arm)  # macOS; on Linux use --enable-gtk or --enable-sdl instead of --enable-cocoa
+./run.sh -nographic                     # 시리얼 콘솔 (Ctrl-A X 종료)
+./run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb re/vmlinux.elf -ex 'target remote :1234'
 ```
 
 ## 현재 상태 (2026-11-14)
@@ -55,9 +63,9 @@ emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulat
 
 ## 사용
 ```sh
-emulator/provision.sh            # 최초 1회: 빈 NAND 포맷 + NAND.BIN 기록 → state/a5000.nand
-emulator/run.sh -nographic       # 실기 방식 부팅 (시리얼 콘솔)
-emulator/run.sh -monitor stdio   # QEMU 창에 fb= 디버그 화면
+./provision.sh            # 최초 1회: 빈 NAND 포맷 + NAND.BIN 기록 → state/a5000.nand
+./run.sh -nographic       # 실기 방식 부팅 (시리얼 콘솔)
+./run.sh -monitor stdio   # QEMU 창에 fb= 디버그 화면
 ```
 
 ## 펌웨어 · 법적 고지

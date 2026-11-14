@@ -3,9 +3,13 @@
 # (nand.ko boot_mode=1) -> backup/NAND.BIN written through /dev/nflasha.
 # Result: emulator/state/a5000.nand
 set -e
-R="$(cd "$(dirname "$0")/.." && pwd)"; E="$R/emulator"
-F="$R/firmware/unpacked/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked_unpacked"
-IMG="${1:-$R/backup/NAND.BIN}"; OUT="$E/state/a5000.nand"
+E="$(cd "$(dirname "$0")" && pwd)"
+R="$(dirname "$E")"   # optional parent checkout (firmware/, backup/ next to this repo)
+# unpacked official updater: $A5K_FW, else ./firmware, else ../firmware
+FW="${A5K_FW:-$E/firmware}"; [ -d "$FW" ] || FW="$R/firmware"
+F="$FW/unpacked/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked_unpacked"
+# NAND dump of your own camera: $1, else data/NAND.BIN, else ../backup/NAND.BIN
+IMG="${1:-$E/data/NAND.BIN}"; [ -f "$IMG" ] || IMG="$R/backup/NAND.BIN"; OUT="$E/state/a5000.nand"
 mkdir -p "$E/state"; rm -f "$OUT.tmp"
 python3 -I "$E/provision/mkinitramfs.py" "$E/provision/prov.cpio" init.sh
 LOG="$E/state/provision.log"

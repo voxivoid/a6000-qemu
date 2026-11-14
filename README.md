@@ -15,11 +15,19 @@ Goal: run the official Sony ILCE-5000 (α5000) firmware 1.10 **unmodified**, wit
 | `re/` | Kernel symbols (`kernel_syms.txt`). The ELF rebuild (`vmlinux.elf`) and real-camera logs stay local (not published) |
 | `docs/` | Reverse-engineering notes (Korean). `docs/HARDWARE.md` = SoC model with the source of every value (V/S/H) |
 
+All commands below run from the repository root.
+
+## Inputs you provide (not in this repository)
+| Path | What |
+|---|---|
+| `firmware/unpacked/...` | Sony's official updater `Update_ILCE5000V110.exe`, unpacked (fwtool layout; or set `A5K_FW`) |
+| `data/NAND.BIN` | NAND dump of **your own** camera (or pass the path to `provision.sh`) |
+| `data/*.bin`, `data/wbi/` | Hand-off page, sub-micro frames, RAM snapshot from your own camera (`data/README.md`) |
+
 ## Getting QEMU
 The `qemu/` directory is **not published**: it is a local checkout of upstream QEMU with our commits on top.
 Everything we changed in QEMU is in `patches/qemu-v10.1.0-sony-a5000.patch`, which applies cleanly to the `v10.1.0` tag:
 ```sh
-cd emulator
 git clone --branch v10.1.0 --depth 1 https://gitlab.com/qemu-project/qemu.git qemu
 git -C qemu apply ../patches/qemu-v10.1.0-sony-a5000.patch
 mkdir -p qemu/build
@@ -27,12 +35,12 @@ mkdir -p qemu/build
 
 ## Build / run
 ```sh
-cd emulator/qemu/build && ../configure --target-list=arm-softmmu --disable-docs --disable-werror \
-    --enable-debug-info --disable-sdl --enable-cocoa --disable-gtk --disable-fuse && ninja qemu-system-arm
-emulator/provision.sh                          # once: format an empty NAND + write NAND.BIN -> state/a5000.nand
-emulator/run.sh -nographic                     # serial console (Ctrl-A X quits)
-emulator/run.sh -monitor stdio                 # QEMU window shows the panel (console 0)
-emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulator/re/vmlinux.elf -ex 'target remote :1234'
+(cd qemu/build && ../configure --target-list=arm-softmmu --disable-docs --disable-werror \
+    --enable-debug-info --disable-sdl --enable-cocoa --disable-gtk --disable-fuse && ninja qemu-system-arm)  # macOS; on Linux use --enable-gtk or --enable-sdl instead of --enable-cocoa
+./provision.sh                          # once: format an empty NAND + write NAND.BIN -> state/a5000.nand
+./run.sh -nographic                     # serial console (Ctrl-A X quits)
+./run.sh -monitor stdio                 # QEMU window shows the panel (console 0)
+./run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb re/vmlinux.elf -ex 'target remote :1234'
 ```
 Camera buttons from the host: arrow keys / Enter = wheel and centre, `M` = MENU, `P` = PLAY, `R` = MOVIE, Delete = DELETE (or HMP `sendkey`). SD card: `-drive if=sd` / `A5K_SD`.
 

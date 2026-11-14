@@ -9,8 +9,11 @@ Sony's MUMIN FTL format the emulated NAND and receive the logical image.
 usage: mkinitramfs.py <out.cpio> [init-script (default init.sh)]
 """
 import os, sys, stat
-R = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-DEV = R + '/firmware/unpacked/firmware.tar_unpacked/0700_part_image/dev'
+E = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# unpacked official updater: $A5K_FW, else <repo>/firmware, else ../firmware
+FW = os.environ.get('A5K_FW') or (E + '/firmware' if os.path.isdir(E + '/firmware')
+                                  else os.path.dirname(E) + '/firmware')
+DEV = FW + '/unpacked/firmware.tar_unpacked/0700_part_image/dev'
 ROOTFS = DEV + '/nflasha7_unpacked_unpacked'
 INITRD = DEV + '/nflasha3_unpacked_unpacked/initrd.img_unpacked'
 HERE = os.path.dirname(os.path.abspath(__file__))

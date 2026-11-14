@@ -19,6 +19,10 @@ __pycache__/
 # logs and RAM-snapshot data captured from the owner's real camera
 /re/real_kernel_log.txt
 /data/*.bin
+/data/*.BIN
+/data/wbi/
+# official updater (Sony firmware), unpacked locally
+/firmware/
 # build products
 /tools/*.dylib
 /tools/*.so
