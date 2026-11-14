@@ -33,7 +33,8 @@ emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulat
 - ✅ GIC SPI 타깃을 실기 GICD 덤프 값으로 → CPU1~3 틱·RCU 정상 → umount/i1 정지 해소 → **i0/i1/i2·appFw 초기화 완료**
 - ✅ BOSS LDEC LZ77 디코더 메모리 모드(/dev/ldec) → appFw abort 해소. Rigel WindowServer·appFw가 **프레임 렌더링 중**, Android도 기동
 - ✅ CPU별 hwtimer(타이머 ch5..8) 자유 계수 수정 → liro dly_tsk 정상 → VPH가 **패널 OSD 레이어를 프레임마다 설정**(ch53 = UI 버퍼)
-- ⏳ 화면: UI는 GPU P3D(3D)로 그리는데 P3D 명령은 실행하지 않음(완료 신호만) → 버퍼가 검정. 상세 `docs/RE_ENGINE_TICK.md`
+- ✅ **GPU P3D 명령 리스트 실행**(디코더·래스터라이저·텍스처·블렌딩, `docs/RE_GPU_P3D_CMD.md`) + 셰이더 인터프리터(진행 중) + 패널 OSD RGBA4444 → **순정 UI 첫 화면(지역/날짜/시간 설정 대화상자)이 QEMU 창에 표시**
+- ⏳ Rigel 윈도우 합성 셰이더 일부 opcode 미구현, 깊이/스텐실·선/점·밉맵 미구현 상세 `docs/RE_ENGINE_TICK.md`
 - ⬜ SD 카드(SDHCI), 센서/ISP(라이브뷰), 렌즈, 서브마이컴(전원/키), 오디오
 
 ## 사용

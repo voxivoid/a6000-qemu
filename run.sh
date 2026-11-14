@@ -27,6 +27,6 @@ fi
 [ -f "$NAND" ] || { echo "run.sh: $NAND missing — run emulator/provision.sh first" >&2; exit 1; }
 [ -f "$E/provision/loader.cpio" ] || python3 -I "$E/provision/mkinitramfs.py" "$E/provision/loader.cpio" loader.sh >/dev/null
 exec "$E/qemu/build/qemu-system-arm" \
-  -M "$M,submicro=on,submicro-frames=$E/data/submicro_frames.bin,nand=$NAND,loader=$E/provision/loader.cpio,preload=${A5K_HANDOFF:-$E/data/handoff_80021000.bin}@0x80021000" \
+  -M "$M,submicro=on,submicro-frames=${A5K_SMFRAMES:-$E/data/submicro_frames.bin},nand=$NAND,loader=$E/provision/loader.cpio,preload=${A5K_HANDOFF:-$E/data/handoff_80021000.bin}@0x80021000" \
   -m 512M -kernel "$F/vmlinux.bin" \
   ${A5K_SD:+-drive if=sd,file=$A5K_SD,format=raw} "$@"

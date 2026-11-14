@@ -2003,10 +2003,10 @@ index 0000000..b6a386a
 +type_init(fb_register)
 diff --git a/hw/display/cxd90014_vph.c b/hw/display/cxd90014_vph.c
 new file mode 100644
-index 0000000..eacb84a
+index 0000000..00a9c5b
 --- /dev/null
 +++ b/hw/display/cxd90014_vph.c
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,265 @@
 +/*
 + * CXD90014 video output: VPH display controller + SYSV frame timer (a5000).
 + *
@@ -2025,7 +2025,7 @@ index 0000000..eacb84a
 + * Every 1/60 s: SYSV counter++ and IRQ 98 pulse; if VPH is clocked, IRQ
 + * 101/102 pulses, AIF ch51..58 start bits cleared, and the panel is composed
 + * (YUV 4:2:2 under the OSD) into QEMU graphic console 0.
-+ * Pixel formats of the OSD at 16 bpp and the YUV packing are hypotheses.
++ * OSD at 16 bpp = RGBA4444 (A low nibble); the YUV packing is a hypothesis.
 + */
 +
 +#include "qemu/osdep.h"
@@ -2147,9 +2147,12 @@ index 0000000..eacb84a
 +                    r = row[4 * x]; g = row[4 * x + 1]; b = row[4 * x + 2];
 +                    a = row[4 * x + 3];
 +                } else {
++                    /* RGBA4444, A in the low nibble: the UI renders with
++                     * P3D colour format 4 and PPF in/out format 4 into
++                     * the panel buffers (docs/RE_GPU_P3D_CMD.md) */
 +                    uint16_t v = row[2 * x] | row[2 * x + 1] << 8;
-+                    r = (v >> 11) << 3; g = ((v >> 5) & 63) << 2;
-+                    b = (v & 31) << 3; a = 255;
++                    r = (v >> 12) * 17; g = ((v >> 8) & 15) * 17;
++                    b = ((v >> 4) & 15) * 17; a = (v & 15) * 17;
 +                }
 +                uint32_t *d = &dst[y * W + x];
 +                uint8_t dr = *d >> 16, dg = *d >> 8, db = *d;
@@ -2269,12 +2272,272 @@ index 0000000..eacb84a
 +    type_register_static(&vph_info);
 +}
 +type_init(vph_register)
+diff --git a/hw/display/dmp_shader.c b/hw/display/dmp_shader.c
+new file mode 100644
+index 0000000..cd558c6
+--- /dev/null
++++ b/hw/display/dmp_shader.c
+@@ -0,0 +1,254 @@
++/*
++ * DMP SMAPH-S30 ("SUGILITE") programmable shader unit -- interpreter (a5000).
++ *
++ * One unified core runs both the vertex and the fragment program out of a
++ * single instruction memory (P3D reg 0x458 = load address in instructions,
++ * 0x459 = data port, two 32-bit words per instruction), a single operand-
++ * descriptor table (0x460 index / 0x461 data, 128 entries) and one float
++ * constant file (0x450 index / 0x451..0x454 x,y,z,w as IEEE f32).  VS entry
++ * = reg 0x442, FS entry = reg 0x443 (the caller puts it in prog->entry).
++ * Evidence and the full field table: docs/RE_GPU_P3D_SHADER.md.
++ *
++ * Instruction (w0 = first word written to 0x459, w1 = second):
++ *   w0[31:28] src1 index (bit 4 = w1[0])    w0[27:24] src1 file (2 = V)
++ *   w0[23:21] src2 file (0 R, 1 ROM, 2 V, 4 U)  w0[16:12] src2 index
++ *   w0[6:0]   operand descriptor index
++ *   w1[27:20] opcode   w1[19] dst is V (in/out file)   w1[11:8] dst index
++ *   w1 == 0x00004000 with opcode 0: END; w0 == w1 == 0: NOP
++ * Operand descriptor:
++ *   [29:26] write mask (bit 26 = x)   [25:21] src1 modifier, [20:13] src1
++ *   swizzle, [12:8] src2 modifier, [7:0] src2 swizzle (2 bits/comp, x low)
++ *   modifier: bit 4 = negate, low 3 bits == 3 = operand is the ROM vector
++ *
++ * Register files (as modelled; see the RE doc for what is hypothesis):
++ *   V  in/out: VS attributes in, VS outputs out (o0 = clip position);
++ *      FS: preloaded with the varyings, V0 = depth out, V1 = colour out
++ *   R  general file, initialised from the constant file; FS varyings
++ *      1..n-1 are also preloaded into R1..R(n-1)
++ *   U  constant file, read-only (src2 file 4)
++ *   ROM constant vector (0, 0.5, 1, 2)   hypothesis: y component unknown
++ *
++ * Implemented opcodes: 0x0c MOV, 0x01 ADD, 0x03 MUL, 0x02 SUM3 (horizontal
++ * x+y+z, hypothesis), 0x1c MAX / 0x1d MIN (hypothesis, order unverified),
++ * 0x20 TEX (unit = w1[16:14], hypothesis), 0x2b TEX-result to colour + END
++ * (hypothesis).  Branches (0x24..), loops and the remaining ALU opcodes used
++ * only by the GLES1 fixed-function package are not implemented: run returns
++ * false and logs the opcode once under LOG_UNIMP.
++ */
++
++#ifndef DMP_SHADER_STANDALONE
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#else
++#include <stdio.h>
++#include <string.h>
++#define LOG_UNIMP 0
++#define qemu_log_mask(m, ...) fprintf(stderr, __VA_ARGS__)
++#endif
++#include "hw/display/dmp_shader.h"
++
++#define SH_NREG       128          /* R file size (index is at most 5 bits) */
++#define SH_MAX_STEPS  4096
++
++static const float sh_rom[4] = { 0.0f, 0.5f, 1.0f, 2.0f };
++
++typedef struct ShCtx {
++    DmpVec4 r[SH_NREG];
++    DmpVec4 y[SH_NREG];
++    DmpVec4 v[DMP_SH_NUM_INPUT > DMP_SH_NUM_OUTPUT ? DMP_SH_NUM_INPUT
++                                                   : DMP_SH_NUM_OUTPUT];
++    const DmpShaderProg *p;
++} ShCtx;
++
++static bool sh_unimp(uint32_t a, uint32_t w0, uint32_t w1, const char *why)
++{
++    static uint32_t seen[32];
++    static unsigned nseen;
++    uint32_t key = w1 & 0x0ff00000u;
++
++    for (unsigned i = 0; i < nseen; i++) {
++        if (seen[i] == key) {
++            return false;
++        }
++    }
++    if (nseen < 32) {
++        seen[nseen++] = key;
++    }
++    qemu_log_mask(LOG_UNIMP, "dmp-shader: %s at %u: %08x %08x (op 0x%02x)\n",
++                  why, a, w0, w1, (w1 >> 20) & 0xff);
++    return false;
++}
++
++static void sh_swz(const float *src, unsigned swz, unsigned mod, float *o)
++{
++    const float *s = (mod & 7) == 3 ? sh_rom : src;
++
++    for (int c = 0; c < 4; c++) {
++        float f = s[(swz >> (2 * c)) & 3];
++        o[c] = (mod & 0x10) ? -f : f;
++    }
++}
++
++static const float *sh_src1(ShCtx *c, uint32_t w0, uint32_t w1)
++{
++    unsigned idx = (w0 >> 28) | ((w1 & 1) << 4);
++
++    switch ((w0 >> 24) & 0xf) {
++    case 2:
++        return c->v[idx & (DMP_SH_NUM_INPUT - 1)].v;
++    case 1:
++        return c->y[idx].v;
++    default:
++        return c->r[idx].v;
++    }
++}
++
++static const float *sh_src2(ShCtx *c, uint32_t w0)
++{
++    unsigned idx = (w0 >> 12) & 0x1f;
++
++    switch ((w0 >> 21) & 7) {
++    case 1:
++        return sh_rom;
++    case 2:
++        return c->v[idx & (DMP_SH_NUM_INPUT - 1)].v;
++    case 4:
++        return c->p->funif[idx].v;
++    default:
++        return c->r[idx].v;
++    }
++}
++
++static void sh_write(ShCtx *c, uint32_t w1, unsigned mask, const float *res)
++{
++    unsigned idx = (w1 >> 8) & 0xf;
++    float *d[2] = { NULL, NULL };
++
++    if (w1 & 0x00080000u) {                 /* V: output / in-out file */
++        d[0] = c->v[idx].v;
++    } else if (w1 & 0x80) {                 /* X only */
++        d[0] = c->r[idx].v;
++    } else if (w1 & 0x20) {                 /* Y only */
++        d[0] = c->y[idx].v;
++    } else {                                /* X and Y */
++        d[0] = c->r[idx].v;
++        /* hypothesis: w1 bit 28 with dst code 0x40 suppresses the Y copy */
++        if (!((w1 & 0x10000040u) == 0x10000040u)) {
++            d[1] = c->y[idx].v;
++        }
++    }
++    for (int j = 0; j < 2 && d[j]; j++) {
++        for (int k = 0; k < 4; k++) {
++            if (mask & (1u << k)) {
++                d[j][k] = res[k];
++            }
++        }
++    }
++}
++
++bool dmp_shader_run(DmpShaderStage stage, const DmpShaderProg *prog,
++                    const DmpVec4 *in, unsigned nin,
++                    DmpVec4 *out, unsigned nout)
++{
++    ShCtx c;
++    unsigned pc = prog->entry;
++
++    c.p = prog;
++    for (unsigned i = 0; i < SH_NREG; i++) {
++        c.r[i] = i < DMP_SH_NUM_FUNIF ? prog->funif[i] : (DmpVec4){ { 0 } };
++    }
++    memcpy(c.y, c.r, sizeof(c.y));
++    memset(c.v, 0, sizeof(c.v));
++    for (unsigned i = 0; i < nin && i < DMP_SH_NUM_INPUT; i++) {
++        c.v[i] = in[i];
++        /* hypothesis: FS varying k also appears in R[k] (k >= 1) */
++        if (stage == DMP_SH_FRAGMENT && i >= 1) {
++            c.r[i] = in[i];
++            c.y[i] = in[i];
++        }
++    }
++
++    for (unsigned step = 0; step < SH_MAX_STEPS; step++, pc++) {
++        if (2 * pc + 1 >= DMP_SH_MAX_CODE) {
++            return sh_unimp(pc, 0, 0, "pc out of range");
++        }
++        uint32_t w0 = prog->code[2 * pc], w1 = prog->code[2 * pc + 1];
++        unsigned op = (w1 >> 20) & 0xff;
++
++        if (op == 0) {
++            if (w0 == 0 && w1 == 0) {
++                continue;                       /* NOP */
++            }
++            if ((w1 & 0xf000u) == 0x4000u) {
++                break;                          /* END */
++            }
++            return sh_unimp(pc, w0, w1, "control op");
++        }
++
++        uint32_t d = prog->opdesc[w0 & 0x7f];
++        unsigned mask = (d >> 26) & 0xf;
++        float a[4], b[4], r[4];
++
++        sh_swz(sh_src1(&c, w0, w1), (d >> 13) & 0xff, (d >> 21) & 0x1f, a);
++        sh_swz(sh_src2(&c, w0), d & 0xff, (d >> 8) & 0x1f, b);
++
++        switch (op) {
++        case 0x0c:                              /* MOV */
++            memcpy(r, a, sizeof(r));
++            break;
++        case 0x01:                              /* ADD */
++            for (int k = 0; k < 4; k++) {
++                r[k] = a[k] + b[k];
++            }
++            break;
++        case 0x03:                              /* MUL */
++            for (int k = 0; k < 4; k++) {
++                r[k] = a[k] * b[k];
++            }
++            break;
++        case 0x02:                              /* SUM3, hypothesis */
++            r[0] = r[1] = r[2] = r[3] = a[0] + a[1] + a[2];
++            break;
++        case 0x1c:                              /* MAX, hypothesis */
++            for (int k = 0; k < 4; k++) {
++                r[k] = a[k] > b[k] ? a[k] : b[k];
++            }
++            break;
++        case 0x1d:                              /* MIN, hypothesis */
++            for (int k = 0; k < 4; k++) {
++                r[k] = a[k] < b[k] ? a[k] : b[k];
++            }
++            break;
++        case 0x20:                              /* TEX */
++            if (prog->tex_sample) {
++                prog->tex_sample(prog->tex_opaque, (w1 >> 14) & 7, a, r);
++            } else {
++                r[0] = r[1] = r[2] = r[3] = 0.0f;
++            }
++            break;
++        case 0x2b:                              /* colour out + END, hyp. */
++            for (int k = 0; k < 4; k++) {
++                if (mask & (1u << k)) {
++                    c.v[1].v[k] = a[k];
++                }
++            }
++            goto done;
++        default:
++            return sh_unimp(pc, w0, w1, "opcode");
++        }
++        sh_write(&c, w1, mask, r);
++#ifdef DMP_SHADER_TRACE
++        fprintf(stderr, "  %4u %08x %08x op%02x m%x a(%g %g %g %g) "
++                "b(%g %g %g %g) -> %c%u (%g %g %g %g)\n", pc, w0, w1, op,
++                mask, a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3],
++                "RKVV"[(w1 >> 18) & 3], (w1 >> 8) & 0xf,
++                r[0], r[1], r[2], r[3]);
++#endif
++    }
++done:
++    for (unsigned i = 0; i < nout && i < DMP_SH_NUM_OUTPUT; i++) {
++        out[i] = c.v[i];
++    }
++    (void)stage;
++    return true;
++}
 diff --git a/hw/display/dmp_smaph.c b/hw/display/dmp_smaph.c
 new file mode 100644
-index 0000000..6c4c402
+index 0000000..3ac3add
 --- /dev/null
 +++ b/hw/display/dmp_smaph.c
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,1006 @@
 +/*
 + * DMP SMAPH-S30 ("SUGILITE"/"GPE") GPU of the CXD90014 (a5000).
 + * PA 0xF1000000, 16 KiB, GIC IRQ 76 (level high).
@@ -2290,14 +2553,25 @@ index 0000000..6c4c402
 + *                            -> status bit31, ack: +0x1000 = 0
 + *   +0x34                    IRQ status (the ISR BUG()s if it reads 0)
 + *
-+ * PSC fill and PPF transfers are executed.  P3D command lists are NOT
-+ * interpreted yet (the register stream / shader ISA are undocumented):
-+ * they complete immediately, so GL draws produce no pixels for now.
-+ * PPF follows the PICA200 layout (8x8 Morton tiles) with addresses >>2
-+ * [hypothesis, see the RE doc].
++ * PSC fill, PPF transfers and P3D command lists are executed.  PPF follows
++ * the PICA200 layout (8x8 Morton tiles) with addresses >>2 [hypothesis, see
++ * docs/RE_DISPLAY_GPU.md].
++ *
++ * P3D (docs/RE_GPU_P3D_CMD.md): the list at +0x1804 holds +0x1800 8-byte
++ * entries [header][value], built by libObj sub_5FC750 / sub_5FC790 /
++ * sub_5FC720:
++ *   header bit0       call: value = PA of a sub-list, bits 3-11 = entries
++ *   header bit2       burst: bits 3-11 = words - 1, extra words follow
++ *                     (padded to 8 bytes); bit1 = register auto-increment
++ *   header bits 12-15 byte enable, bits 16-27 register id
++ * Register writes update a 4096-entry P3D register file; the draw kick
++ * (reg 0x202) runs vertex fetch -> vertex program -> primitive assembly ->
++ * rasterisation -> fragment program -> fragment ops in software.  The
++ * programmable stages call dmp_shader_run() (hw/display/dmp_shader.c).
 + */
 +
 +#include "qemu/osdep.h"
++#include <math.h>
 +#include "hw/sysbus.h"
 +#include "hw/irq.h"
 +#include "qemu/log.h"
@@ -2305,6 +2579,7 @@ index 0000000..6c4c402
 +#include "qemu/module.h"
 +#include "qom/object.h"
 +#include "system/address-spaces.h"
++#include "hw/display/dmp_shader.h"
 +#include "trace.h"
 +
 +#define TYPE_DMP_SMAPH "dmp-smaph-s30"
@@ -2314,12 +2589,19 @@ index 0000000..6c4c402
 +#define ST_PPF  0x40000000u
 +#define ST_PSC0 0x04000000u
 +
++#define P3D_NREG 0x1000
++
 +struct SmaphState {
 +    SysBusDevice parent_obj;
 +    MemoryRegion mr;
 +    uint32_t reg[0x4000 / 4];
 +    uint32_t status;
 +    qemu_irq irq;
++    /* P3D */
++    uint32_t p3d[P3D_NREG];
++    DmpShaderProg *prog;        /* shared code / opdesc / uniform memory */
++    uint32_t code_idx, opd_idx, unif_idx;
++    uint64_t ndraw, npix;
 +};
 +
 +static void smaph_update(SmaphState *s)
@@ -2431,6 +2713,748 @@ index 0000000..6c4c402
 +    trace_dmp_smaph_job("ppf-transfer", dst, ob);
 +}
 +
++/*
++ * ---------------------------------------------------------------------------
++ * P3D: command-list processor and software renderer
++ * (register map: docs/RE_GPU_P3D_CMD.md; evidence = libObj.so functions)
++ * ---------------------------------------------------------------------------
++ */
++
++/* Until hw/display/dmp_shader.c is linked in, nothing can be shaded. */
++bool __attribute__((weak))
++dmp_shader_run(DmpShaderStage stage, const DmpShaderProg *prog,
++               const DmpVec4 *in, unsigned nin, DmpVec4 *out, unsigned nout)
++{
++    return false;
++}
++
++/*
++ * Which shader registers carry what.  hypothesis: vertex output o0 is the
++ * clip-space position, every vertex output k is interpolated into fragment
++ * input k, fragment output V1 is the colour (RGBA, 0..1; V0 = depth, per
++ * dmp_shader.c).
++ */
++#define P3D_VS_OUT_POS   0
++#define P3D_FS_OUT_COLOR 1
++#define P3D_NVARY        DMP_SH_NUM_OUTPUT
++
++#define P3D_MAX_VERTS    (1u << 20)
++#define P3D_MAX_DEPTH    4
++
++typedef struct P3dVtx {
++    DmpVec4 o[P3D_NVARY];
++    float wx, wy, wz, iw;           /* window x/y, depth 0..1, 1/w */
++    bool ok;
++} P3dVtx;
++
++typedef struct P3dTarget {
++    hwaddr pa;
++    unsigned w, h, bpp, fmt;        /* fmt = PPF/PICA pixel format code */
++    uint8_t *buf;                   /* shadow of the whole buffer */
++    bool dirty;
++    int sx0, sy0, sx1, sy1;         /* scissor, exclusive max */
++} P3dTarget;
++
++static inline float p3d_f(uint32_t v)
++{
++    union { uint32_t u; float f; } c = { .u = v };
++    return c.f;
++}
++
++static void p3d_write(SmaphState *s, unsigned reg, uint32_t v, unsigned mask);
++
++/*
++ * Execute one command list.  n = number of 8-byte entries (+0x1800 or
++ * header bits 3-11 of a call entry, libObj sub_611080 tail:
++ * `(8 * count) | 1`).
++ */
++static void p3d_run_list(SmaphState *s, hwaddr pa, uint32_t n, int depth)
++{
++    if (!n) {
++        return;
++    }
++    if (n > 0x100000 || depth > P3D_MAX_DEPTH) {
++        qemu_log_mask(LOG_GUEST_ERROR, "dmp-smaph: P3D list 0x%" HWADDR_PRIx
++                      " n=%u depth=%d rejected\n", pa, n, depth);
++        return;
++    }
++    g_autofree uint32_t *w = g_new(uint32_t, 2 * n);
++    address_space_read(&address_space_memory, pa, MEMTXATTRS_UNSPECIFIED,
++                       w, 8 * n);
++    for (uint32_t i = 0; i < n;) {
++        uint32_t hdr = le32_to_cpu(w[2 * i]), val = le32_to_cpu(w[2 * i + 1]);
++        unsigned reg = (hdr >> 16) & 0xfff, mask = (hdr >> 12) & 0xf;
++        i++;
++        if (hdr & 1) {                          /* call sub-list */
++            p3d_run_list(s, val, (hdr >> 3) & 0x1ff, depth + 1);
++            continue;
++        }
++        if (hdr & 4) {                          /* burst (sub_5FC790) */
++            unsigned extra = (hdr >> 3) & 0x1ff;
++            bool inc = hdr & 2;
++            p3d_write(s, reg, val, mask);
++            for (unsigned k = 0; k < extra; k++) {
++                uint64_t wi = 2 * (uint64_t)i + k;
++                if (wi >= 2 * (uint64_t)n) {
++                    break;
++                }
++                p3d_write(s, inc ? reg + 1 + k : reg, le32_to_cpu(w[wi]),
++                          mask);
++            }
++            i += (extra + 1) / 2;
++            continue;
++        }
++        if (hdr & 0xff8) {
++            qemu_log_mask(LOG_UNIMP, "dmp-smaph: P3D header 0x%08x\n", hdr);
++        }
++        if (mask) {
++            p3d_write(s, reg, val, mask);
++        }
++    }
++}
++
++/* ---- vertex fetch (regs 0x203-0x225, libObj sub_5FD990) ---- */
++
++static float p3d_fetch_comp(const uint8_t *p, unsigned type)
++{
++    bool norm = type & 8;
++    switch (type & 7) {
++    case 0: return norm ? MAX((int8_t)p[0] / 127.0f, -1.0f) : (int8_t)p[0];
++    case 1: return norm ? p[0] / 255.0f : p[0];
++    case 2: {
++        int16_t v = (int16_t)lduw_le_p(p);
++        return norm ? MAX(v / 32767.0f, -1.0f) : v;
++    }
++    case 7: {
++        uint16_t v = lduw_le_p(p);
++        return norm ? v / 65535.0f : v;
++    }
++    case 3: return p3d_f(ldl_le_p(p));
++    default: return 0;
++    }
++}
++
++static unsigned p3d_type_size(unsigned type)
++{
++    switch (type & 7) {
++    case 0: case 1: return 1;
++    case 2: case 7: return 2;
++    default: return 4;
++    }
++}
++
++static unsigned nib(const uint32_t *r, unsigned base, unsigned i)
++{
++    return (r[base + i / 8] >> (4 * (i % 8))) & 0xf;
++}
++
++/* Fill the vertex-program input registers for vertex index idx. */
++static void p3d_fetch_vertex(SmaphState *s, uint32_t idx, DmpVec4 *in)
++{
++    const uint32_t *r = s->p3d;
++    unsigned nbuf = (r[0x20D] & 0xf) + 1;
++
++    for (unsigned i = 0; i < DMP_SH_NUM_INPUT; i++) {
++        in[i] = (DmpVec4){ { 0, 0, 0, 1 } };
++    }
++    for (unsigned b = 0; b < nbuf; b++) {
++        unsigned nattr = nib(r, 0x20E, b) + 1, first = nib(r, 0x210, b);
++        unsigned stride = ((r[0x212 + b / 4] >> (8 * (b % 4))) & 0xff) + 1;
++        bool constant = r[0x20D] & (0x10000u << b);
++        hwaddr base = r[0x216 + b] + (constant ? 0 : (hwaddr)idx * stride);
++        uint8_t vb[256];
++
++        address_space_read(&address_space_memory, base,
++                           MEMTXATTRS_UNSPECIFIED, vb, stride);
++        for (unsigned a = 0; a < nattr; a++) {
++            unsigned slot = first + a;
++            if (slot >= 16) {
++                break;
++            }
++            unsigned type = nib(r, 0x206, slot);
++            unsigned ncomp = ((r[0x208] >> (2 * slot)) & 3) + 1;
++            unsigned off = (r[0x209 + slot / 4] >> (8 * (slot % 4))) & 0xff;
++            unsigned ireg = nib(r, 0x204, slot);
++            unsigned sz = p3d_type_size(type);
++            for (unsigned c = 0; c < ncomp; c++) {
++                if (off + (c + 1) * sz <= stride) {
++                    in[ireg].v[c] = p3d_fetch_comp(vb + off + c * sz, type);
++                }
++            }
++        }
++    }
++}
++
++/* ---- textures (regs 0x580-0x5E4, libObj sub_5FCED0 / sub_5FD100) ---- */
++
++static void p3d_texel(SmaphState *s, unsigned unit, int x, int y,
++                      float rgba[4])
++{
++    const uint32_t *t = &s->p3d[0x585 + 11 * unit];
++    unsigned aw = t[1] >> 16, ah = t[1] & 0xffff;
++    unsigned fmt = t[10] & 0x1f;
++    hwaddr base = (hwaddr)t[4] << 3;
++    size_t i;
++    uint8_t p[4] = { 0 };
++    unsigned bpp;
++
++    if (!aw || !ah) {
++        rgba[0] = rgba[1] = rgba[2] = rgba[3] = 0;
++        return;
++    }
++    x = MIN(MAX(x, 0), (int)aw - 1);
++    y = MIN(MAX(y, 0), (int)ah - 1);
++    /* bit12: texture object +48 (sub_637740: "not tiled") [hypothesis] */
++    i = (t[10] & 0x1000) ? (size_t)y * aw + x : tiled_index(x, y, aw);
++    switch (fmt) {
++    case 0: case 25: bpp = 4; break;
++    case 1: bpp = 3; break;
++    case 7: case 8: bpp = 1; break;
++    case 12: bpp = 0; break;
++    default: bpp = 2; break;
++    }
++    if (bpp) {
++        address_space_read(&address_space_memory, base + i * bpp,
++                           MEMTXATTRS_UNSPECIFIED, p, bpp);
++    }
++    uint16_t v = p[0] | p[1] << 8;
++    float r = 0, g = 0, b = 0, a = 1;
++    switch (fmt) {
++    case 0:     /* PICA RGBA8: bytes A B G R */
++        r = p[3] / 255.0f; g = p[2] / 255.0f; b = p[1] / 255.0f;
++        a = p[0] / 255.0f;
++        break;
++    case 25:    /* GL_RGBA/UNSIGNED_BYTE: bytes R G B A [hypothesis] */
++        r = p[0] / 255.0f; g = p[1] / 255.0f; b = p[2] / 255.0f;
++        a = p[3] / 255.0f;
++        break;
++    case 1:
++        r = p[2] / 255.0f; g = p[1] / 255.0f; b = p[0] / 255.0f;
++        break;
++    case 2:
++        r = (v >> 11) / 31.0f; g = ((v >> 6) & 31) / 31.0f;
++        b = ((v >> 1) & 31) / 31.0f; a = v & 1;
++        break;
++    case 3:
++        r = (v >> 11) / 31.0f; g = ((v >> 5) & 63) / 63.0f;
++        b = (v & 31) / 31.0f;
++        break;
++    case 4:
++        r = (v >> 12) / 15.0f; g = ((v >> 8) & 15) / 15.0f;
++        b = ((v >> 4) & 15) / 15.0f; a = (v & 15) / 15.0f;
++        break;
++    case 5:     /* LA8: byte0 = A, byte1 = L (PICA IA8) [hypothesis] */
++        r = g = b = p[1] / 255.0f; a = p[0] / 255.0f;
++        break;
++    case 7:
++        r = g = b = p[0] / 255.0f;
++        break;
++    case 8:
++        r = g = b = 0; a = p[0] / 255.0f;
++        break;
++    default:
++        qemu_log_mask(LOG_UNIMP, "dmp-smaph: texture format %u\n", fmt);
++        r = b = 1; g = 0;
++        break;
++    }
++    rgba[0] = r; rgba[1] = g; rgba[2] = b; rgba[3] = a;
++}
++
++static int p3d_wrap(int c, unsigned n, unsigned mode)
++{
++    switch (mode) {
++    case 2:                                         /* repeat */
++        c %= (int)n;
++        return c < 0 ? c + n : c;
++    case 3: {                                       /* mirrored repeat */
++        int p = c % (2 * (int)n);
++        p = p < 0 ? p + 2 * n : p;
++        return p < (int)n ? p : 2 * n - 1 - p;
++    }
++    default:                                        /* clamp (edge/border) */
++        return MIN(MAX(c, 0), (int)n - 1);
++    }
++}
++
++static void p3d_tex_sample(void *opaque, unsigned unit, const float coord[4],
++                           float rgba[4])
++{
++    SmaphState *s = opaque;
++    if (unit >= 8) {
++        rgba[0] = rgba[1] = rgba[2] = rgba[3] = 0;
++        return;
++    }
++    const uint32_t *t = &s->p3d[0x585 + 11 * unit];
++    uint32_t smp = s->p3d[0x5DD + unit];
++    unsigned w = t[2] >> 16, h = t[2] & 0xffff;
++    unsigned ws = (smp >> 12) & 3, wt = (smp >> 8) & 3;
++    bool lin = smp & 2;          /* mag filter; min (bit2) treated alike */
++    float u = coord[0] * w, v = coord[1] * h;
++
++    if (!w || !h) {
++        w = t[1] >> 16;
++        h = t[1] & 0xffff;
++    }
++    if (!lin) {
++        p3d_texel(s, unit, p3d_wrap(floorf(u), w, ws),
++                  p3d_wrap(floorf(v), h, wt), rgba);
++        return;
++    }
++    float fu = u - 0.5f, fv = v - 0.5f;
++    int x0 = floorf(fu), y0 = floorf(fv);
++    float ax = fu - x0, ay = fv - y0, c[4][4];
++    for (int k = 0; k < 4; k++) {
++        p3d_texel(s, unit, p3d_wrap(x0 + (k & 1), w, ws),
++                  p3d_wrap(y0 + (k >> 1), h, wt), c[k]);
++    }
++    for (int j = 0; j < 4; j++) {
++        float top = c[0][j] + (c[1][j] - c[0][j]) * ax;
++        float bot = c[2][j] + (c[3][j] - c[2][j]) * ax;
++        rgba[j] = top + (bot - top) * ay;
++    }
++}
++
++/* ---- colour buffer and fragment operations ---- */
++
++/*
++ * Colour format: reg 0x110 bits 16-18 (sub_600EB0 `v13[2] << 16`; codes
++ * from sub_613820 / readback sub_633E00): 0 RGBA8 (PICA word order), 2
++ * RGB5A1, 3 RGB565, 4 RGBA4, 5 RGBA8 in GL byte order (R,G,B,A).  The UI's
++ * 640x480 OSD target uses 4 and is PPF-transferred with input format 4.
++ */
++#define P3D_FMT_RGBA8_GL 5
++
++static void p3d_target_format(SmaphState *s, P3dTarget *t)
++{
++    t->fmt = (s->p3d[0x110] >> 16) & 7;
++    switch (t->fmt) {
++    case 2: case 3: case 4:
++        t->bpp = 2;
++        break;
++    case 0: case P3D_FMT_RGBA8_GL:
++        t->bpp = 4;
++        break;
++    default:
++        qemu_log_mask(LOG_UNIMP, "dmp-smaph: colour format %u\n", t->fmt);
++        t->fmt = 0;
++        t->bpp = 4;
++        break;
++    }
++}
++
++static void p3d_px_read(const uint8_t *p, unsigned fmt, uint8_t o[4])
++{
++    /* PPF code 2 is RGB565, P3D code 2 is RGB5A1: swap 2 <-> 3 */
++    if (fmt == P3D_FMT_RGBA8_GL) {
++        memcpy(o, p, 4);
++    } else {
++        px_to_rgba(p, fmt == 2 ? 3 : fmt == 3 ? 2 : fmt, o);
++    }
++}
++
++static void p3d_px_write(const uint8_t i[4], unsigned fmt, uint8_t *p)
++{
++    if (fmt == P3D_FMT_RGBA8_GL) {
++        memcpy(p, i, 4);
++    } else {
++        rgba_to_px(i, fmt == 2 ? 3 : fmt == 3 ? 2 : fmt, p);
++    }
++}
++
++/* compare functions of 0x104 / 0x105 / 0x107 (sub_600EB0) */
++static bool p3d_compare(unsigned f, unsigned a, unsigned ref)
++{
++    switch (f & 7) {
++    case 0: return false;
++    case 1: return true;
++    case 2: return a == ref;
++    case 3: return a != ref;
++    case 4: return a < ref;
++    case 5: return a <= ref;
++    case 6: return a > ref;
++    default: return a >= ref;
++    }
++}
++
++/* PICA200 blend factor encoding (reg 0x101) [hypothesis, see RE doc] */
++static float p3d_blend_factor(unsigned f, const float *sc, const float *dc,
++                              const float *cc, int ch)
++{
++    switch (f) {
++    case 0: return 0;
++    case 1: return 1;
++    case 2: return sc[ch];
++    case 3: return 1 - sc[ch];
++    case 4: return dc[ch];
++    case 5: return 1 - dc[ch];
++    case 6: return sc[3];
++    case 7: return 1 - sc[3];
++    case 8: return dc[3];
++    case 9: return 1 - dc[3];
++    case 10: return cc[ch];
++    case 11: return 1 - cc[ch];
++    case 12: return cc[3];
++    case 13: return 1 - cc[3];
++    case 14: return ch == 3 ? 1 : MIN(sc[3], 1 - dc[3]);
++    default: return 1;
++    }
++}
++
++static float p3d_blend_eq(unsigned eq, float s, float d)
++{
++    switch (eq) {
++    case 1: return s - d;
++    case 2: return d - s;
++    case 3: return MIN(s, d);
++    case 4: return MAX(s, d);
++    default: return s + d;
++    }
++}
++
++static void p3d_fragment_ops(SmaphState *s, P3dTarget *t, const uint8_t src[4],
++                             uint8_t *px)
++{
++    const uint32_t *r = s->p3d;
++    uint8_t dst[4], res[4];
++    float sc[4], dc[4], cc[4], o[4];
++    uint32_t bf = r[0x101], bc = r[0x103];
++    unsigned wmask = (r[0x107] >> 8) & 0xf;     /* hypothesis: RGBA enables */
++
++    if ((r[0x104] & 1) &&
++        !p3d_compare(r[0x104] >> 4, src[3], (r[0x104] >> 8) & 0xff)) {
++        return;                                 /* alpha test */
++    }
++    if (!(r[0x10C] & 0xf)) {
++        return;                                 /* colour writes off */
++    }
++    p3d_px_read(px, t->fmt, dst);
++    if (r[0x100] & 0x100) {                     /* blend enabled */
++        for (int c = 0; c < 4; c++) {
++            sc[c] = src[c] / 255.0f;
++            dc[c] = dst[c] / 255.0f;
++            cc[c] = ((bc >> (8 * c)) & 0xff) / 255.0f;
++        }
++        for (int c = 0; c < 4; c++) {
++            unsigned eq = c < 3 ? bf & 7 : (bf >> 8) & 7;
++            unsigned fs = c < 3 ? (bf >> 16) & 15 : (bf >> 24) & 15;
++            unsigned fd = c < 3 ? (bf >> 20) & 15 : (bf >> 28) & 15;
++            o[c] = p3d_blend_eq(eq, sc[c] * p3d_blend_factor(fs, sc, dc, cc, c),
++                                dc[c] * p3d_blend_factor(fd, sc, dc, cc, c));
++            o[c] = MIN(MAX(o[c], 0.0f), 1.0f);
++            res[c] = (uint8_t)(o[c] * 255.0f + 0.5f);
++        }
++    } else {
++        memcpy(res, src, 4);
++    }
++    for (int c = 0; c < 4; c++) {
++        if (!(wmask & (1 << c))) {
++            res[c] = dst[c];
++        }
++    }
++    p3d_px_write(res, t->fmt, px);
++}
++
++/*
++ * Colour buffer: PA = reg 0x112 << 4, size = reg 0x113 (w | h << 16), 8x8
++ * Morton tiled like the PICA200 (the PPF display transfer that follows reads
++ * it with the tiled->linear flag).  Row 0 is the bottom (GL window y), the
++ * PPF flips it (flag bit0).
++ */
++static bool p3d_target_open(SmaphState *s, P3dTarget *t)
++{
++    const uint32_t *r = s->p3d;
++    t->pa = (hwaddr)r[0x112] << 4;
++    t->w = r[0x113] & 0x1fff;
++    t->h = (r[0x113] >> 16) & 0x1fff;
++    p3d_target_format(s, t);
++    if (!t->pa || !t->w || !t->h || t->w > 4096 || t->h > 4096) {
++        return false;
++    }
++    t->buf = g_malloc((size_t)t->w * t->h * t->bpp);
++    address_space_read(&address_space_memory, t->pa, MEMTXATTRS_UNSPECIFIED,
++                       t->buf, (size_t)t->w * t->h * t->bpp);
++    t->dirty = false;
++
++    /* scissor, rasteriser coordinates = 2 * pixel - 0x49 (sub_600EB0) */
++    int cx2 = r[0x49] & 0xffff, cy2 = r[0x49] >> 16;
++    int x0 = (int16_t)r[0x47], y0 = (int16_t)(r[0x47] >> 16);
++    int x1 = (int16_t)r[0x48], y1 = (int16_t)(r[0x48] >> 16);
++    t->sx0 = MAX((x0 + cx2) / 2, 0);
++    t->sy0 = MAX((y0 + cy2) / 2, 0);
++    t->sx1 = MIN((x1 + cx2) / 2, (int)t->w);
++    t->sy1 = MIN((y1 + cy2) / 2, (int)t->h);
++    return true;
++}
++
++static void p3d_target_close(P3dTarget *t)
++{
++    if (t->dirty) {
++        address_space_write(&address_space_memory, t->pa,
++                            MEMTXATTRS_UNSPECIFIED, t->buf,
++                            (size_t)t->w * t->h * t->bpp);
++    }
++    g_free(t->buf);
++    t->buf = NULL;
++}
++
++/* ---- rasteriser ---- */
++
++typedef struct P3dDraw {
++    SmaphState *s;
++    P3dTarget t;
++    uint32_t fs_entry;
++    unsigned cull;              /* reg 0x41 bits 0-1: 1 cull CCW, 2 cull CW */
++} P3dDraw;
++
++static void p3d_shade_pixel(P3dDraw *d, int x, int y, const DmpVec4 *vary)
++{
++    SmaphState *s = d->s;
++    DmpVec4 out[DMP_SH_NUM_OUTPUT];
++    uint8_t src[4], *px;
++
++    memset(out, 0, sizeof(out));
++    s->prog->entry = d->fs_entry;
++    if (!dmp_shader_run(DMP_SH_FRAGMENT, s->prog, vary, P3D_NVARY,
++                        out, DMP_SH_NUM_OUTPUT)) {
++        return;
++    }
++    for (int c = 0; c < 4; c++) {
++        float f = out[P3D_FS_OUT_COLOR].v[c];
++        f = f != f ? 0 : MIN(MAX(f, 0.0f), 1.0f);
++        src[c] = (uint8_t)(f * 255.0f + 0.5f);
++    }
++    px = d->t.buf + tiled_index(x, y, d->t.w) * d->t.bpp;
++    p3d_fragment_ops(s, &d->t, src, px);
++    d->t.dirty = true;
++    s->npix++;
++}
++
++static void p3d_triangle(P3dDraw *d, const P3dVtx *a, const P3dVtx *b,
++                         const P3dVtx *c)
++{
++    if (!a->ok || !b->ok || !c->ok) {
++        return;
++    }
++    float area = (b->wx - a->wx) * (c->wy - a->wy) -
++                 (c->wx - a->wx) * (b->wy - a->wy);
++    if (area == 0 || area != area) {
++        return;
++    }
++    /* area > 0: counter-clockwise in GL window coordinates (y up) */
++    if (((d->cull & 3) == 1 && area > 0) || ((d->cull & 3) == 2 && area < 0)) {
++        return;
++    }
++    int x0 = MAX((int)floorf(MIN(MIN(a->wx, b->wx), c->wx)), d->t.sx0);
++    int x1 = MIN((int)ceilf(MAX(MAX(a->wx, b->wx), c->wx)), d->t.sx1);
++    int y0 = MAX((int)floorf(MIN(MIN(a->wy, b->wy), c->wy)), d->t.sy0);
++    int y1 = MIN((int)ceilf(MAX(MAX(a->wy, b->wy), c->wy)), d->t.sy1);
++    float inv = 1.0f / area;
++    DmpVec4 vary[P3D_NVARY];
++
++    for (int y = y0; y < y1; y++) {
++        float py = y + 0.5f;
++        for (int x = x0; x < x1; x++) {
++            float px = x + 0.5f;
++            float w0 = ((b->wx - px) * (c->wy - py) -
++                        (c->wx - px) * (b->wy - py)) * inv;
++            float w1 = ((c->wx - px) * (a->wy - py) -
++                        (a->wx - px) * (c->wy - py)) * inv;
++            float w2 = 1.0f - w0 - w1;
++            if (w0 < 0 || w1 < 0 || w2 < 0) {
++                continue;
++            }
++            /* top-left-ish tie break: drop pixels exactly on a far edge */
++            if ((w0 == 0 && area * (c->wy - b->wy) < 0) ||
++                (w1 == 0 && area * (a->wy - c->wy) < 0) ||
++                (w2 == 0 && area * (b->wy - a->wy) < 0)) {
++                continue;
++            }
++            float p0 = w0 * a->iw, p1 = w1 * b->iw, p2 = w2 * c->iw;
++            float ps = p0 + p1 + p2;
++            if (ps == 0) {
++                continue;
++            }
++            p0 /= ps; p1 /= ps; p2 /= ps;
++            for (int k = 0; k < P3D_NVARY; k++) {
++                for (int j = 0; j < 4; j++) {
++                    vary[k].v[j] = a->o[k].v[j] * p0 + b->o[k].v[j] * p1 +
++                                   c->o[k].v[j] * p2;
++                }
++            }
++            /* window position replaces the clip position (gl_FragCoord) */
++            vary[P3D_VS_OUT_POS].v[0] = px;
++            vary[P3D_VS_OUT_POS].v[1] = py;
++            vary[P3D_VS_OUT_POS].v[2] = w0 * a->wz + w1 * b->wz + w2 * c->wz;
++            vary[P3D_VS_OUT_POS].v[3] = ps;
++            p3d_shade_pixel(d, x, y, vary);
++        }
++    }
++}
++
++static void p3d_vertex(SmaphState *s, uint32_t idx, P3dVtx *v)
++{
++    const uint32_t *r = s->p3d;
++    DmpVec4 in[DMP_SH_NUM_INPUT];
++
++    memset(v, 0, sizeof(*v));
++    p3d_fetch_vertex(s, idx, in);
++    s->prog->entry = r[0x442];
++    if (!dmp_shader_run(DMP_SH_VERTEX, s->prog, in, DMP_SH_NUM_INPUT,
++                        v->o, P3D_NVARY)) {
++        return;
++    }
++    const float *p = v->o[P3D_VS_OUT_POS].v;
++    if (!(p[3] > 0)) {
++        return;             /* no near-plane clipping [not implemented] */
++    }
++    /* viewport: 0x42/0x43 = w/2, h/2 (float), centre = 0x49 / 2 */
++    float hw = p3d_f(r[0x42]), hh = p3d_f(r[0x43]);
++    float cx = (r[0x49] & 0xffff) * 0.5f, cy = (r[0x49] >> 16) * 0.5f;
++    v->iw = 1.0f / p[3];
++    v->wx = cx + p[0] * v->iw * hw;
++    v->wy = cy + p[1] * v->iw * hh;
++    v->wz = p[2] * v->iw * 0.5f + 0.5f;
++    v->ok = true;
++}
++
++static void p3d_draw(SmaphState *s, uint32_t kick)
++{
++    const uint32_t *r = s->p3d;
++    uint32_t count = kick & 0x0fffffff;
++    bool indexed = kick & 0x80000000u;
++    unsigned isz = (kick & 0x20000000u) ? 4 : (kick & 0x10000000u) ? 2 : 1;
++    unsigned topo = r[0x404] & 3;
++    unsigned prim = r[0x401];
++    P3dDraw d = { .s = s, .fs_entry = r[0x443], .cull = r[0x41] };
++
++    s->ndraw++;
++    if (!count || count > P3D_MAX_VERTS) {
++        return;
++    }
++    if (!p3d_target_open(s, &d.t)) {
++        qemu_log_mask(LOG_GUEST_ERROR, "dmp-smaph: draw without target\n");
++        return;
++    }
++    if (prim != 0x3020 && prim != 0x20) {
++        /* points / lines (0x401 = 0, 0x10, 0x802): not rasterised yet */
++        qemu_log_mask(LOG_UNIMP, "dmp-smaph: primitive 0x%x\n", prim);
++        p3d_target_close(&d.t);
++        return;
++    }
++    for (unsigned i = 0; i < 64; i++) {
++        s->prog->extra[i] = r[0x440 + i];
++    }
++    s->prog->tex_sample = p3d_tex_sample;
++    s->prog->tex_opaque = s;
++
++    g_autofree uint8_t *ib = NULL;
++    if (indexed) {
++        ib = g_malloc((size_t)count * isz);
++        address_space_read(&address_space_memory, r[0x203],
++                           MEMTXATTRS_UNSPECIFIED, ib, (size_t)count * isz);
++    }
++    g_autofree P3dVtx *vt = g_new(P3dVtx, count);
++    for (uint32_t i = 0; i < count; i++) {
++        uint32_t idx = !indexed ? r[0x203] + i :
++                       isz == 4 ? ldl_le_p(ib + 4 * i) :
++                       isz == 2 ? lduw_le_p(ib + 2 * i) : ib[i];
++        uint32_t j;
++        /* reuse an identical index from the last few (post-T&L cache) */
++        for (j = i > 8 ? i - 8 : 0; j < i; j++) {
++            uint32_t jdx = !indexed ? r[0x203] + j :
++                           isz == 4 ? ldl_le_p(ib + 4 * j) :
++                           isz == 2 ? lduw_le_p(ib + 2 * j) : ib[j];
++            if (jdx == idx) {
++                vt[i] = vt[j];
++                break;
++            }
++        }
++        if (j == i) {
++            p3d_vertex(s, idx, &vt[i]);
++        }
++    }
++    switch (topo) {
++    case 0:
++        for (uint32_t i = 0; i + 2 < count; i += 3) {
++            p3d_triangle(&d, &vt[i], &vt[i + 1], &vt[i + 2]);
++        }
++        break;
++    case 1:
++        for (uint32_t i = 0; i + 2 < count; i++) {
++            if (i & 1) {
++                p3d_triangle(&d, &vt[i + 1], &vt[i], &vt[i + 2]);
++            } else {
++                p3d_triangle(&d, &vt[i], &vt[i + 1], &vt[i + 2]);
++            }
++        }
++        break;
++    case 2:
++        for (uint32_t i = 1; i + 1 < count; i++) {
++            p3d_triangle(&d, &vt[0], &vt[i], &vt[i + 1]);
++        }
++        break;
++    default:
++        qemu_log_mask(LOG_UNIMP, "dmp-smaph: topology %u\n", topo);
++        break;
++    }
++    trace_dmp_smaph_job("p3d-draw", d.t.pa, count);
++    p3d_target_close(&d.t);
++}
++
++static void p3d_write(SmaphState *s, unsigned reg, uint32_t v, unsigned mask)
++{
++    DmpShaderProg *pr = s->prog;
++
++    if (reg >= P3D_NREG) {
++        return;
++    }
++    if (mask != 0xf) {
++        uint32_t m = 0;
++        for (int b = 0; b < 4; b++) {
++            m |= mask & (1 << b) ? 0xffu << (8 * b) : 0;
++        }
++        v = (s->p3d[reg] & ~m) | (v & m);
++    }
++    s->p3d[reg] = v;
++    switch (reg) {
++    case 0x202:                         /* draw kick (sub_5FD990) */
++        p3d_draw(s, v);
++        break;
++    case 0x450:                         /* float uniform index */
++        s->unif_idx = v;
++        break;
++    case 0x454:                         /* uniform x,y,z,w = 0x451..0x454 */
++        if (s->unif_idx < DMP_SH_NUM_FUNIF) {
++            for (int c = 0; c < 4; c++) {
++                pr->funif[s->unif_idx].v[c] = p3d_f(s->p3d[0x451 + c]);
++            }
++        } else {
++            qemu_log_mask(LOG_GUEST_ERROR, "dmp-smaph: uniform %u\n",
++                          s->unif_idx);
++        }
++        s->unif_idx++;                  /* hypothesis: auto-increment */
++        break;
++    case 0x458:                         /* program load address (instr.) */
++        s->code_idx = v * 2;
++        break;
++    case 0x459:                         /* program word */
++        if (s->code_idx < DMP_SH_MAX_CODE) {
++            pr->code[s->code_idx++] = v;
++            pr->ncode = MAX(pr->ncode, s->code_idx);
++        }
++        break;
++    case 0x460:                         /* operand descriptor index */
++        s->opd_idx = v;
++        break;
++    case 0x461:
++        if (s->opd_idx < DMP_SH_MAX_OPDESC) {
++            pr->opdesc[s->opd_idx++] = v;
++            pr->nopdesc = MAX(pr->nopdesc, s->opd_idx);
++        }
++        break;
++    }
++}
++
 +static uint64_t smaph_read(void *opaque, hwaddr off, unsigned size)
 +{
 +    SmaphState *s = opaque;
@@ -2462,7 +3486,8 @@ index 0000000..6c4c402
 +        }
 +        break;
 +    case 0x1800:
-+        trace_dmp_smaph_job("p3d-list (not executed)", s->reg[0x1804 / 4], v);
++        trace_dmp_smaph_job("p3d-list", s->reg[0x1804 / 4], v);
++        p3d_run_list(s, s->reg[0x1804 / 4], v, 0);
 +        s->status |= ST_P3D;
 +        break;
 +    case 0x1000:
@@ -2486,6 +3511,9 @@ index 0000000..6c4c402
 +{
 +    SmaphState *s = DMP_SMAPH(dev);
 +    memset(s->reg, 0, sizeof(s->reg));
++    memset(s->p3d, 0, sizeof(s->p3d));
++    memset(s->prog, 0, sizeof(*s->prog));
++    s->code_idx = s->opd_idx = s->unif_idx = 0;
 +    s->status = 0;
 +}
 +
@@ -2493,6 +3521,7 @@ index 0000000..6c4c402
 +{
 +    SmaphState *s = DMP_SMAPH(obj);
 +    memory_region_init_io(&s->mr, obj, &smaph_ops, s, "dmp-smaph", 0x4000);
++    s->prog = g_new0(DmpShaderProg, 1);
 +    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mr);
 +    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq);
 +}
@@ -2516,14 +3545,14 @@ index 0000000..6c4c402
 +}
 +type_init(smaph_register)
 diff --git a/hw/display/meson.build b/hw/display/meson.build
-index 90e6c04..5376b31 100644
+index 90e6c04..cf43b4f 100644
 --- a/hw/display/meson.build
 +++ b/hw/display/meson.build
 @@ -145,3 +145,6 @@ endif
  system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_lcdc.c'))
  
  modules += { 'hw-display': hw_display_modules }
-+system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('dmp_smaph.c'))
++system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('dmp_smaph.c', 'dmp_shader.c'))
 +system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('a5k_fbview.c'))
 +system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('cxd90014_vph.c'))
 diff --git a/hw/display/trace-events b/hw/display/trace-events
@@ -4476,6 +5505,81 @@ index c5b6db4..1e3ced9 100644
 +# cxd4115_timer.c
 +cxd4115_write(uint32_t ch, uint32_t off, uint32_t val) "ch%u +0x%x = 0x%08x"
 +cxd4115_fire(uint32_t ch, uint32_t ctrl) "ch%u match ctrl=0x%x"
+diff --git a/include/hw/display/dmp_shader.h b/include/hw/display/dmp_shader.h
+new file mode 100644
+index 0000000..968a569
+--- /dev/null
++++ b/include/hw/display/dmp_shader.h
+@@ -0,0 +1,69 @@
++/*
++ * DMP SMAPH-S30 programmable shader units — interpreter interface (a5000).
++ *
++ * Contract between the P3D command-list decoder / rasteriser
++ * (hw/display/dmp_smaph.c) and the shader interpreter
++ * (hw/display/dmp_shader.c).  The command-list side collects what the
++ * guest uploaded through P3D registers (program words, operand
++ * descriptors, uniforms, attribute layout) into DmpShaderProg and calls
++ * the interpreter per vertex / per fragment.  Field meanings are filled in
++ * from docs/RE_GPU_P3D_SHADER.md; extend the structs as needed, but keep
++ * both sides building.
++ */
++#ifndef HW_DISPLAY_DMP_SHADER_H
++#define HW_DISPLAY_DMP_SHADER_H
++
++#include <stdint.h>
++#include <stdbool.h>
++
++#define DMP_SH_MAX_CODE     4096    /* program words */
++#define DMP_SH_MAX_OPDESC   128     /* operand descriptors */
++#define DMP_SH_NUM_FUNIF    256     /* float4 uniforms: P3D reg 0x450 index
++                                       reaches 0xC9 in the stock UI lists */
++#define DMP_SH_NUM_IUNIF    4       /* int4 uniforms */
++#define DMP_SH_NUM_INPUT    16
++#define DMP_SH_NUM_OUTPUT   16
++
++typedef struct DmpVec4 {
++    float v[4];
++} DmpVec4;
++
++typedef struct DmpShaderProg {
++    uint32_t code[DMP_SH_MAX_CODE];
++    uint32_t ncode;
++    uint32_t opdesc[DMP_SH_MAX_OPDESC];
++    uint32_t nopdesc;
++    uint32_t entry;                 /* first instruction index */
++    DmpVec4 funif[DMP_SH_NUM_FUNIF];
++    uint32_t iunif[DMP_SH_NUM_IUNIF][4];
++    uint32_t bunif;                 /* bool uniforms, bit n */
++    uint32_t in_map[DMP_SH_NUM_INPUT];   /* attribute -> input register */
++    uint32_t out_map[DMP_SH_NUM_OUTPUT]; /* output register -> semantic */
++    uint32_t extra[64];             /* unit-specific state, see the RE doc */
++    /*
++     * Texture fetch, provided by the rasteriser (dmp_smaph.c).  unit is the
++     * texture unit / sampler number as encoded in the instruction, coord
++     * the (s, t, r, q) operand; rgba receives the filtered texel as floats
++     * in [0, 1].  NULL when no texture state is available.
++     */
++    void (*tex_sample)(void *opaque, unsigned unit, const float coord[4],
++                       float rgba[4]);
++    void *tex_opaque;
++} DmpShaderProg;
++
++typedef enum DmpShaderStage {
++    DMP_SH_VERTEX = 0,
++    DMP_SH_FRAGMENT = 1,
++} DmpShaderStage;
++
++/*
++ * Run one invocation.  in[] are the input registers (vertex attributes or
++ * interpolated varyings), out[] receive the output registers.  Returns
++ * false on an undecodable instruction (the caller then skips the
++ * primitive and logs once under LOG_UNIMP).
++ */
++bool dmp_shader_run(DmpShaderStage stage, const DmpShaderProg *prog,
++                    const DmpVec4 *in, unsigned nin,
++                    DmpVec4 *out, unsigned nout);
++
++#endif
 diff --git a/include/hw/misc/cxd90014_sio.h b/include/hw/misc/cxd90014_sio.h
 new file mode 100644
 index 0000000..762b0e4
