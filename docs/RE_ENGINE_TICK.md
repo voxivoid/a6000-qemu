@@ -124,3 +124,81 @@ libObj 사용자 코드 브레이크: libObj 베이스는 실행마다 다름 �
 - 버튼 프런트엔드(`a5k_key_event`): Enter → GPIO P10.10 low. "확인"을 누르면 UI가 반응하여 화면이 바뀐다.
   그러나 다음 프레임은 PSC 지우기 + PPF 전송만 있고 P3D 그리기가 없다(빈 화면) → 다음 화면(지역 설정)이 그려지기 전
   앱이 다른 무언가(모드 전환 완료 등)를 기다리는 것으로 보임 [?]. 같은 시점부터 0xF3C10xxx(CEC 블록) 폴링이 급증.
+
+## 11. "확인" 뒤 검정 화면 = 버튼 배선 오류 (MOVIE 버튼이 눌렸음) → 첫 부팅 설정 완주
+### 11.1 원인
+§10의 버튼 프런트엔드는 Sony 키 코드의 의미를 잘못 붙였다. 호스트 Enter가 누른 GPIO P10.10은 가운데 버튼이 아니라
+**MOVIE(녹화 시작/정지) 버튼**이다. 그래서 첫 부팅 대화상자가 "취소" 경로로 닫히고, 앱은 바로 촬영 모드로 들어갔다.
+- 키 이름의 근거는 libObj의 `{코드, "KEY_..."}` 표다(파일 오프셋 0xEE1078부터, 8바이트 항목).
+  0x0002 POWER, 0x0003 UP, 0x0015 LEFT, 0x0030 DOWN, **0x01AC ENTER**, 0x01AF RIGHT, **0x01AB MENU**,
+  **0x01F0 STARTSTOP(MOVIE)**, 0x01F7 PLAY, 0x01F8 DELETE, 0x1BF SLIKEY_ZOOM, 0x70A6 PANEL_ARM_DET,
+  0x7094 FLASH_POPUP, 0x70D5 UM_CONNECTOR_POWER.
+- event0 코드는 libInputServant 표(0x3364, `{sony, linux}`)를 따른다. 0x03→103, 0x30→108, 0x1AF→106, 0x15→105,
+  0x1AC→232, 0x1AB→514. 두 번째 표(0x3394)에는 0x1F0→229, 0x1F1→102, 0x1AB→158가 있다.
+- 따라서 input.ko 키 표(`RE_INPUT_I2C_POWER.md` §7)를 실제 버튼에 대응시키면 다음과 같다.
+  ADC ch 0x0D: 0..91 **ENTER** / 92..273 UP / 274..439 LEFT / 440..599 DOWN / 600..772 RIGHT.
+  ADC ch 0x0C: 0..91 DELETE. GPIO P10.10: MOVIE. GPIO P5.2: 패널 180° 회전 검출(active low).
+  front CAkey1: bit0 POWER(active low), bit1 PLAY, bit2 MENU, bit5 UM_CONNECTOR_POWER, bit9 FLASH_POPUP(active low).
+  예전 매핑은 LEFT=가운데, M=UP, RIGHT=LEFT, UP=DOWN, DOWN=RIGHT, Enter=MOVIE였다.
+- 앱 쪽 증거(a5ktrace 함수 추적, §11.4)는 다음과 같다. 키를 누른 직후 M_CLOCK 전이 함수 `sub_40696C`가 상태 4에서 내부 이벤트 3을 받아
+  action 8 = `ActionSetForceSetting`(`sub_407254`)을 실행했다. 이 action은 기본 날짜를 설정하고
+  `setClockForceSettledToBackup`(Backup 0x1070140 = 1)을 기록한다. 그 뒤 `[M_ROOT] getDateInfo() Clock Force Settled`가 찍히고
+  `viewStlrec.uxc`가 열린다(촬영 화면). 지역 설정 화면(`viewAreaSet.uxc`)은 한 번도 열리지 않았다.
+
+### 11.2 수정 (`hw/arm/sony_a5000.c` `a5k_key_event`)
+| 호스트 키 | 하드웨어 | Sony 코드 |
+|---|---|---|
+| Enter / KP_Enter | ADC 유닛 1 ch 1(=0x0D) 레벨 45 | 0x1AC ENTER |
+| ↑ / ← / ↓ / → | 같은 채널 182 / 356 / 520 / 686 | 0x03 / 0x15 / 0x30 / 0x1AF |
+| Delete / Backspace | ADC 유닛 1 ch 0(=0x0C) 45 | 0x1F8 DELETE |
+| R | GPIO P10.10 low | 0x1F0 MOVIE |
+| M / P | 서브마이컴 slot A **바이트 28 bit2 / bit1** (CRC 재계산) | 0x1AB MENU / 0x1F7 PLAY |
+
+- 래더 채널마다 누르고 있는 키를 기억한다. 다른 키를 뗄 때는 레벨을 1023으로 돌리지 않는다.
+- MENU와 PLAY의 경로: av-cam 필드 파서 `43AC73AE`가 slot A의 b28 | b29<<8을 읽어 task-48 상태 0x43ED43B0+24(CAkey1)에 반영한다.
+  0x280132 sync 핸들러 `43915890`(`43AC7408`)가 이 값을 msg[8..23]에 복사하고, input.ko가 이를 폴링한다.
+  스냅샷의 CAkey1 값은 0x0201이다. M을 누르고 있는 동안 0x83ED43C8이 0x0205로 바뀌고, 0x7A0020에 `{0x1AB, 0, 1}`과 `{0x1AB, 0, 0}`이 전달되는 것을 확인했다.
+  첫 대화상자에서 MENU를 누르면 "취소"와 같이 처리되어 PlayMemories 안내로 넘어간다. 실기 동작과 같다.
+
+### 11.3 첫 부팅 설정 진행 결과 (무수정 펌웨어, sendkey)
+1. 대화상자 "지역/날짜/시간을 설정합니다." → Enter → **지역 설정**(세계 지도, "동경/서울", GMT +9.0, 2014-01-01 00:00 AM)
+2. Enter → **날짜/시간 설정** 목록(서머타임 끔 / 날짜/시간 설정되지 않음 / 날짜 형식 년-월-일 / [확인])
+3. ↓, Enter → 날짜/시간 편집기. ↑/→로 2026-11-14로 바꾸고 Enter, ↓↓로 [확인]을 고른 뒤 Enter
+   (목록으로 돌아왔을 때 "날짜/시간" 오른쪽 값이 비어 있다. RTC(서브마이컴 시계)는 아직 모델에 없다 [?])
+4. **PlayMemories Home 안내**("www.sony.net/pm", [확인]) → Enter → 촬영 모드.
+   - 주의: 대화상자는 InputService `toActive`보다 먼저 그려진다. 표시 직후 약 20 s 안에 누른 키는 버려진다.
+     gdb가 VM을 멈춘 상태에서 보낸 `sendkey`도 잃는다.
+5. 촬영 모드 결과는 SD 카드 유무에 따라 다르다.
+   - **SD 없음**: "렌즈가 장착되었는지 확인하십시오 … '렌즈 없이 촬영'을 '가능'으로…" 경고가 뜬다. 렌즈를 모델링하지 않았으므로 실기와 같은 동작이다.
+     Enter를 누르면 **촬영 화면 OSD**(NO CARD, 16:9, 17M, RAW+J, 1080, 배터리 98%, SCN, ±0.0, ISO AUTO, 격자선)가 표시된다.
+     라이브뷰는 검정이다(센서/ISP 미구현). 이 상태에서 MENU 이벤트(0x7A0020 0x1AB)는 전달되지만 메뉴는 열리지 않는다.
+     휠 키도 OSD를 바꾸지 않는다 → 카메라 기동(모니터링 시작)이 끝나지 않아 조작이 막힌 것으로 추정 [?].
+   - **SD 있음**(macOS에서 포맷한 FAT32, 카메라 DB 없음): StlRec OSD가 한 프레임 그려진다. 미디어 아이콘은 "ERROR"이고,
+     패널 버퍼 0x8F7EE000을 덤프해 확인했다. 그다음 루트 뷰가 이벤트 0x13067054를 받아 **view 12**를 StlRec 위에 연다(blog: `type=4 ev=0x1c`).
+     StlRec 레이아웃의 위젯 약 250개가 소멸(`Widget::~Widget`, lr 0x7027BF)한 뒤로는 화면이 빈다(PSC fill + PPF만 있음).
+     view 12 = **AUTOREPAIR**(viewUnified8 `ViewAutoRepairToInstance`, 이미지 DB 자동 복구)로 추정한다 [?].
+     근거는 viewUnified2의 통합 IdSoTable 등록 순서다. 이 순서로 STLREC=131, INITIAL_SETTING=61이 관측값과 일치한다.
+     view는 `setModelRequest(true)`로 M_REPAIR 응답(예상 시간 등)을 기다리는 것으로 보인다. 이후 SD 명령은 하나도 나가지 않는다
+     (부팅 때의 CMD17/18/13/30만 있고 CMD24/25는 없다). CPU는 유휴 상태다 → 복구 모델이 기다리는 응답이 무엇인지는 미확정.
+     키는 루트 뷰(103)만 받고 10 s 타이머만 건다.
+
+### 11.4 도구 (조사 방법, 다음 작업자용)
+- `tools/a5ktrace.c`에 옵션을 추가했다.
+  - `str=N` / 프로브별 `s=N`: r1+N의 문자열을 출력한다(osal 텍스트 메시지 +20, `do_sys_open` 파일명 +0).
+  - `x=V`: r0 제외 필터(반복 가능). `comm=NAME`: 태스크 이름 접두어 필터.
+  - **`fn=PATH`, `fncap=N`**: 실행 중에 다시 읽는 사용자 공간 함수 프로브 목록이다(한 줄에 `hex주소 [라벨]`).
+    파일 mtime이 바뀌면 플러그인이 `qemu_plugin_reset`으로 재계측한다. libObj의 7만 개 함수 전부를 걸어도 동작한다.
+- libObj 베이스: gdb에서 `find_task_by_vpid`로 comm "im.elf"를 찾는다(pid 100..200). 그 VMA 중 크기가 0xE0E000이고 pgoff가 0인 것이 libObj다.
+  appFw 상세 로그 스위치 `byte_F13D88`은 `access_process_vm`으로 1을 쓴다. 이 둘을 한 스크립트로 처리할 수 있다.
+  상세 로그는 osal 0x8F0139 +20에 실린다. 레벨 1(오류)은 스위치와 관계없이 항상 출력된다.
+- appFw **blog**(osal 0x8F013A, 메시지 +0 = 0x00830002): +4 카테고리, +8 길이, +24 데이터.
+  카테고리 4 = 뷰·모델 이벤트 시퀀스(`blogEventSequence`: `{arg2, vm(1=view, 2=model), type, …, eventId BE, dest, queue}`;
+  type 1=생성, 2=종료, 3=활성/비활성, 4=push), 7 = TopologyManager, 14 = AppSystem 메인 루프(sleep 타임아웃, updateWidget, draw).
+  `blogEventSequence`로 화면 전환 순서를 그대로 따라갈 수 있다.
+- 한 번(run10: `-trace sdcard_*` + gdb `call`) av-cam task 66에서 NULL 참조 oops가 났다(`4376FA2x`, `ldr r0,[r0,#24]`).
+  이어서 "scheduling while atomic"으로 시스템이 멈췄다. 같은 절차를 gdb 없이 반복했을 때는 재현되지 않았다 → 디버거 간섭으로 추정 [?].
+
+### 11.5 남은 일
+- SD 카드가 있을 때의 AUTOREPAIR 정지: M_REPAIR → ObjSalvage/MprIf 비동기 명령의 응답 경로를 추적해야 한다(`[M_REPAIR] ActionGetRepairTime*`).
+- 촬영 모드에서 메뉴와 휠이 반응하지 않는 문제: 카메라 기동(CAMUSER_* / av-cam 센서 경로) 완료 이벤트가 필요한지 확인해야 한다.
+- RTC(날짜 표시 공란), 줌 레버(ADC 0x0F 다단), 셔터(S1/S2 경로 미확인) 입력.

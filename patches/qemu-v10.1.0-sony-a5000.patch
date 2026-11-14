@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..22f4cfe
+index 0000000..c125477
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,1038 @@
+@@ -0,0 +1,1096 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -158,6 +158,7 @@ index 0000000..22f4cfe
 +    int submicro_step;
 +    bool submicro;
 +    uint8_t *submicro_frames;
++    int adc_key[2];                 /* qcode holding each ADC key ladder */
 +    DeviceState *adc[2];
 +    char *submicro_file;
 +    char *cmdline;
@@ -414,6 +415,26 @@ index 0000000..22f4cfe
 +    a5k_submicro_crc(frames);
 +}
 +
++/*
++ * Front keys are read by the sub-micro too: slot A bytes 28/29 are the
++ * "CAkey1" word (av-cam field parser 43AC73AE: b28 | b29 << 8, copied to the
++ * task-48 state +24 = 0x43ED43C8 and served to input.ko on sync queue
++ * 0x280132).  input.ko's key table (Backup 0x1120000): bit1 = PLAY (0x1F7),
++ * bit2 = MENU (0x1AB), both active high.  The snapshot word is 0x0201.
++ */
++static void a5k_submicro_front_key(A5KMachineState *s, int bit, bool down)
++{
++    if (!s->submicro_frames) {
++        return;
++    }
++    if (down) {
++        s->submicro_frames[28] |= 1 << bit;
++    } else {
++        s->submicro_frames[28] &= ~(1 << bit);
++    }
++    a5k_submicro_crc(s->submicro_frames);
++}
++
 +static void a5k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
 +{
 +    A5KMachineState *s = opaque;
@@ -448,13 +469,34 @@ index 0000000..22f4cfe
 +/*
 + * Camera buttons from the host keyboard (QEMU window or HMP "sendkey").
 + * Wiring from input.ko's key table (Backup 0x1120000, docs/RE_INPUT_I2C_POWER.md
-+ * §7) and libInputServant's Sony-code -> Linux-code table:
-+ *   ADC ch 0x0D (= unit 1 ch 1) resistor ladder, pressed level bands:
-+ *     0..91 LEFT (0x1AC), 92..273 MENU (0x03), 274..439 RIGHT (0x15),
-+ *     440..599 UP (0x30), 600..772 DOWN (0x1AF); released = 1023
-+ *   GPIO P10.10 active low = centre/OK (0x1F0 -> Linux 232)
-+ * Host keys: arrows, Enter = centre, M = MENU.  Band mid-points are used.
++ * section 7); Sony key codes named by libObj's key-name table (file 0xEE1078:
++ * {code, "KEY_TACT_..."}) and mapped to event0 codes by libInputServant
++ * (0x3364: 0x03->103, 0x30->108, 0x1AF->106, 0x15->105, 0x1AC->232, ...):
++ *   ADC ch 0x0D (= unit 1 ch 1) control-wheel resistor ladder, pressed bands
++ *     0..91 ENTER (0x1AC), 92..273 UP (0x03), 274..439 LEFT (0x15),
++ *     440..599 DOWN (0x30), 600..772 RIGHT (0x1AF); released = 1023
++ *   ADC ch 0x0C (= unit 1 ch 0) 0..91 DELETE (0x1F8)
++ *   GPIO P10.10 active low = STARTSTOP (0x1F0, the MOVIE button)
++ *   sub-micro slot A byte 28 bit 2 MENU (0x1AB), bit 1 PLAY (0x1F7)
++ * Host keys: arrows, Enter = centre, M = MENU, P = PLAY,
++ * Delete/Backspace = delete, R = MOVIE.
++ * Band mid-points are used.
 + */
++static void a5k_adc_key(A5KMachineState *s, int ch, int qcode, bool down,
++                        int level)
++{
++    if (!s->adc[1]) {
++        return;
++    }
++    if (down) {
++        s->adc_key[ch] = qcode;
++        cxd90014_adc_set(s->adc[1], ch, level);
++    } else if (s->adc_key[ch] == qcode) {
++        s->adc_key[ch] = 0;
++        cxd90014_adc_set(s->adc[1], ch, 1023);
++    }
++}
++
 +static void a5k_key_event(DeviceState *dev, QemuConsole *src,
 +                          InputEvent *evt)
 +{
@@ -462,25 +504,41 @@ index 0000000..22f4cfe
 +    InputKeyEvent *key = evt->u.key.data;
 +    int qcode = qemu_input_key_value_to_qcode(key->key);
 +    bool down = key->down;
-+    int level = -1;
 +
 +    switch (qcode) {
-+    case Q_KEY_CODE_LEFT:  level = 45;  break;
-+    case Q_KEY_CODE_M:     level = 182; break;
-+    case Q_KEY_CODE_RIGHT: level = 356; break;
-+    case Q_KEY_CODE_UP:    level = 520; break;
-+    case Q_KEY_CODE_DOWN:  level = 686; break;
 +    case Q_KEY_CODE_RET:
 +    case Q_KEY_CODE_KP_ENTER:
++        a5k_adc_key(s, 1, qcode, down, 45);
++        break;
++    case Q_KEY_CODE_UP:
++        a5k_adc_key(s, 1, qcode, down, 182);
++        break;
++    case Q_KEY_CODE_LEFT:
++        a5k_adc_key(s, 1, qcode, down, 356);
++        break;
++    case Q_KEY_CODE_DOWN:
++        a5k_adc_key(s, 1, qcode, down, 520);
++        break;
++    case Q_KEY_CODE_RIGHT:
++        a5k_adc_key(s, 1, qcode, down, 686);
++        break;
++    case Q_KEY_CODE_DELETE:
++    case Q_KEY_CODE_BACKSPACE:
++        a5k_adc_key(s, 0, qcode, down, 45);
++        break;
++    case Q_KEY_CODE_M:
++        a5k_submicro_front_key(s, 2, down);
++        break;
++    case Q_KEY_CODE_P:
++        a5k_submicro_front_key(s, 1, down);
++        break;
++    case Q_KEY_CODE_R:
 +        if (s->gpio) {
 +            qemu_set_irq(qdev_get_gpio_in(s->gpio, 10 * 32 + 10), !down);
 +        }
-+        return;
++        break;
 +    default:
-+        return;
-+    }
-+    if (s->adc[1]) {
-+        cxd90014_adc_set(s->adc[1], 1, down ? level : 1023);
++        break;
 +    }
 +}
 +

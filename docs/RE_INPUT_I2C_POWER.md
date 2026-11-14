@@ -192,6 +192,9 @@ Key table actually loaded on the real camera (snapshot, `dword_54B8`=0x4c3a6000,
 
 ADC/GPIO debounce = 4 consecutive 10 ms samples, front = 1. Keycodes are Sony internal codes; mapping to the
 Linux codes of event0 (MENU=514 …) is done by userspace [?].
+**Update (RE_ENGINE_TICK.md §11):** the key names come from libObj's name table (0x1AC ENTER, 0x03 UP, 0x15 LEFT, 0x30 DOWN,
+0x1AF RIGHT, 0x1F8 DELETE, 0x1F0 STARTSTOP = MOVIE, 0x70A6 PANEL_ARM_DET, 0x02 POWER, 0x1F7 PLAY, 0x1AB MENU,
+0x70D5 UM_CONNECTOR_POWER, 0x7094 FLASH_POPUP); front CAkey1 = sub-micro slot A bytes 28/29.
 
 Sources:
 * **GPIO** — `gpio_get_data_bit(port, bit)` → GPIO port +0x10. **Released state must read 1** on P5.2 and P10.10.
