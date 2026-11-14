@@ -52,16 +52,19 @@
 - ⏳ GPU: geometry 프로그램(실제 점/선), GLES1 패키지 셰이더 opcode 14개, ETC1, 깊이/밉 메모리 배치 미확정 (`docs/RE_GPU_P3D_CMD.md` §7)
 - ✅ SD 카드: 서브마이컴 슬롯 스위치 모델 → 순정 미디어 스택이 카드 초기화·FAT 읽기 (`-drive if=sd` / `A5K_SD`)
 - ✅ 카메라 버튼(`docs/RE_ENGINE_TICK.md` §11): 휠·가운데 = ADC 래더 ch 0x0D, DELETE = ch 0x0C, MOVIE = GPIO P10.10, MENU/PLAY = 서브마이컴 slot A 바이트 28 (호스트: 방향키/Enter/M/P/R/Delete, HMP `sendkey`)
-- ✅ 첫 부팅 설정 완주: 지역 설정(세계 지도) → 날짜/시간 → PlayMemories 안내 → 촬영 모드 (SD 없음: 렌즈 경고 → 촬영 OSD)
+- ✅ 서브마이컴 RTC (`docs/RE_RTC.md` §9): 카메라 시계 = 호스트 시간(`-rtc base=`), 메뉴에서 설정한 날짜는 응답(ack)되고 세션 동안 유지 → 일반 부팅은 바로 촬영 화면
+- ✅ 첫 부팅 설정(`rtc-lost=on`) 완주: 지역 설정(세계 지도) → 날짜/시간 → PlayMemories 안내 → 촬영 OSD
+- ⏳ 렌즈 (`docs/RE_LENS_EMOUNT.md` §8): `lens=none` = 펌웨어의 빈 마운트 대기 상태, `lens=ekit` = 렌즈 전원 응답 + 핸드셰이크 0–1단계 후 UART1 렌즈 프로토콜(미구현) 직전에서 정지
 - ✅ 셔터 대기 레벨 수정(카메라가 S1/S2를 누른 채로 부팅하고 있었음): 촬영 모드에서 MENU·휠 가운데 버튼 동작, 셔터·줌 레버 연결 (`docs/RE_ENGINE_TICK.md` §12)
 - ⏳ SD 있음: 이미지 DB 자동 복구 뷰(AUTOREPAIR)가 빈 화면, 메뉴의 포맷도 멈춤 — 둘 다 SD 명령을 내지 않음, 조사 중
 - ✅ 업데이터 모드: 에뮬레이션 NAND에 `/setting/updater/mode`가 있으면 1단계 로더가 부트로더처럼 업데이터 코어(nflasha1)로 부팅 → 루트 셸·UFP USB 대기까지 (`docs/RE_UPDATER_BOOT.md`)
-- ⬜ 센서/ISP(라이브뷰), 렌즈, 오디오
+- ⬜ 센서/ISP(라이브뷰), 렌즈 시리얼 프로토콜, 오디오
 
 ## 사용
 ```sh
 ./provision.sh            # 최초 1회: 빈 NAND 포맷 + NAND.BIN 기록 → state/a5000.nand
 ./run.sh -monitor stdio   # 실기 방식 부팅, QEMU 창 = 카메라 패널
+./run.sh -M rtc-lost=on   # 머신 옵션: rtc-lost=on = 시계 백업 소실(첫 부팅 지역/날짜/시간 설정), lens=none|ekit = 빈 마운트(기본)/킷 렌즈(전원+핸드셰이크만); 시계 = QEMU RTC(-rtc base=...)
 ```
 
 ### 키 배정 (QEMU 창)

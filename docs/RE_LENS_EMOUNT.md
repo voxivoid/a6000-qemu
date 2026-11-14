@@ -291,3 +291,39 @@ Both runs reach the shooting-screen OSD. With an empty mount the firmware takes 
    for PZ / non-PZ lenses [?]).
 7. The 1.5 Mbaud switch (`+0x3C`, "UART_HZ NG") and the lens firmware-update path (`FirmUpReq`, `CAIF CASND
    LUPDT_*`); neither is needed for a static lens.
+
+---
+
+## 8. Implementation status
+
+Stages A and B of §5 are implemented. Stage C (UART lens HLE) is not.
+
+* **Machine option `lens=none|ekit`** (default `none`).
+  * `cxd90014-gpio` property `lens-attached`: P0.9 idles **high** (empty mount) unless set.
+  * The GPIO model has new named outputs `"out"` (32 per port) that report **output-latch** changes. The latch is
+    used, not latch AND direction: av-cam drives P5.4 with its +0x00 direction bit clear (observed `dir5 = 0x4000`,
+    `out5 = 0x4010`), so the meaning of +0x00 is not settled [?].
+* **`lens=ekit`**:
+  * P0.9 = 0.
+  * Sub-micro HLE: CPU slot-B TX TLV 0x0A data[1] bit0 sets RX TLV 0x03 data[3] bit0, and clearing it clears the bit.
+  * Board: P0.5 := latch(P5.4) and P2.10 := latch(P2.11), each 1 ms after the latch changes. The echo is not
+    switched off when P2.10/P2.11 are muxed to UART1, because no pin-mux register is modelled.
+
+Observed (unmodified firmware, pristine NAND, no SD; BL Info at PA 0x83D707C8):
+
+| run | state | `+0x10` | `+0x38..3B` | screen |
+|---|---|---|---|---|
+| before (P0.9 = 0, no power ack) | 0xFF | – | `00 01 01 00` | shooting OSD. A shutter press shows nothing, not even "NO CARD" |
+| `lens=none` | **0** (idle) | 0 | `00 01 00 00` | shooting OSD. A shutter press shows "NO CARD", so the release path runs |
+| `lens=ekit` | **1** | **2** | `00 01 01 01` (power acknowledged) | shooting OSD with "NO CARD" and "±0.0" |
+
+* **No "attach a lens" caution was seen** in any run without SD, before or after this change. That includes the
+  pre-change first-boot flow (area → date/time → PlayMemories → shooting OSD). The README's earlier "lens warning"
+  step could not be reproduced at `cbe7bd3`. With SD the boot stays black at 45 s on the pre-change build as well,
+  so the SD + no-lens case (where the caution would be expected) was not checked.
+* **How far `lens=ekit` gets.** Trace on `436b7a98` (the §2.4 sequencer): it is **event-driven, not polled every
+  5 ms**. Event 1 → P5.4 := 1. The echoed P0.5 edge (GPIO IRQ 126) → event 2 → P2.11 := 1, and P2.10 is echoed.
+  After that the sequencer is **never called again**: no event 3, no `436b7a44` (UART1 open), no `4399387c`
+  (TX DMA), no "POWER SEQ TIME OUT". P5.4 stays 1, UART1 CR = 0x300 and DMACR = 0. The source of the next event is
+  not known: P2.10 has no pin interrupt in the model (only p0.0–16 and p1.0–6 do), or the event may come from a
+  timer. That needs RE before stage C.

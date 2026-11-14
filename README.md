@@ -35,6 +35,7 @@ The `qemu/` directory is **not published**. It is rebuilt from upstream QEMU `v1
 ```
 Developers working in `qemu/` (branch `sony-a5000`) run `tools/export-qemu.sh` after each QEMU commit to refresh `qemu-overlay/` and the patch.
 SD card: `-drive if=sd` / `A5K_SD`.
+Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M rtc-lost=on`): `rtc-lost=on` = clock backup lost (first-boot area/date/time setup); `lens=none|ekit` = empty E-mount (default) or kit lens (power + handshake only); camera clock = QEMU RTC (`-rtc base=...`).
 
 ### Keys (QEMU window)
 | Host key | Camera button | Emulated hardware path |
@@ -68,13 +69,15 @@ Keys pressed in the first ~20 s after the first-boot dialog appears are ignored 
 - ✅ **GPU P3D command-list execution** (decoder, rasteriser, textures, blending, `docs/RE_GPU_P3D_CMD.md`) + shader interpreter (`docs/RE_GPU_P3D_SHADER.md`) + RGBA4444 OSD → **the stock UI renders in the QEMU window**
 - ✅ SD card: sub-micro slot switch model → stock media stack initialises the card and reads FAT
 - ✅ Camera buttons (`docs/RE_ENGINE_TICK.md` §11): wheel/centre = ADC ladder ch 0x0D, DELETE = ch 0x0C, MOVIE = GPIO P10.10, MENU/PLAY = sub-micro slot A byte 28
-- ✅ First-boot setup completes: area (world map) → date/time → PlayMemories notice → shooting mode (no SD: lens warning → shooting-screen OSD)
+- ✅ Sub-micro RTC (`docs/RE_RTC.md` §9): camera clock = host time (`-rtc base=`), a date set in the menu is acknowledged and kept for the session → a normal boot goes straight to the shooting screen
+- ✅ First-boot setup (`rtc-lost=on`) completes: area (world map) → date/time → PlayMemories notice → shooting-screen OSD
+- ⏳ Lens (`docs/RE_LENS_EMOUNT.md` §8): `lens=none` = the firmware's empty-mount idle state; `lens=ekit` = lens power acknowledged + handshake steps 0–1, then stops before the UART1 lens protocol (not modelled)
 - ✅ Shutter idle level fixed (the camera had booted with S1/S2 held): MENU and the wheel centre button now work in shooting mode; shutter and zoom lever wired (`docs/RE_ENGINE_TICK.md` §12)
 - ⏳ With SD: the image-database repair view (AUTOREPAIR) stays blank, and Format from the menu hangs; neither issues an SD command — under investigation
 - ✅ GPU: all 779 draws from first boot to the shooting screen render (Rigel compositing included); depth/stencil, mipmaps, border wrap added and tested with synthetic lists (`tools/test_dmp_p3d.py`, `tools/test_dmp_shader.c`)
 - ⏳ GPU: geometry programs (real point/line drawing), 14 GLES1-package shader opcodes, ETC1, depth/mip memory layouts unconfirmed (`docs/RE_GPU_P3D_CMD.md` §7)
 - ✅ Updater mode: with `/setting/updater/mode` in the emulated NAND the stage-1 loader boots the updater core (nflasha1) like the bootloader; it reaches a root shell and the UFP USB wait (`docs/RE_UPDATER_BOOT.md`)
-- ⬜ Sensor/ISP (live view), lens, audio, RTC
+- ⬜ Sensor/ISP (live view), lens serial protocol, audio
 
 ## Firmware and legal notice
 - This repository contains **no Sony firmware, binaries or device dumps.** To run it you need a NAND dump extracted from **a camera you own** and files from Sony's publicly distributed official updater (see `data/README.md`). Do not upload those files to this repository or its issues.

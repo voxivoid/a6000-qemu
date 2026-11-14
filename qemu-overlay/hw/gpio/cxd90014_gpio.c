@@ -10,12 +10,22 @@
  * by board-level models (keys, sub-micro handshake).  Reset levels: P5.2,
  * P10.10 and the shutter lines P0.1/P0.11/P0.13/P1.5 high (active-low keys
  * released).
+ * P0.9 is the E-mount lens-detect line (active low, av-cam 439939C0); it
+ * idles high (empty mount) unless the "lens-attached" property is set
+ * (docs/RE_LENS_EMOUNT.md section 5.1).
+ * Named GPIO outputs "out" (32 per port, port-major) follow the output
+ * latch of each pin, so board models can react to firmware-driven lines
+ * (lens handshake).  The latch is used, not latch AND direction: av-cam
+ * drives the lens handshake P5.4 with the +0x00 direction bit clear
+ * (observed dir5 = 0x4000, out5 = 0x4010), so the direction semantics of
+ * +0x00 are not settled [?].
  * Pin interrupts (gpiopin_to_irq): p0.0..15 -> GIC 121+pin, p0.16 -> 144,
  * p1.0..6 -> 137+pin; pulsed on every edge of the pin.
  */
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"
 #include "hw/irq.h"
+#include "hw/qdev-properties.h"
 #include "qemu/log.h"
 #include "qemu/timer.h"
 #include "qemu/module.h"
@@ -34,7 +44,9 @@ struct GpioState {
     uint32_t dir[NPORT], ien[NPORT], mode[NPORT], out[NPORT], ext[NPORT];
     uint32_t misc[NPORT][0x100 / 4];
     qemu_irq irq[NIRQ];
+    qemu_irq out_line[NPORT * 32];
     QEMUTimer *drop[NIRQ];
+    bool lens_attached;
 };
 
 static void drop_cb(void *opaque);
@@ -82,6 +94,18 @@ static void edges(GpioState *s, int p, uint32_t before)
     }
 }
 
+/* report output latch changes on the "out" lines */
+static void drive_edges(GpioState *s, int p, uint32_t before)
+{
+    uint32_t now = s->out[p];
+    uint32_t ch = before ^ now;
+    for (int b = 0; ch; b++, ch >>= 1) {
+        if (ch & 1) {
+            qemu_set_irq(s->out_line[p * 32 + b], (now >> b) & 1);
+        }
+    }
+}
+
 static uint64_t gpio_read(void *opaque, hwaddr off, unsigned size)
 {
     GpioState *s = opaque;
@@ -105,6 +129,7 @@ static void gpio_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
     hwaddr o = off % 0x100;
     uint32_t *t = triple(s, p, o);
     uint32_t before = pin_in(s, p);
+    uint32_t drv = s->out[p];
     if (t) {
         switch (o & 0xf) {
         case 0x0: *t = v; break;
@@ -113,6 +138,7 @@ static void gpio_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
         default: s->misc[p][o / 4] = v; return;
         }
         edges(s, p, before);
+        drive_edges(s, p, drv);
         return;
     }
     s->misc[p][o / 4] = v;
@@ -157,6 +183,14 @@ static void gpio_reset(DeviceState *dev)
      */
     s->ext[0] |= (1u << 1) | (1u << 11) | (1u << 13);
     s->ext[1] |= 1u << 5;
+    /*
+     * E-mount lens detect P0.9 (Backup F9050C/0D), active low: av-cam
+     * 439939C0 returns !level.  Empty mount = high [hypothesis: board
+     * pull-up; the code only proves that low means "attached"].
+     */
+    if (!s->lens_attached) {
+        s->ext[0] |= 1u << 9;
+    }
 }
 
 static void gpio_init(Object *obj)
@@ -171,11 +205,17 @@ static void gpio_init(Object *obj)
         s->drop[i] = timer_new_ns(QEMU_CLOCK_VIRTUAL, drop_cb, &drop_args[i]);
     }
     qdev_init_gpio_in(DEVICE(obj), gpio_set_ext, NPORT * 32);
+    qdev_init_gpio_out_named(DEVICE(obj), s->out_line, "out", NPORT * 32);
 }
+
+static const Property gpio_props[] = {
+    DEFINE_PROP_BOOL("lens-attached", GpioState, lens_attached, false),
+};
 
 static void gpio_class_init(ObjectClass *klass, const void *data)
 {
     device_class_set_legacy_reset(DEVICE_CLASS(klass), gpio_reset);
+    device_class_set_props(DEVICE_CLASS(klass), gpio_props);
 }
 
 static const TypeInfo gpio_info = {

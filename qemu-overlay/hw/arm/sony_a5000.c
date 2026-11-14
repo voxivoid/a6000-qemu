@@ -26,6 +26,7 @@
 #include "qemu/timer.h"
 #include "qemu/error-report.h"
 #include "qemu/cutils.h"
+#include "qemu/log.h"
 #include "qapi/error.h"
 #include "cpu.h"
 #include "hw/sysbus.h"
@@ -47,6 +48,7 @@
 #include "system/system.h"
 #include "system/address-spaces.h"
 #include "system/reset.h"
+#include "system/rtc.h"
 #include "chardev/char.h"
 #include "qom/object.h"
 
@@ -58,6 +60,7 @@
  * hand-off (0x80000000+0x20000) and the wbimem page at 0x80021000 */
 #define A5K_ATAG_ADDR       0x80024000ULL
 #define A5K_STUB_ADDR       0x80025000ULL
+#define A5K_HANDOFF_RTC_LOST 0x800210E4ULL  /* docs/RE_RTC.md section 2 */
 #define A5K_MACH_ID         0xDA8
 #define A5K_PERIPH_BASE     0xF8000000ULL
 #define A5K_L2C_BASE        0xF8002000ULL
@@ -123,6 +126,18 @@ struct A5KMachineState {
     bool key_s2;                    /* shutter fully pressed */
     DeviceState *adc[2];
     char *submicro_file;
+    /* sub-micro RTC (docs/RE_RTC.md section 7) */
+    time_t rtc_offset;              /* seconds added to qemu_get_timedate */
+    uint8_t rtc_set[6];             /* last applied TX clock write */
+    bool rtc_set_valid;
+    int rtc_ack;                    /* replies that still echo rtc_set */
+    bool rtc_lost;
+    /* E-mount lens (docs/RE_LENS_EMOUNT.md section 5) */
+    char *lens;
+    bool lens_ekit;
+    bool lens_pwr_req;              /* slot-B TX TLV 0x0A data[1] bit0 */
+    int lens_hs[2];                 /* driven P5.4 / P2.11 */
+    QEMUTimer *lens_hs_t;
     char *cmdline;
     uint8_t *kernel, *initrd;
     size_t kernel_len, initrd_len;
@@ -402,18 +417,169 @@ static void a5k_submicro_front_key(A5KMachineState *s, int bit, bool down)
     a5k_submicro_crc(s->submicro_frames);
 }
 
+/*
+ * Battery-backed clock of the sub-micro (docs/RE_RTC.md sections 1.1, 7).
+ * RX slot A bytes 6..12 = {status 2 = valid, yy, mon, day, hour, min, sec},
+ * binary, UTC, year 2000 + yy (av-cam 43AC65FA).  Time source: the QEMU RTC
+ * (-rtc base=...) plus a session offset set by the CPU's clock writes.
+ */
+static void a5k_rtc_now(A5KMachineState *s, uint8_t *b)
+{
+    struct tm tm;
+
+    qemu_get_timedate(&tm, s->rtc_offset);
+    /*
+     * udate_get_localtime clamps to [Backup default year (2014), 2037] and
+     * rewrites the RTC when outside (RE_RTC.md section 2 step 5): keep the
+     * reported year inside that range.
+     */
+    int year = MIN(MAX(tm.tm_year + 1900, 2014), 2037);
+    b[0] = year - 2000;
+    b[1] = tm.tm_mon + 1;
+    b[2] = tm.tm_mday;
+    b[3] = tm.tm_hour;
+    b[4] = tm.tm_min;
+    b[5] = tm.tm_sec;
+}
+
+/*
+ * CPU -> micro "set clock": TX slot A (type 0x21) bytes 4..10 =
+ * {0x02, yy, mon, day, hour, min, sec} UTC (av-cam 43AC663E).  The TX
+ * builder 43914E28 keeps the request pending until rx[6] has bit 1 set and
+ * rx[7..12] echo the written yy..ss, so the written bytes are reported
+ * verbatim until the request is dropped, then the clock ticks on from them.
+ * Observed: after the ack the CPU sends TX byte 4 = 0 again, so one request
+ * is applied once (on its first packet) and the next write re-arms.
+ */
+#define A5K_RTC_ACK_REPLIES 20      /* hypothesis: cap of ~1 s of ticks */
+
+static void a5k_rtc_tx(A5KMachineState *s, const uint8_t *tx)
+{
+    const uint8_t *w = tx + 5;
+    struct tm want = { 0 }, now;
+
+    if (tx[0] != 0x21) {
+        return;
+    }
+    if (tx[4] != 2) {
+        s->rtc_ack = 0;             /* request acknowledged and dropped */
+        s->rtc_set_valid = false;
+        return;
+    }
+    if (s->rtc_set_valid && !memcmp(s->rtc_set, w, 6)) {
+        return;
+    }
+    if (w[1] < 1 || w[1] > 12 || w[2] < 1 || w[2] > 31 || w[3] > 23 ||
+        w[4] > 59 || w[5] > 59) {
+        qemu_log_mask(LOG_GUEST_ERROR, "sony-a5000: bad RTC write "
+                      "%02x %02x %02x %02x %02x %02x\n",
+                      w[0], w[1], w[2], w[3], w[4], w[5]);
+        return;
+    }
+    want.tm_year = 100 + w[0];
+    want.tm_mon = w[1] - 1;
+    want.tm_mday = w[2];
+    want.tm_hour = w[3];
+    want.tm_min = w[4];
+    want.tm_sec = w[5];
+    qemu_get_timedate(&now, 0);
+    s->rtc_offset = mktimegm(&want) - mktimegm(&now);
+    memcpy(s->rtc_set, w, 6);
+    s->rtc_set_valid = true;
+    s->rtc_ack = A5K_RTC_ACK_REPLIES;
+    info_report("sony-a5000: sub-micro RTC set to 20%02u-%02u-%02u "
+                "%02u:%02u:%02u UTC", w[0], w[1], w[2], w[3], w[4], w[5]);
+}
+
+static void a5k_submicro_slot_a(A5KMachineState *s, uint8_t *out)
+{
+    memcpy(out, s->submicro_frames, 128);
+    out[6] = 2;                     /* clock valid (bit 1 = write ack) */
+    if (s->rtc_ack > 0) {
+        s->rtc_ack--;
+        memcpy(out + 7, s->rtc_set, 6);
+    } else {
+        a5k_rtc_now(s, out + 7);
+    }
+    a5k_submicro_crc(out);
+}
+
+/* find TLV @id in a slot-B frame (RE_SUBMICRO_LINK.md section 3.1) */
+static uint8_t *a5k_submicro_tlv(uint8_t *f, int id, int minlen)
+{
+    int end = MIN(4 + f[2], 126);
+
+    for (int o = 4; o + 4 <= end; o += 4 + f[o + 1]) {
+        if (f[o] == id) {
+            return f[o + 1] >= minlen && o + 4 + minlen <= end ?
+                   f + o + 4 : NULL;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Lens power is switched by the micro (Backup 0x01250007 = 1): the CPU asks
+ * in its slot-B TLV 0x0A data[1] bit0 (av-cam 436B760C), the micro answers
+ * in TLV 0x03 data[3] bit0 (consumer 436B75CC; RE_LENS_EMOUNT.md 2.3).  Only
+ * acknowledged with a lens model attached (lens=ekit).
+ */
+static void a5k_submicro_slot_b(A5KMachineState *s, uint8_t *tx, uint8_t *out)
+{
+    uint8_t *t;
+
+    if (tx[0] == 0x31 && (t = a5k_submicro_tlv(tx, 0x0a, 2))) {
+        s->lens_pwr_req = t[1] & 1;
+    }
+    memcpy(out, s->submicro_frames + 128, 128);
+    if (s->lens_ekit && s->lens_pwr_req &&
+        (t = a5k_submicro_tlv(out, 0x03, 4))) {
+        t[3] |= 1;
+        a5k_submicro_crc(out);
+    }
+}
+
 static void a5k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
 {
     A5KMachineState *s = opaque;
+    uint8_t out[256];
+
     if (len < 128 || !s->submicro_frames) {
         memset(buf, 0, len);            /* 8-byte header phase: nothing */
         return;
     }
-    const uint8_t *f = s->submicro_frames + (buf[0] == 0x31 ? 128 : 0);
-    memcpy(buf, f, 128);
-    if (len > 128) {
-        memcpy(buf + 128, s->submicro_frames + 128, MIN(len - 128, 128));
+    /* buf holds the CPU's TX packet(s) until it is overwritten below */
+    if (buf[0] == 0x31) {
+        a5k_submicro_slot_b(s, buf, out);
+    } else {
+        a5k_rtc_tx(s, buf);
+        a5k_submicro_slot_a(s, out);
     }
+    if (len > 128) {
+        /* 256-byte exchange: slot A followed by slot B */
+        a5k_submicro_slot_b(s, buf + 128, out + 128);
+    }
+    memcpy(buf, out, MIN(len, 256));
+}
+
+/*
+ * Lens handshake (RE_LENS_EMOUNT.md 2.4 / 5.2): the lens echoes the body's
+ * P5.4 on P0.5 and P2.11 on P2.10.  Echo delay 1 ms [hypothesis; the body
+ * polls every 5 ms].  Once 43993910 muxes P2.10/P2.11 to UART1 the latch
+ * no longer moves, so the echo simply stops changing [?].
+ */
+static void a5k_lens_hs_cb(void *opaque)
+{
+    A5KMachineState *s = opaque;
+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 5), s->lens_hs[0]);
+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 2 * 32 + 10), s->lens_hs[1]);
+}
+
+static void a5k_lens_hs_out(void *opaque, int n, int level)
+{
+    A5KMachineState *s = opaque;
+    s->lens_hs[n] = level;
+    timer_mod(s->lens_hs_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SCALE_MS);
 }
 
 static void a5k_submicro_tick(void *opaque)
@@ -662,6 +828,12 @@ static void a5k_boot_reset(void *opaque)
     }
     a5k_write_kemco(s->cmdline);
 out:
+    s->lens_pwr_req = false;
+    s->lens_hs[0] = s->lens_hs[1] = 0;
+    s->rtc_ack = 0;
+    if (s->lens_hs_t) {
+        timer_del(s->lens_hs_t);
+    }
     if (s->submicro_t && s->submicro) {
         s->submicro_step = 0;
         timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
@@ -824,6 +996,15 @@ static void a5k_init(MachineState *ms)
     /* GPIO ports p0..p17; pin IRQs p0.0-15 -> 121+, p0.16 -> 144,
      * p1.0-6 -> 137+ */
     dev = qdev_new("cxd90014-gpio");
+    if (!s->lens || !strcmp(s->lens, "none")) {
+        s->lens_ekit = false;
+    } else if (!strcmp(s->lens, "ekit")) {
+        s->lens_ekit = true;
+    } else {
+        error_report("sony-a5000: lens=%s: expected none or ekit", s->lens);
+        exit(1);
+    }
+    qdev_prop_set_bit(dev, "lens-attached", s->lens_ekit);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2910000);
     for (int pn = 0; pn <= 16; pn++) {
@@ -835,6 +1016,13 @@ static void a5k_init(MachineState *ms)
     }
     s->gpio = dev;
     s->submicro_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_submicro_tick, s);
+    if (s->lens_ekit) {
+        /* lens handshake echo: P5.4 -> P0.5, P2.11 -> P2.10 */
+        qemu_irq *hs = qemu_allocate_irqs(a5k_lens_hs_out, s, 2);
+        qdev_connect_gpio_out_named(dev, "out", 5 * 32 + 4, hs[0]);
+        qdev_connect_gpio_out_named(dev, "out", 2 * 32 + 11, hs[1]);
+        s->lens_hs_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_lens_hs_cb, s);
+    }
 
     /* ADC units 0/1 (resistor-ladder keys, zoom lever), GIC 215/216 */
     for (int u = 0; u < 2; u++) {
@@ -1021,6 +1209,27 @@ static void a5k_init(MachineState *ms)
         }
     }
 
+    /*
+     * Hand-off word 0x800210E4 (read by udate_init_clock through Backup
+     * 0x00FA00A5; docs/RE_RTC.md sections 2, 5, 7.3).  The factory page in
+     * data/handoff_80021000.bin has 1, which makes udate mark the clock
+     * UNSET and libObj start the first-boot area/date/time setup on every
+     * boot.  A normal power-on with a retained clock presents 0
+     * [hypothesis: the bootloader derives it from the micro's "RTC lost"
+     * status]; rtc-lost=on keeps 1 (backup battery lost).  The preloaded
+     * ROM blob is patched, so every reset presents the same value.
+     */
+    {
+        uint32_t *w = rom_ptr(A5K_HANDOFF_RTC_LOST, 4);
+        if (w) {
+            *w = cpu_to_le32(s->rtc_lost ? 1 : 0);
+        } else if (s->rtc_lost) {
+            error_report("sony-a5000: rtc-lost=on needs the hand-off page "
+                         "(preload=...@0x80021000)");
+            exit(1);
+        }
+    }
+
     /* ---- load firmware images ----
      * Kernel, initrd and the kemco command line are (re)written on every
      * reset by a5k_boot_reset() (none of them lies in a ROM blob):
@@ -1069,6 +1278,28 @@ static void a5k_init(MachineState *ms)
     qemu_add_machine_init_done_notifier(&s->init_done);
     a5k_write_stub();
     a5k_write_smp_stub();
+}
+
+static bool a5k_get_rtclost(Object *o, Error **errp)
+{
+    return A5K_MACHINE(o)->rtc_lost;
+}
+
+static void a5k_set_rtclost(Object *o, bool v, Error **errp)
+{
+    A5K_MACHINE(o)->rtc_lost = v;
+}
+
+static char *a5k_get_lens(Object *o, Error **errp)
+{
+    A5KMachineState *s = A5K_MACHINE(o);
+    return g_strdup(s->lens ? s->lens : "none");
+}
+
+static void a5k_set_lens(Object *o, const char *v, Error **errp)
+{
+    g_free(A5K_MACHINE(o)->lens);
+    A5K_MACHINE(o)->lens = g_strdup(v);
 }
 
 static bool a5k_get_dbgcon(Object *o, Error **errp)
@@ -1239,6 +1470,16 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
                                    a5k_set_dbgcon);
     object_class_property_set_description(oc, "debug-console",
         "Serial console on UART0 instead of the stock console=ttynull");
+
+    object_class_property_add_bool(oc, "rtc-lost", a5k_get_rtclost,
+                                   a5k_set_rtclost);
+    object_class_property_set_description(oc, "rtc-lost",
+        "Clock backup lost: hand-off word 0x800210E4 = 1 (first-boot "
+        "area/date/time setup)");
+    object_class_property_add_str(oc, "lens", a5k_get_lens, a5k_set_lens);
+    object_class_property_set_description(oc, "lens",
+        "E-mount lens: none (empty mount, default) or ekit (detect low, "
+        "power ack + handshake echo; no lens serial protocol yet)");
 
     mc->desc = "Sony ILCE-5000 (CXD90014, Cortex-A5 MPCore)";
     mc->init = a5k_init;

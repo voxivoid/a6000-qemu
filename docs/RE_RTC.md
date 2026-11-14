@@ -177,7 +177,7 @@ widget behind the `cmnViewSettingNodeRootClockDateTimeSetup` list row and trace 
 
 ---
 
-## 7. Minimal emulation plan (not implemented)
+## 7. Minimal emulation plan (implemented, see §9)
 
 **Where:** the sub-micro HLE in `hw/arm/sony_a5000.c` (`a5k_submicro_xfer`, which already owns the slot-A replay
 buffer and `a5k_submicro_crc`). Do not add a new MMIO device, because there is no RTC hardware on the CPU side.
@@ -216,3 +216,36 @@ buffer and `a5k_submicro_crc`). Do not add a new MMIO device, because there is n
   the udate clamp/re-init path) [?].
 * Field-5 mode handling on resume (`udate_snd_resume_notify`, task-48 mode 2/3) was not traced.
 * The blank Date/Time list row (§6) belongs to the UI layer.
+
+---
+
+## 9. Implementation status
+
+Implemented in `hw/arm/sony_a5000.c` (sub-micro HLE), following §7.
+
+* **RX clock.** Every slot-A reply is built from the snapshot frame with `rx[6] = 2` and `rx[7..12]` =
+  `qemu_get_timedate(&tm, rtc_offset)` (UTC with the default `-rtc base=utc`), year clamped to 2014..2037, CRC
+  recomputed. `-rtc base=<date>` moves the camera clock.
+* **Clock write.** TX slot A `buf[0] == 0x21`, `buf[4] == 2`: bytes 5..10 are applied once per request
+  (`rtc_offset` = written time − current QEMU RTC time) and echoed verbatim in the next replies.
+  **Observed:** after the ack the CPU sends TX byte 4 = 0 again (answers the §8 question). The board stops echoing
+  then and re-arms, so a later write of the same value is applied again. The echo is capped at 20 replies
+  (hypothesis, about 1 s).
+* **Hand-off word.** The preloaded hand-off ROM blob is patched after loading: `0x800210E4 = 0` by default,
+  `= 1` with the machine option **`rtc-lost=on`** (clock backup lost → first-boot area/date/time setup).
+  `data/handoff_80021000.bin` is unchanged.
+* **Session only.** The offset lives in the QEMU process. It is not saved across QEMU runs. To start at a fixed
+  time, use `-rtc base=…`.
+
+Verified (unmodified firmware, pristine NAND, no SD):
+
+| run | result |
+|---|---|
+| default | boots straight to the shooting screen. Setup → Date/Time editor shows the host local time (TZ +9 from Backup). Setting month 11 → 12 logs `sub-micro RTC set to 2026-12-14 11:40:00 UTC`; RX slot A then ticks from that time and the editor shows the new date when reopened |
+| `rtc-lost=on` | first-boot "Set area/date/time" dialog → PlayMemories notice → shooting screen; MENU renders |
+
+Still open:
+* The "Date/Time" list row in Setup → Date/Time setup is **blank** when the clock is valid (it read "Not set"
+  before). This is the §6 UI-layer issue and is not caused by the clock path.
+* Guest `system_reset` from HMP does not get past stage 1 in this build. That is unrelated to the clock, so
+  persistence across a guest reset was not checked.
