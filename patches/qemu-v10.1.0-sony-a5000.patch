@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..5900b43
+index 0000000..5aa9e14
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,905 @@
+@@ -0,0 +1,954 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -234,41 +234,76 @@ index 0000000..5900b43
 +    g_free(buf);
 +}
 +
++/*
++ * GICD_ITARGETSR8..63 (SPIs 32..255) as the Sony bootloader leaves them:
++ * read from the real camera (re/device/hwdump/GICD.BIN, offset 0x820, fw
++ * 1.10, running system).  Sony's gic_dist_init never programs targets and
++ * irq_select_affinity (0x4004f0d8) derives each IRQ's affinity from this
++ * byte, so it decides which CPU gets which interrupt -- e.g. the per-CPU
++ * tick timers 153/155/156/157 -> CPU0/1/2/3 (without that, CPUs 1-3 get no
++ * tick, RCU callbacks never run there and rcu_barrier() hangs umount).
++ * Bytes that are 0 (IRQ unused on the real camera) become CPU0 here so a
++ * source that is enabled anyway is not lost [deviation, harmless].
++ */
++static const uint32_t a5k_gicd_itargetsr[56] = {
++    0x04010102, 0x04040404, 0x02020202, 0x02020202,
++    0x02020202, 0x02020202, 0x02020202, 0x02020202,
++    0x04020202, 0x04040404, 0x04040404, 0x02020201,
++    0x04020200, 0x01040404, 0x02020000, 0x00000400,
++    0x02020000, 0x02020200, 0x02020202, 0x04000000,
++    0x00000400, 0x00000000, 0x02040100, 0x01040101,
++    0x01010101, 0x04040104, 0x01040004, 0x01040101,
++    0x01010004, 0x04020101, 0x02010101, 0x02010804,
++    0x04010804, 0x04040404, 0x01010104, 0x02040402,
++    0x02040402, 0x02020204, 0x02020202, 0x01010102,
++    0x00010101, 0x01010101, 0x01020100, 0x01010101,
++    0x02020201, 0x01020202, 0x01010002, 0x00010100,
++    0x01000101, 0x01010101, 0x01000101, 0x01010101,
++    0x01010101, 0x01010101, 0x00000000, 0x01010000,
++};
++
 +static void a5k_write_stub(void)
 +{
 +    /*
 +     * What the Sony bootloader does before entering the kernel:
-+     *  - route every SPI to CPU0 (GICD_ITARGETSR8..63 = 0x01).  Sony's
-+     *    gic_dist_init never programs targets/priorities/trigger modes, it
-+     *    inherits them;
++     *  - program the SPI targets (a5k_gicd_itargetsr, real-camera values);
 +     *  - make the ack-less frame sources edge-triggered: SYSV 98/99 and the
 +     *    VPH vsyncs 101/102 (their av-cam handlers never touch the device,
 +     *    as level interrupts they would re-enter endlessly) [hypothesis];
 +     *  - r0 = 0, r1 = machine id, r2 = tags, jump to the kernel.
 +     */
-+    uint32_t stub[] = {
-+        0xe59f302c,             /* ldr r3, =0xF8001820        */
-+        0xe59f402c,             /* ldr r4, =0xF8001900        */
-+        0xe59f502c,             /* ldr r5, =0x01010101        */
-+        0xe4835004,             /* 1: str r5, [r3], #4        */
++    uint32_t stub[21 + 56] = {
++        0xe59f3030,             /* ldr r3, =0xF8001820        */
++        0xe59f4030,             /* ldr r4, =0xF8001900        */
++        0xe28f6044,             /* add r6, pc, #0x44 (table)  */
++        0xe4965004,             /* 1: ldr r5, [r6], #4        */
++        0xe4835004,             /* str r5, [r3], #4           */
 +        0xe1530004,             /* cmp r3, r4                 */
-+        0x3afffffc,             /* blo 1b                     */
-+        0xe59f3020,             /* ldr r3, =0xF8001C18 (ICFGR6) */
-+        0xe59f5020,             /* ldr r5, =0x28A0            */
++        0x3afffffb,             /* blo 1b                     */
++        0xe59f301c,             /* ldr r3, =0xF8001C18 (ICFGR6) */
++        0xe59f501c,             /* ldr r5, =0x28A0            */
 +        0xe5835000,             /* str r5, [r3]               */
 +        0xe3a00000,             /* mov r0, #0                 */
-+        0xe59f1018,             /* ldr r1, =A5K_MACH_ID       */
-+        0xe59f2018,             /* ldr r2, =A5K_ATAG_ADDR     */
-+        0xe59ff018,             /* ldr pc, =A5K_KERNEL_ADDR   */
++        0xe59f1014,             /* ldr r1, =A5K_MACH_ID       */
++        0xe59f2014,             /* ldr r2, =A5K_ATAG_ADDR     */
++        0xe59ff014,             /* ldr pc, =A5K_KERNEL_ADDR   */
 +        0xf8001820,
 +        0xf8001900,
-+        0x01010101,
 +        0xf8001c18,
 +        0x000028a0,             /* IRQ 98, 99, 101, 102 edge-triggered */
 +        A5K_MACH_ID,
 +        (uint32_t)A5K_ATAG_ADDR,
 +        (uint32_t)A5K_KERNEL_ADDR,
 +    };
++    for (int i = 0; i < 56; i++) {
++        uint32_t w = a5k_gicd_itargetsr[i];
++        for (int b = 0; b < 4; b++) {
++            if (!((w >> (8 * b)) & 0xff)) {
++                w |= 1u << (8 * b);
++            }
++        }
++        stub[21 + i] = w;
++    }
 +    for (size_t i = 0; i < ARRAY_SIZE(stub); i++) {
 +        stub[i] = cpu_to_le32(stub[i]);
 +    }
@@ -280,7 +315,7 @@ index 0000000..5900b43
 + * address the boot CPU stored at 0xC0005010 + 4*(cpu-1)
 + * (cxd90014_smp_init writes cxd90014_secondary_entry there and issues SEV).
 + */
-+#define A5K_SMP_STUB_ADDR   0x80025100ULL
++#define A5K_SMP_STUB_ADDR   0x80025200ULL
 +static void a5k_write_smp_stub(void)
 +{
 +    uint32_t stub[] = {
@@ -632,6 +667,13 @@ index 0000000..5900b43
 +    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, pic[GIC_ID(101)]);
 +    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 2, pic[GIC_ID(102)]);
 +
++    /* timing-event selector 0xF3C30000, IRQ 83 (8 ch) / 84 (10 src) */
++    dev = qdev_new("cxd90014-evsel");
++    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3C30000);
++    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(83)]);
++    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, pic[GIC_ID(84)]);
++
 +    /* Debug view of guest frame buffers in a QEMU window (no MMIO; the
 +     * firmware cannot see it).  -M ...,fb=addr,w,h,stride,fmt[;...] or at
 +     * run time: qom-set /machine/fbview fb "..." */
@@ -654,6 +696,13 @@ index 0000000..5900b43
 +
 +    /* DMP SMAPH-S30 GPU (grm_gles.ko + libObj rm_*), GIC 76 */
 +    sysbus_create_simple("dmp-smaph-s30", 0xF1000000, pic[GIC_ID(76)]);
++
++    /* BOSS LDEC LZ77 decoder (memory mode, /dev/ldec), GIC 171 */
++    dev = qdev_new("cxd90014-ldec");
++    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2903000);
++    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 1, 0xF0020000);
++    sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(171)]);
 +
 +    /* BOSS mem-to-mem DMA: two units of four channels, GIC 189..196 */
 +    for (int u = 0; u < 2; u++) {
@@ -3183,6 +3232,482 @@ index 0000000..3402a9e
 +    type_register_static(&adc_info);
 +}
 +type_init(adc_register)
+diff --git a/hw/misc/cxd90014_evsel.c b/hw/misc/cxd90014_evsel.c
+new file mode 100644
+index 0000000..d3c7166
+--- /dev/null
++++ b/hw/misc/cxd90014_evsel.c
+@@ -0,0 +1,198 @@
++/*
++ * CXD90014 camera timing-event block at PA 0xF3C30000 (a5000).
++ *
++ * Programming model from av-cam.bin 1.10 (docs/RE_ENGINE_TICK.md):
++ *   +0xE0 free-running counter (rd 436ac5f4).  Clock: +0xE8 = 0x17 is
++ *         written at init; taken as 24 MHz / (0x17 + 1) = 1 MHz [?] -- this
++ *         matches the engine's own frame constant 0x8257 = 33367 us
++ *         (29.97 fps) and its 1/8-frame step 0x104A.
++ *   +0xE4 written 0 [?], +0xEC bit0 run.
++ *   group A, 8 event channels, IRQ 83 (handler 436ac410):
++ *     +0x04 status, +0x08 write-1-to-clear
++ *     +0x0C bit k cleared on register [? meaning], +0x10 bit k enable
++ *     +0x20 + 4k  counter captured at the event (callback argument, 436ac7d4)
++ *     +0x40 + 4k  source id of channel k (436ac600)
++ *     +0x60 + 4n  per-source mode (always 1 so far, 436ac644)
++ *   group B, 10 counter comparators, IRQ 84 (handler 436ac440):
++ *     +0xF4 status, +0xF8 enable (0x3ff), +0xFC write-1-to-clear, +0x100 [?]
++ *     +0x110 + 8k arm (1) / disarm (0), +0x114 + 8k compare value
++ *     (436ac81c; the handler disarms before running the callback, so a
++ *     comparator fires once per arming)
++ *
++ * Event sources: the engine attaches its frame routine 4376c1e4 to source
++ * 29 and 4376f181 / 4376c028 / 4376a07c to 28 / 30 / 23.  The ids are camera
++ * timing signals; which signal each one is, is not known [?].  With no
++ * sensor modelled, all enabled channels fire together once per engine frame
++ * (33367 us).  The 1/8-frame "int_HS" steps are the comparators above.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/irq.h"
++#include "qemu/timer.h"
++#include "qemu/module.h"
++#include "qom/object.h"
++
++#define TYPE_CXD_EVSEL "cxd90014-evsel"
++OBJECT_DECLARE_SIMPLE_TYPE(EvselState, CXD_EVSEL)
++
++#define EV_SIZE   0x1000
++#define NCMP      10
++#define FRAME_US  33367                 /* engine constant 0x8257 */
++
++typedef struct EvselState EvselState;
++typedef struct Cmp {
++    EvselState *s;
++    int k;
++    QEMUTimer *t;
++} Cmp;
++
++struct EvselState {
++    SysBusDevice parent_obj;
++    MemoryRegion mr;
++    uint32_t r[EV_SIZE / 4];
++    uint32_t sta, stb;
++    QEMUTimer *vd;
++    Cmp cmp[NCMP];
++    qemu_irq irq_a, irq_b;
++};
++
++#define R(o) (s->r[(o) / 4])
++
++static uint32_t ev_counter(void)
++{
++    return qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / 1000;   /* 1 MHz [?] */
++}
++
++static void ev_update(EvselState *s)
++{
++    qemu_set_irq(s->irq_a, (s->sta & R(0x10)) != 0);
++    qemu_set_irq(s->irq_b, (s->stb & R(0xF8)) != 0);
++}
++
++static void ev_vd(void *opaque)
++{
++    EvselState *s = opaque;
++    if (R(0xEC) & 1) {
++        uint32_t en = R(0x10) & 0xff, c = ev_counter();
++        for (int k = 0; k < 8; k++) {
++            if (en & (1u << k)) {
++                R(0x20 + 4 * k) = c;
++            }
++        }
++        s->sta |= en;
++        ev_update(s);
++    }
++    timer_mod(s->vd, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++              FRAME_US * SCALE_US);
++}
++
++static void ev_cmp_fire(void *opaque)
++{
++    Cmp *c = opaque;
++    EvselState *s = c->s;
++    s->stb |= 1u << c->k;
++    ev_update(s);
++}
++
++static void ev_cmp_arm(EvselState *s, int k)
++{
++    Cmp *c = &s->cmp[k];
++    if (!(R(0x110 + 8 * k) & 1)) {
++        timer_del(c->t);
++        return;
++    }
++    /* signed distance on the wrapping counter; a target already passed
++     * fires at once */
++    int32_t d = (int32_t)(R(0x114 + 8 * k) - ev_counter());
++    timer_mod(c->t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++              (d > 0 ? (int64_t)d * SCALE_US : 0));
++}
++
++static uint64_t ev_read(void *opaque, hwaddr off, unsigned size)
++{
++    EvselState *s = opaque;
++    switch (off) {
++    case 0x04:
++        return s->sta;
++    case 0xE0:
++        return ev_counter();
++    case 0xF4:
++        return s->stb;
++    }
++    return R(off);
++}
++
++static void ev_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    EvselState *s = opaque;
++    switch (off) {
++    case 0x08:
++        s->sta &= ~v;
++        break;
++    case 0xFC:
++        s->stb &= ~v;
++        break;
++    default:
++        R(off) = v;
++        if (off >= 0x110 && off < 0x110 + 8 * NCMP) {
++            ev_cmp_arm(s, (off - 0x110) / 8);
++        }
++        break;
++    }
++    ev_update(s);
++}
++
++static const MemoryRegionOps ev_ops = {
++    .read = ev_read, .write = ev_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static void ev_reset(DeviceState *dev)
++{
++    EvselState *s = CXD_EVSEL(dev);
++    memset(s->r, 0, sizeof(s->r));
++    s->sta = s->stb = 0;
++    for (int k = 0; k < NCMP; k++) {
++        timer_del(s->cmp[k].t);
++    }
++    timer_mod(s->vd, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++              FRAME_US * SCALE_US);
++}
++
++static void ev_init(Object *obj)
++{
++    EvselState *s = CXD_EVSEL(obj);
++    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++    memory_region_init_io(&s->mr, obj, &ev_ops, s, "evsel", EV_SIZE);
++    sysbus_init_mmio(sbd, &s->mr);
++    sysbus_init_irq(sbd, &s->irq_a);
++    sysbus_init_irq(sbd, &s->irq_b);
++    s->vd = timer_new_ns(QEMU_CLOCK_VIRTUAL, ev_vd, s);
++    for (int k = 0; k < NCMP; k++) {
++        s->cmp[k] = (Cmp){ s, k,
++                           timer_new_ns(QEMU_CLOCK_VIRTUAL, ev_cmp_fire,
++                                        &s->cmp[k]) };
++    }
++}
++
++static void ev_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    device_class_set_legacy_reset(dc, ev_reset);
++}
++
++static const TypeInfo ev_info = {
++    .name = TYPE_CXD_EVSEL,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(EvselState),
++    .instance_init = ev_init,
++    .class_init = ev_class_init,
++};
++
++static void ev_register(void)
++{
++    type_register_static(&ev_info);
++}
++type_init(ev_register)
+diff --git a/hw/misc/cxd90014_ldec.c b/hw/misc/cxd90014_ldec.c
+new file mode 100644
+index 0000000..6237ae3
+--- /dev/null
++++ b/hw/misc/cxd90014_ldec.c
+@@ -0,0 +1,266 @@
++/*
++ * CXD90014 "BOSS" LDEC hardware LZ77 decoder, memory-to-memory mode (a5000).
++ *
++ * Used through /dev/ldec (initrd ldec.ko, ioctl 1) by libObj to unpack UI
++ * images (libObj sub_5334CC "Decode LZ77 format").  Programming model from
++ * ldec.ko (boss_hw_ldec_set / _process / _stop, ldec_ioctl):
++ *
++ *   regs PA 0xF2903000, IRQ 171
++ *     +0x00  written 0 at setup [?]
++ *     +0x04  1 = hold/reset, 0 = start (set: 1, program, 0)
++ *     +0x0C  output size in 4 KiB pages
++ *     +0x10  output physical address
++ *     +0x24  1 = abort (boss_hw_ldec_stop)
++ *     +0x28  0x7B, +0x2C 4, +0x30 0x7B at setup; the IRQ handler writes the
++ *            status it read back to +0x30 (= acknowledge)  [?]
++ *     +0x34  status: 1 = done, 4 = error (-EIO), else -EACCES
++ *   input  PA 0xF0020000..0xF002FFFF: the compressed stream, pushed by the
++ *          BOSS DMAC page by page (destination wraps every 64 KiB).
++ *
++ * The stream is the Sony LZ77 format of the kernel's lib/lz77 (also used by
++ * the NAND ldec path, hw/block/cxd90014_nand.c).  The hardware's own end
++ * condition is not known [?]: here decoding completes once every byte
++ * received forms complete chunks and the output has reached the last page
++ * ((pages-1)*4096 < out <= pages*4096 -- the caller sizes pages as
++ * ceil(bytes/4096)).
++ */
++
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/irq.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qom/object.h"
++#include "system/address-spaces.h"
++
++#define TYPE_CXD_LDEC "cxd90014-ldec"
++OBJECT_DECLARE_SIMPLE_TYPE(LdecState, CXD_LDEC)
++
++#define LDEC_MAX_IN   (8 << 20)
++#define LDEC_MAX_OUT  (16 << 20)
++
++struct LdecState {
++    SysBusDevice parent_obj;
++    MemoryRegion regs, win;
++    uint32_t r[0x40];
++    uint8_t *in;
++    size_t inlen;
++    bool running;
++    qemu_irq irq;
++};
++
++#define R(o) (s->r[(o) / 4])
++
++/*
++ * Decode as much of in[0..inlen) as forms whole chunks.  Returns the output
++ * length; *complete is true when the input ended exactly on a chunk
++ * boundary.  Returns -1 on a malformed stream.
++ */
++static long lz77_stream(const uint8_t *in, size_t inlen, uint8_t *out,
++                        size_t cap, bool *complete)
++{
++    static const uint8_t lens[16] = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
++                                     14, 15, 16, 32, 64};
++    size_t i = 0, op = 0;
++    *complete = false;
++    while (i < inlen) {
++        uint8_t type = in[i];
++        if (type == 0x0f) {                 /* stored chunk */
++            if (i + 4 > inlen) {
++                return op;
++            }
++            uint32_t l = in[i + 2] | in[i + 3] << 8;
++            if (i + 4 + l > inlen) {
++                return op;
++            }
++            memcpy(out + op, in + i + 4, MIN(l, cap - op));
++            op += MIN(l, cap - op);
++            i += 4 + l;
++            continue;
++        }
++        if (type != 0xf0) {
++            return -1;
++        }
++        size_t j = i + 1, o = op;
++        bool end = false;
++        while (!end) {
++            if (j >= inlen) {
++                return op;                  /* chunk not complete yet */
++            }
++            uint8_t flags = in[j++];
++            for (int b = 0; b < 8 && !end; b++) {
++                if (flags >> b & 1) {
++                    if (j + 2 > inlen) {
++                        return op;
++                    }
++                    uint8_t d0 = in[j], d1 = in[j + 1];
++                    j += 2;
++                    uint32_t l = lens[d0 >> 4];
++                    uint32_t bd = (d0 & 0xf) << 8 | d1;
++                    if (bd == 0) {
++                        end = true;
++                        break;
++                    }
++                    for (uint32_t k = 0; k < l && o < cap; k++, o++) {
++                        out[o] = o >= bd ? out[o - bd] : 0;
++                    }
++                } else {
++                    if (j >= inlen) {
++                        return op;
++                    }
++                    if (o < cap) {
++                        out[o++] = in[j];
++                    }
++                    j++;
++                }
++            }
++        }
++        op = o;
++        i = j;
++    }
++    *complete = true;
++    return op;
++}
++
++static void ldec_update(LdecState *s)
++{
++    qemu_set_irq(s->irq, s->running == false && R(0x34) != 0);
++}
++
++static void ldec_finish(LdecState *s, uint32_t status)
++{
++    s->running = false;
++    R(0x34) = status;
++    ldec_update(s);
++}
++
++static void ldec_try(LdecState *s)
++{
++    uint32_t pages = R(0x0C);
++    size_t cap = (size_t)pages * 4096;
++    bool complete;
++
++    if (!s->running || !pages || cap > LDEC_MAX_OUT) {
++        return;
++    }
++    g_autofree uint8_t *out = g_malloc0(cap);
++    long n = lz77_stream(s->in, s->inlen, out, cap, &complete);
++    if (n < 0) {
++        qemu_log_mask(LOG_GUEST_ERROR, "cxd-ldec: bad stream at %zu bytes\n",
++                      s->inlen);
++        ldec_finish(s, 4);
++        return;
++    }
++    if (complete && (size_t)n > cap - 4096) {
++        address_space_write(&address_space_memory, R(0x10),
++                            MEMTXATTRS_UNSPECIFIED, out, n);
++        ldec_finish(s, 1);
++    }
++}
++
++static uint64_t ldec_read(void *opaque, hwaddr off, unsigned size)
++{
++    LdecState *s = opaque;
++    return off < sizeof(s->r) ? R(off) : 0;
++}
++
++static void ldec_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    LdecState *s = opaque;
++    if (off >= sizeof(s->r)) {
++        return;
++    }
++    switch (off) {
++    case 0x04:
++        if (v & 1) {                    /* hold / reset */
++            s->running = false;
++            R(0x34) = 0;
++        } else if (R(0x04) & 1) {       /* released: start a new job */
++            s->inlen = 0;
++            s->running = true;
++            R(0x34) = 0;
++        }
++        break;
++    case 0x24:
++        if (v & 1) {
++            s->running = false;
++        }
++        break;
++    case 0x30:                          /* acknowledge [?] */
++        R(off) = v;
++        qemu_set_irq(s->irq, 0);
++        return;
++    }
++    R(off) = v;
++    ldec_update(s);
++}
++
++static void win_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
++{
++    LdecState *s = opaque;
++    if (!s->running || s->inlen + size > LDEC_MAX_IN) {
++        return;
++    }
++    for (unsigned i = 0; i < size; i++) {
++        s->in[s->inlen++] = v >> (8 * i);
++    }
++    ldec_try(s);
++}
++
++static uint64_t win_read(void *opaque, hwaddr off, unsigned size)
++{
++    return 0;
++}
++
++static const MemoryRegionOps ldec_ops = {
++    .read = ldec_read, .write = ldec_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 4, .max_access_size = 4 },
++};
++
++static const MemoryRegionOps win_ops = {
++    .read = win_read, .write = win_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = { .min_access_size = 1, .max_access_size = 4 },
++    .impl = { .min_access_size = 1, .max_access_size = 4 },
++};
++
++static void ldec_reset(DeviceState *dev)
++{
++    LdecState *s = CXD_LDEC(dev);
++    memset(s->r, 0, sizeof(s->r));
++    s->inlen = 0;
++    s->running = false;
++}
++
++static void ldec_init(Object *obj)
++{
++    LdecState *s = CXD_LDEC(obj);
++    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++    memory_region_init_io(&s->regs, obj, &ldec_ops, s, "ldec", 0x100);
++    memory_region_init_io(&s->win, obj, &win_ops, s, "ldec-in", 0x10000);
++    sysbus_init_mmio(sbd, &s->regs);
++    sysbus_init_mmio(sbd, &s->win);
++    sysbus_init_irq(sbd, &s->irq);
++    s->in = g_malloc(LDEC_MAX_IN);
++}
++
++static void ldec_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    device_class_set_legacy_reset(dc, ldec_reset);
++}
++
++static const TypeInfo ldec_info = {
++    .name = TYPE_CXD_LDEC,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(LdecState),
++    .instance_init = ldec_init,
++    .class_init = ldec_class_init,
++};
++
++static void ldec_register(void)
++{
++    type_register_static(&ldec_info);
++}
++type_init(ldec_register)
 diff --git a/hw/misc/cxd90014_regfile.c b/hw/misc/cxd90014_regfile.c
 new file mode 100644
 index 0000000..125d026
@@ -3624,10 +4149,10 @@ index 0000000..8ea2cb5
 +}
 +type_init(sc_register)
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index b1d8d8e..b12c2f3 100644
+index b1d8d8e..074b073 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -161,3 +161,7 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -161,3 +161,9 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
  # HPPA devices
  system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
@@ -3635,6 +4160,8 @@ index b1d8d8e..b12c2f3 100644
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_regfile.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_sio.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_adc.c'))
++system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_evsel.c'))
++system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_ldec.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
 index e3f64c0..1821310 100644
 --- a/hw/misc/trace-events

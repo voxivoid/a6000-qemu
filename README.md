@@ -21,7 +21,7 @@ emulator/run.sh -nographic                     # 시리얼 콘솔 (Ctrl-A X 종�
 emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulator/re/vmlinux.elf -ex 'target remote :1234'
 ```
 
-## 현재 상태 (2026-11-13)
+## 현재 상태 (2026-11-14)
 - 주의: 엔진 작업 시 `A5K_STOCK_CONSOLE=1` (디버그 시리얼 콘솔이 av-cam의 UART0 모니터와 충돌)
 - ✅ 쿼드 Cortex-A5(VFPv4-D16) · GIC · L2C-310 · CXD4115 타이머/WDT · SYSCTL · PL011 · 클럭 생성기 · USB OTG/HDC 리셋 · BOSS DMAC · GPU(SMAPH-S30: fill/transfer, 3D는 완료 신호만)
 - ✅ NAND: ARM7 NAND 펌웨어 HLE(메일박스, LDEC LZ77) + raw NAND 백킹 파일. `provision.sh`로 `backup/NAND.BIN`을 Sony FTL 경유 기록
@@ -29,9 +29,10 @@ emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulat
 - ✅ 순정 init → 압축 rootfs·/usr 마운트 → `/usr/kmod` 33종 → Android 시작 → **LIRO가 카메라 엔진 av-cam.bin 기동** → im.elf가 입력장치 생성, GLES 초기화
 - ✅ 엔진 하드웨어 1차: SYSV 프레임 타이머·VPH vsync 60 Hz(IRQ 98/101/102), SIO 5채널, GPIO 18포트, ADC 2유닛 → VDF가 패널(640×480)을 설정
 - ✅ av-cam 메모리 DMA(엔진 .data 초기화 복구), 서브마이컴 HLE(전송 계층, 실기 프레임 재생, `docs/RE_SUBMICRO_LINK.md`) → 상태 프레임 교환 동작
-- ⏳ **UI 첫 화면의 관문 = 서브마이컴 slot A(배터리 상태 등)**: 엔진 틱(링크 이벤트 4)이 엔진 모드 관리 루틴(`0x4376ABFC`)의 조건을 만족해야 발생 → 아직 미발생
-- (이전) **UI 첫 화면의 관문 = 서브마이컴(전원 마이컴) 링크**: im.elf i1 스레드가 `libmprctrl` 초기화에서 upm.ko 전원 상태 질의로 대기 → upm 값은 서브마이컴 캐시. 링크(SIO ch0 + GPIO 핸드셰이크)는 아직 미개통(`-M ...,submicro=on` 실험 중). `docs/RE_UI_BRINGUP.md`, 부팅 체크포인트는 PA 0x834C0000의 boot_time 로그
-- ⏳ 화면: VPH 스캔아웃 모델(콘솔 0) 준비됨, UI가 아직 OSD를 보내지 않음. GPU 3D 커맨드 실행 미구현(완료 신호만)
+- ✅ 카메라 타이밍 이벤트 블록 0xF3C30000(IRQ 83/84: 엔진 프레임 29.97 fps + 1 MHz 비교기) → 엔진 프레임 루틴·int_HS·**서브마이컴 slot A 교환 동작**
+- ✅ GIC SPI 타깃을 실기 GICD 덤프 값으로 → CPU1~3 틱·RCU 정상 → umount/i1 정지 해소 → **i0/i1/i2·appFw 초기화 완료**
+- ✅ BOSS LDEC LZ77 디코더 메모리 모드(/dev/ldec) → appFw abort 해소. Rigel WindowServer·appFw가 **프레임 렌더링 중**, Android도 기동
+- ⏳ 화면: UI는 GPU P3D(3D)로 그리는데 P3D 명령은 실행하지 않음(완료 신호만) → 버퍼가 검정. VPH AIF(패널 OSD)도 아직 미설정. 상세 `docs/RE_ENGINE_TICK.md`
 - ⬜ SD 카드(SDHCI), 센서/ISP(라이브뷰), 렌즈, 서브마이컴(전원/키), 오디오
 
 ## 사용
