@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..5aa9e14
+index 0000000..481b0e8
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,954 @@
+@@ -0,0 +1,985 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -383,6 +383,34 @@ index 0000000..5aa9e14
 + * the power-off flag in TLV 3 cleared, CRC-16/CCITT-FALSE recomputed).
 + * Contents are replayed as-is, never synthesised.
 + */
++/* CRC-16/CCITT-FALSE over bytes 0..125, stored little-endian at 126 */
++static void a5k_submicro_crc(uint8_t *f)
++{
++    uint16_t c = 0xffff;
++    for (int i = 0; i < 126; i++) {
++        c ^= f[i] << 8;
++        for (int b = 0; b < 8; b++) {
++            c = (c & 0x8000) ? (c << 1) ^ 0x1021 : c << 1;
++        }
++    }
++    f[126] = c;
++    f[127] = c >> 8;
++}
++
++/*
++ * The media-slot switches are read by the sub-micro and reported in slot A:
++ * byte 2 bit4 = slot 0 (SD/MS combo) card present, bit0 = slot 0 second
++ * flag [? lock], bit5/bit1 = slot 1 (av-cam 439161D4/439162A8, used when the
++ * slot config mode is <= 1; task 48 turns them into the 0x28017C front-media
++ * notify that mcmn_drv forwards to libInfraMediaDetect).  The snapshot frame
++ * says "no card"; with an SD drive attached, model the closed switch.
++ */
++static void a5k_submicro_card_inserted(uint8_t *frames)
++{
++    frames[2] |= 0x10;
++    a5k_submicro_crc(frames);
++}
++
 +static void a5k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
 +{
 +    A5KMachineState *s = opaque;
@@ -649,6 +677,9 @@ index 0000000..5aa9e14
 +                                 NULL) || flen < 256) {
 +            error_report("sony-a5000: submicro frames %s missing", fn);
 +            exit(1);
++        }
++        if (sd) {
++            a5k_submicro_card_inserted(s->submicro_frames);
 +        }
 +        cxd90014_sio_attach(dev, 0, a5k_submicro_xfer, s);
 +        cxd90014_sio_attach(dev, 3, a5k_submicro_xfer, s);
