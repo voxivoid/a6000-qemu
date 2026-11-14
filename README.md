@@ -77,6 +77,7 @@ Keys pressed in the first ~20 s after the first-boot dialog appears are ignored 
 - ✅ GPU: all 779 draws from first boot to the shooting screen render (Rigel compositing included); depth/stencil, mipmaps, border wrap added and tested with synthetic lists (`tools/test_dmp_p3d.py`, `tools/test_dmp_shader.c`)
 - ⏳ GPU: geometry programs (real point/line drawing), 14 GLES1-package shader opcodes, ETC1, depth/mip memory layouts unconfirmed (`docs/RE_GPU_P3D_CMD.md` §7)
 - ✅ Updater mode: with `/setting/updater/mode` in the emulated NAND the stage-1 loader boots the updater core (nflasha1) like the bootloader; it reaches a root shell and the UFP USB wait (`docs/RE_UPDATER_BOOT.md`)
+- ⏳ Camera front end: sensor writer (P2S, IRQ 38), front-end frame IRQs, AIF channel groups (IRQs 40–50) modelled; capture errors gone, live view still black (no YC-output request yet, `docs/RE_SENSOR_ISP.md` §7). Test bars: `-global cxd90014-vph.pattern=bars`
 - ⬜ Sensor/ISP (live view), lens serial protocol, audio
 
 ## Firmware and legal notice

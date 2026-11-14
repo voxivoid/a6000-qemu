@@ -1074,6 +1074,70 @@ static void a5k_init(MachineState *ms)
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(83)]);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, pic[GIC_ID(84)]);
 
+    /* ---- camera front end (docs/RE_SENSOR_ISP.md §4.a) ---- */
+    {
+        /* P2S sensor register writer, IRQ 38 */
+        dev = qdev_new("cxd90014-p2s");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3C00000);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(38)]);
+
+        /* SIF sync-code counters, clocked by the input unit's frames */
+        DeviceState *sif = qdev_new("cxd90014-sif");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(sif), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(sif), 0, 0xF3122000);
+
+        /* AIF channel groups of the camera pipeline: table 0x43B278D4
+         * {base, channels}; the CamCore unit groups follow their unit's
+         * frame end, the others complete after a delay.  irq1/irq3 = GIC
+         * line of channel 1 / 3 (0 = none): ISRs 438CB804.. watch these
+         * channels' status nibbles (RC objects, docs/RE_SENSOR_ISP.md §7.1) */
+        static const struct { hwaddr base; int nch, irq1, irq3; } aifg[] = {
+            { 0xF3002000, 6 }, { 0xF3102000, 6 }, { 0xF3131000, 1 },
+            { 0xF3020000, 4 }, { 0xF3041000, 2 },
+            { 0xF3881000, 4, 40, 41 }, { 0xF3891000, 4, 42, 43 },
+            { 0xF3981000, 4, 44, 45 }, { 0xF30A1000, 2, 46 },
+            { 0xF30B1000, 2, 47 }, { 0xF31A1000, 2, 48 },
+            { 0xF31B1000, 2, 49 }, { 0xF31C1000, 2, 50 },
+            { 0xF3811000, 3 }, { 0xF3911000, 3 },
+            { 0xF3800000, 5 }, { 0xF3900000, 5 }, { 0xF31D0000, 3 },
+        };
+        DeviceState *aif[ARRAY_SIZE(aifg)];
+        for (int i = 0; i < ARRAY_SIZE(aifg); i++) {
+            aif[i] = qdev_new("cxd90014-aif");
+            qdev_prop_set_uint64(aif[i], "base", aifg[i].base);
+            qdev_prop_set_uint32(aif[i], "nch", aifg[i].nch);
+            qdev_prop_set_bit(aif[i], "frame-sync", i < 2);
+            sysbus_realize_and_unref(SYS_BUS_DEVICE(aif[i]), &error_fatal);
+            sysbus_mmio_map(SYS_BUS_DEVICE(aif[i]), 0, aifg[i].base);
+            if (aifg[i].irq1) {
+                sysbus_connect_irq(SYS_BUS_DEVICE(aif[i]), 1,
+                                   pic[GIC_ID(aifg[i].irq1)]);
+            }
+            if (aifg[i].irq3) {
+                sysbus_connect_irq(SYS_BUS_DEVICE(aif[i]), 3,
+                                   pic[GIC_ID(aifg[i].irq3)]);
+            }
+        }
+
+        /* CamCore "Pig" frame/IRQ blocks: unit 0 (IRQ 36), unit 1 (37),
+         * input unit 0xF3120000 (35) */
+        static const struct { hwaddr base; int irq; } pig[] = {
+            { 0xF3000000, 36 }, { 0xF3100000, 37 }, { 0xF3120000, 35 },
+        };
+        for (int i = 0; i < ARRAY_SIZE(pig); i++) {
+            dev = qdev_new("cxd90014-campig");
+            qdev_prop_set_uint64(dev, "base", pig[i].base);
+            sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+            sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, pig[i].base);
+            sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
+                               pic[GIC_ID(pig[i].irq)]);
+            qdev_connect_gpio_out(dev, 0, i < 2 ?
+                                  qdev_get_gpio_in(aif[i], 0) :
+                                  qdev_get_gpio_in(sif, 0));
+        }
+    }
+
     /* Debug view of guest frame buffers in a QEMU window (no MMIO; the
      * firmware cannot see it).  -M ...,fb=addr,w,h,stride,fmt[;...] or at
      * run time: qom-set /machine/fbview fb "..." */

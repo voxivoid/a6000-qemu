@@ -276,3 +276,85 @@ later), and an optional `hw/misc/a5k_imgsrc.c` (host image/test-pattern source u
 6. Whether the shooting-mode MENU stall is caused by this (no YC → camera "monitoring" never reported ready) — to be
    checked against the app-side analysis.
 7. Imager power: the Backup GPIO pairs are absent on a5000; which of p0.1 / the sub-micro switches sensor power [?].
+
+---
+
+## 7. Implementation status (camera-fe branch, plan §4.a)
+
+All new models are hardware-level (no firmware patches); every value below comes from the av-cam code cited, the rest
+is marked `[?]`. QEMU files: `hw/misc/cxd90014_p2s.c`, `hw/misc/cxd90014_campig.c` (Pig blocks + SIF),
+`hw/dma/cxd90014_aif.c`, wiring in one block "camera front end" of `hw/arm/sony_a5000.c`, debug option in
+`hw/display/cxd90014_vph.c`. Trace events: `cxd_p2s_*`, `cxd_campig_frame`, `cxd_aif_start/done/status`.
+
+### 7.1 What is modelled
+
+| block | model | evidence |
+|---|---|---|
+| P2S 0xF3C00300 (device covers the page 0xF3C00000–0xFFF), IRQ 38 | write `0x908` bit0 = 1 starts a transfer; 50 µs later [? time] bit0 clears, `0x904` bit0 sets, IRQ 38 is held until `0x904` bit0 is written 1 (W1C). Other registers read back as written; the first 16 payload bytes are traced | `43A49854`, `436AE758` (`+4 \|= 1` before start), ISR `436AE3EC`→`436AE784` |
+| CamCore "Pig" 0xF3000000 / 0xF3100000 / 0xF3120000 (first 0x100 bytes), IRQ 36 / 37 / 35 | a write to `+0x10` arms path k for every set bit k (0..3); at each engine frame (33367 µs, own timer, phase arbitrary [?]) armed paths set `+0x48` bit (24+k) and disarm; IRQ = `(+0x48 \| +0x4C) & +0x50 & 0x0F000000`; `+0x48`/`+0x4C` W1C; `+0x4C` is never set [?]. GPIO out 0 pulses every frame | accessors `43A45FA4..43A46054`; arm `436A6700` (`+0x10 = 2`, `+0x50` bit25) / `436A666C` (`+0x10 = 8`, bit27); ISR `43A465F2` → `436A6794` writes the status high byte back to `+0x10`/`+0x14` (re-arm) |
+| SIF 0xF3122000–0xF3123FFF | sync-code counters `+0x330`, `+0x224`, `+0x1330`, `+0x1224` return the number of frames of the 0xF3120000 unit [? semantics]; rest read back as written | `ReadSIFScodeCnt 436B2474` → `436B26E8/289C/2AD4/2C88` |
+| AIF channel groups (table `0x43B278D4`, all except VPH 0xF3441000) | channel `+0x00` bit0 = start/busy, `+0x04` bit31 = running. On completion both clear and status nibble bit0 sets in group `+0x000` (W1C). Channel k's sysbus IRQ = `(+0x000 & +0x008) nibble k != 0`. Front-end groups 0xF3002000 / 0xF3102000 complete at their Pig unit's frame end; all others 2 ms after start [? trigger not decoded]. `+0x004` reads 0. No data is moved | `438965E8`, `43896588/43896614`, `43896650`; status read `43896484`/`43AB98B6`, ack `0xF << 4k` `43AB98C6`, Pig done hook `438964B6`; `+0x008` nibble RMW `43896442` (0xF3881008 = 0xF000 while ch3 is waited for) |
+| AIF completion IRQs 40–50 | ch1 / ch3 of the resize ("RC") groups: 0xF3881000 → 40 / 41, 0xF3891000 → 42 / 43, 0xF3981000 → 44 / 45, ch1 of 0xF30A1000 / 0xF30B1000 / 0xF31A1000 / 0xF31B1000 / 0xF31C1000 → 46 / 47 / 48 / 49 / 50 | ISR table `0x43E94D04` (`{irq, 0, handler, attr}`): 40..50 → `438CB804, 858, 73C, 790, 8CC, 920, 598, 5EC, 640, 694, 6E8`; each handler checks one or two RC objects (e.g. IRQ 41 → objects `0x43DFFDF4`/`0x43E002CC`); at run time those objects' status descriptor (`obj+252` → `+20` register, `+64` nibble) is `{0xF3881000, 3}` (read with HMP `xp` from guest RAM). Objects of IRQ 40/42/44/46..50 point at ch1 of the groups listed |
+| VPH (debug only) | `-global cxd90014-vph.pattern=bars` composes 75 % colour bars instead of the ch51 buffer whenever `0x144` bit0 is set; guest memory is not touched | — |
+
+Notes:
+* The RC IRQ lines are level-sensitive in the guest's GIC configuration (a pure `qemu_irq_pulse` is lost; a 10 µs level
+  re-enters the ISR several times). With the status-nibble model the line drops when the ISR acks the nibble, as the
+  code expects.
+* QEMU cannot map an MMIO region whose start is not page aligned across a page boundary (the in-page offset collides
+  with the section index in the TLB, assertion in `iotlb_to_section`); the guest page size here is 1 KiB. That is why
+  the P2S device covers the whole 0xF3C00000 page.
+* The previous §2.3 statement "objects `436A682A/6866/68B6`, masks 0x20000000/…" is unchanged; the RC IRQ row of
+  `RE_AVCAM_IRQ_BOOT.md` §1.1 ("object +0x14 → status reg") is now resolved: the status register is the AIF group
+  header `+0x000` of the watched channel.
+
+### 7.2 Result (unmodified firmware 1.10, first boot → MENU → Enter → shooting screen, NO CARD)
+
+Probe windows of ~30 frames in shooting mode (`a5ktrace fn=`), before → after:
+
+| probe / log | before (§3) | after |
+|---|---|---|
+| IRQ 38 handler `436AE3EC` | 0 | every P2S send (2 per frame) |
+| IRQ 36 handler `43A465F2` | 0 | every frame (path B/C, status `0x0C000000`) |
+| IRQ 35 / 37 | 0 | 0 — the 0xF3120000 unit arms path A without IRQ enable, unit 1 is not armed in this mode |
+| IRQ 41 (`438CB858`, resize 0xF3881000 ch3) | n/a | every frame (one resize job per frame: ch0 reads the IIB 0x60000000, ch3 writes 1024 B lines at 0x0CE00000/0x0CF34000 [? address space]) |
+| `AIF%d pbl_aif_set_func error[-3]`, `CamCore ParamSetError 0x2206` | every frame | gone |
+| `CamCore Start Error 0x208`, `job_RCHV_dataset_main: RC_ERR:0x07 rcct_Resize error!` (appeared once the front end ran, before IRQs 40–50 existed: RC request pool exhausted, `ResizeSeqCt` "request = NULL") | — | gone |
+| remaining engine log | — | timing warnings only (`HS_Main/HS_Sequence/VD_Sequence ... start delayed / overflow`) |
+| `VphUpdateYuvCall 43661BC8`, `438F6CF4`, VPH `0x144` bit0, ch51 | never | **still never** (`0xF3440144 = 0x03000232`, ch51 registers 0) |
+| MENU (`sendkey m`) in shooting mode | delivered but ignored | **opens the main menu** (Camera Settings / Custom / Wireless / Application / Playback / Setup); Enter on the shooting screen opens the shooting-mode guide |
+
+So G1–G3 of §3 are passed and the front end runs every frame, but live view is still black because no YC frame is
+offered to VDF. The MENU result is **not** caused by the front-end models: it also opens in a run where the imager was
+never powered (P2S/AIF registers untouched); the same holds for Enter opening the mode guide. It coincides with the board change that releases the shutter lines at
+reset (main tree `357e485`; before it the camera booted with S1/S2 held, which plausibly blocked the menu) [?].
+
+### 7.3 Next gate: the YC output is never requested
+
+* `SendYCPin` `43773EA8` (file `SyncYCOut.cpp`) runs every frame from VD_Post `4376FC48` (and from HS_Sequence
+  `4376B594` when the mode state `*(*(0x43D84A40)+0x10)` is 4 or 5; it is 0 here). It returns at once unless one of the
+  four YC outputs `dword_43D8AF48[0..3]` is in state 2. All four are 0.
+* State 1 ("requested") is set by `43773E80(k, on)`, called from `4376FC48` with `on` = bit1 (output 0) / bit2
+  (outputs 1, 2) of byte `0x43D874F4` (= camera parameter block `0x43D87298` + 604, `a3[2]+604`), gated by bit7 and
+  the mode state. State 2 is then set by `437737D4` from the EE sequences (`4354B530` …) when a YC frame is produced.
+* At run time byte `0x43D874F4` has bits 1/2 clear (0x00 in one run, 0x40 = bit6 only in another), so no output is
+  ever requested. No direct writer of that byte was found in
+  av-cam (the block is filled by the camera mode/parameter commands, `4376CFDC`, `43763528`, `436F9A70`) — the request
+  is expected to come from the application/VDF side (YC pin connect for the panel) [?]. A gdb watchpoint on the byte
+  slows the boot too much to be usable; an `a5ktrace` probe on the camera command dispatcher is the next step.
+* So the next work item is on the request side (which command sets the YC-out bits and why the shooting app does not
+  send it — e.g. a missing lens / monitoring-ready condition), not another hardware completion. The develop/resize/VFX
+  IRQs 67–75/77/78 were not needed so far (their engines are not kicked, or are polled).
+
+### 7.4 Observations / caveats
+
+* Imager power-on (`4398DB8E` case 1 → `PowerOn 436AF630`) does not happen on every boot: on the final board 3 of 9
+  runs reached the shooting screen without it (then no P2S/front-end traffic at all; earlier runs without the CEC W1C
+  fix of `357e485` missed it as well). It also logs `PowerOn Wait No.01 TimerError!!`
+  and `AsyncInitial: WaitTimer OpenError/StartError` (utimer 11) in some runs, yet the imager continues. Both are
+  independent of the new models (seen before any P2S access) [? race in the boot sequence].
+* An av-cam NULL call `PC=0, LR=4376FBD7` (list walk in `4376FBA4`, `obj->vtbl[3]`, task `liro-kliro_100`) oopses the
+  camera engine in some long runs with the trace plugin loaded (seen in 2 runs; not seen in the runs without the
+  plugin). Same code
+  area as the oops in `RE_ENGINE_TICK.md` §11.4 [? timing race, aggravated by slow emulation].
+* 4.b step 1 (test pattern) is implemented but cannot show anything until VDF programs ch51 (`0x144` bit0 is clear).

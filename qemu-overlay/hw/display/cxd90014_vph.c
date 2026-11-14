@@ -17,11 +17,17 @@
  * 101/102 pulses, AIF ch51..58 start bits cleared, and the panel is composed
  * (YUV 4:2:2 under the OSD) into QEMU graphic console 0.
  * OSD at 16 bpp = RGBA4444 (A low nibble); the YUV packing is a hypothesis.
+ *
+ * Debug option (not hardware): pattern=bars composes 75% colour bars in
+ * place of the guest's YUV buffer whenever the panel YUV layer is enabled
+ * (-global cxd90014-vph.pattern=bars).  Nothing is written to guest memory,
+ * so the firmware sees the same machine with or without it.
  */
 
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"
 #include "hw/irq.h"
+#include "hw/qdev-properties.h"
 #include "qemu/timer.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
@@ -45,6 +51,7 @@ struct VphState {
     qemu_irq irq_sysv, irq_v101, irq_v102;
     QemuConsole *con;
     uint32_t w, h;
+    char *pattern;                  /* debug: "bars" */
 };
 
 #define R(o) (s->vph[(o) / 4])
@@ -93,7 +100,18 @@ static void vph_update(void *opaque)
     memset(dst, 0, (size_t)W * H * 4);
 
     /* YUV layer (ch51), packed YUYV 4:2:2 [?] */
-    if (R(0x144) & 1) {
+    if ((R(0x144) & 1) && s->pattern && !strcmp(s->pattern, "bars")) {
+        static const uint32_t bars[8] = {
+            0xbfbfbf, 0xbfbf00, 0x00bfbf, 0x00bf00,
+            0xbf00bf, 0xbf0000, 0x0000bf, 0x101010,
+        };
+        uint32_t lines = MIN(R(AIF(0) + 0x2C) + 1, H);
+        for (uint32_t y = 0; y < lines; y++) {
+            for (uint32_t x = 0; x < W; x++) {
+                dst[y * W + x] = 0xff000000u | bars[x * 8 / W];
+            }
+        }
+    } else if (R(0x144) & 1) {
         uint32_t base = R(AIF(0) + 0x20), lb = R(AIF(0) + 0x24);
         uint32_t lines = R(AIF(0) + 0x2C) + 1;
         int32_t pitch = (int16_t)R(AIF(0) + 0x48);
@@ -243,10 +261,15 @@ static void vph_init(Object *obj)
     s->lower = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_lower, s);
 }
 
+static const Property vph_props[] = {
+    DEFINE_PROP_STRING("pattern", VphState, pattern),
+};
+
 static void vph_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     dc->realize = vph_realize;
+    device_class_set_props(dc, vph_props);
     device_class_set_legacy_reset(dc, vph_reset);
 }
 

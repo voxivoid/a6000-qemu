@@ -58,6 +58,7 @@
 - ✅ 셔터 대기 레벨 수정(카메라가 S1/S2를 누른 채로 부팅하고 있었음): 촬영 모드에서 MENU·휠 가운데 버튼 동작, 셔터·줌 레버 연결 (`docs/RE_ENGINE_TICK.md` §12)
 - ⏳ SD 있음: 이미지 DB 자동 복구 뷰(AUTOREPAIR)가 빈 화면, 메뉴의 포맷도 멈춤 — 둘 다 SD 명령을 내지 않음, 조사 중
 - ✅ 업데이터 모드: 에뮬레이션 NAND에 `/setting/updater/mode`가 있으면 1단계 로더가 부트로더처럼 업데이터 코어(nflasha1)로 부팅 → 루트 셸·UFP USB 대기까지 (`docs/RE_UPDATER_BOOT.md`)
+- ⏳ 카메라 프런트엔드: 센서 라이터(P2S, IRQ 38)·프런트엔드 프레임 IRQ·AIF 채널 그룹(IRQ 40–50) 모델 → 캡처 오류 해소, 라이브뷰는 아직 검정(YC 출력 요청 없음, `docs/RE_SENSOR_ISP.md` §7). 테스트 컬러바: `-global cxd90014-vph.pattern=bars`
 - ⬜ 센서/ISP(라이브뷰), 렌즈 시리얼 프로토콜, 오디오
 
 ## 사용

@@ -125,20 +125,21 @@ index 98fbb1b..76e58f5 100644
 +config CXD90014_DMAC
 +    bool
 diff --git a/hw/dma/meson.build b/hw/dma/meson.build
-index cc7810b..fe2332c 100644
+index cc7810b..50434c1 100644
 --- a/hw/dma/meson.build
 +++ b/hw/dma/meson.build
-@@ -12,3 +12,5 @@ system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_dma.c', 'soc_dma.c'))
+@@ -12,3 +12,6 @@ system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_dma.c', 'soc_dma.c'))
  system_ss.add(when: 'CONFIG_RASPI', if_true: files('bcm2835_dma.c'))
  system_ss.add(when: 'CONFIG_SIFIVE_PDMA', if_true: files('sifive_pdma.c'))
  system_ss.add(when: 'CONFIG_XLNX_CSU_DMA', if_true: files('xlnx_csu_dma.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_DMAC', if_true: files('cxd90014_dmac.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_DMAC', if_true: files('cxd90014_mdma.c'))
++system_ss.add(when: 'CONFIG_CXD90014_DMAC', if_true: files('cxd90014_aif.c'))
 diff --git a/hw/dma/trace-events b/hw/dma/trace-events
-index 4c09790..da857f1 100644
+index 4c09790..9371226 100644
 --- a/hw/dma/trace-events
 +++ b/hw/dma/trace-events
-@@ -47,3 +47,7 @@ pl330_iomem_read(uint32_t addr, uint32_t data) "addr: 0x%08"PRIx32" data: 0x%08"
+@@ -47,3 +47,12 @@ pl330_iomem_read(uint32_t addr, uint32_t data) "addr: 0x%08"PRIx32" data: 0x%08"
  
  # xilinx_axidma.c
  xilinx_axidma_loading_desc_fail(uint32_t res) "error:%u"
@@ -146,6 +147,11 @@ index 4c09790..da857f1 100644
 +# cxd90014_dmac.c
 +cxd_dmac_done(int ch, uint32_t n) "ch0 chain of 0 done"
 +cxd_mdma_copy(int ch, uint32_t src, uint32_t dst, uint64_t len) "ch%d 0x%08x -> 0x%08x len 0x%" PRIx64
++
++# cxd90014_aif.c
++cxd_aif_start(uint64_t base, int ch, uint32_t ctrl, uint32_t addr, uint32_t size) "group 0x%08" PRIx64 " ch%d start ctrl 0x%x addr 0x%08x size 0x%x"
++cxd_aif_done(uint64_t base, uint32_t mask) "group 0x%08" PRIx64 " channels 0x%x done"
++cxd_aif_status(uint64_t base, uint32_t v) "group 0x%08" PRIx64 " status read 0x%x"
 diff --git a/hw/gpio/meson.build b/hw/gpio/meson.build
 index 7484061..bde66bb 100644
 --- a/hw/gpio/meson.build
@@ -215,10 +221,10 @@ index 8b4b61e..7659e95 100644
          return;
      case 0xF60:
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index b1d8d8e..074b073 100644
+index b1d8d8e..3c8a124 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -161,3 +161,9 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -161,3 +161,11 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
  # HPPA devices
  system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
@@ -227,12 +233,14 @@ index b1d8d8e..074b073 100644
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_sio.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_adc.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_evsel.c'))
++system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_p2s.c'))
++system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_campig.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_ldec.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index e3f64c0..1821310 100644
+index e3f64c0..0d77223 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -403,3 +403,9 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
+@@ -403,3 +403,16 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
  i2c_echo_event(const char *id, const char *event) "%s: %s"
  i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
  i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
@@ -242,6 +250,13 @@ index e3f64c0..1821310 100644
 +cxd_sio_data(int ch, uint32_t w0, uint32_t w1, uint32_t w2, uint32_t w3) "ch%d fifo %08x %08x %08x %08x"
 +cxd_sio_wr(int ch, uint32_t off, uint64_t v) "ch%d wr +0x%03x = 0x%08" PRIx64
 +cxd_sio_rd(int ch, uint32_t off, uint32_t v) "ch%d rd +0x%03x -> 0x%08x"
++
++# cxd90014_p2s.c
++cxd_p2s_start(uint32_t cnt, uint32_t b0, uint32_t b1, uint32_t b2, uint32_t b3) "start cnt 0x%02x payload %08x %08x %08x %08x"
++cxd_p2s_done(void) "transfer done, IRQ 38"
++
++# cxd90014_campig.c
++cxd_campig_frame(uint64_t base, uint32_t paths) "0x%08" PRIx64 " frame done, status |= 0x%08x"
 diff --git a/hw/timer/Kconfig b/hw/timer/Kconfig
 index b3d823c..44c8809 100644
 --- a/hw/timer/Kconfig
