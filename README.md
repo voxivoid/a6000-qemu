@@ -74,6 +74,10 @@ A root shell inside the running guest, next to the stock UI (`docs/RE_GUEST_SHEL
 option `console=ttyAM1`: only the `console=ttynull` token of the stock cmdline becomes `console=ttyAM1 amba2.console=1`, and
 UART2 (unused by the stock system) is served as a TCP socket. Stock init then runs its own root `ash` there; the UI comes up
 as usual. Without the option the cmdline is unchanged.
+
+> **Emulator-only developer aid.** The real camera has no accessible UART: on real hardware every CFW / deployment step
+> goes over USB. Use this shell for inspecting and iterating inside the emulator; test real deployment flows over the
+> USB virtual cable (`pmca-console`).
 ```sh
 A5K_SHELL=46310 ./run.sh                      # = -M console=ttyAM1,shell-socket=127.0.0.1:46310 -serial null
 python3 tools/a5kshell.py --port 46310        # interactive (Ctrl-] quits); --job-control makes Ctrl-C work

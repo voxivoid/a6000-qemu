@@ -106,6 +106,9 @@ python3 pmca-console.py info -d socket       # A5K_USB=host:port (기본 127.0.0
 순정 UI가 도는 상태에서 게스트 안의 루트 셸(`docs/RE_GUEST_SHELL.md`). `A5K_SHELL=<port>`는 머신 옵션 `console=ttyAM1`을 켠다:
 순정 cmdline에서 `console=ttynull` 토큰 하나만 `console=ttyAM1 amba2.console=1`로 바뀌고, 순정 시스템이 쓰지 않는 UART2가 TCP
 소켓으로 나온다. 그러면 순정 init이 그 포트에서 자체 루트 `ash`를 띄우고 UI는 평소대로 뜬다. 옵션이 없으면 cmdline은 그대로다.
+
+> **에뮬레이터 전용 개발 도구.** 실기에는 접근 가능한 UART가 없어서 실기의 CFW·배포는 전부 USB로 한다. 이 셸은 에뮬레이터
+> 안에서 살펴보고 반복 작업할 때만 쓰고, 실제 배포 흐름은 USB 가상 케이블(`pmca-console`)로 시험한다.
 ```sh
 A5K_SHELL=46310 ./run.sh                      # = -M console=ttyAM1,shell-socket=127.0.0.1:46310 -serial null
 python3 tools/a5kshell.py --port 46310        # 대화형 (Ctrl-] 종료); --job-control 이면 Ctrl-C 동작
