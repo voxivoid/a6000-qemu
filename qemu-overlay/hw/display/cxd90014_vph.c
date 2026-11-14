@@ -10,8 +10,9 @@
  *        +0x48 signed pitch.  ch51 = panel YUV (live view), ch53 = panel OSD.
  *        IRQ 101 / 102 = output vsync (both pulsed; which one is the panel is
  *        unknown), IRQ 79 = status at +0xA0 (not raised).
- *   SYSV PA 0xF3402000 (docs/RE_AVCAM_IRQ_BOOT.md): +0x98 frame counter,
- *        +0x3C period (av-cam writes 64800); IRQ 98 every frame.
+ *   SYSV PA 0xF3402000 (docs/RE_AVCAM_IRQ_BOOT.md): +0x98 V counter,
+ *        +0x28 bit0 V phase, +0x3C period (av-cam writes 64800); IRQ 98
+ *        every V (33367 us, master clock, drives the evsel engine frame).
  *
  * Every 1/60 s: SYSV counter++ and IRQ 98 pulse; if VPH is clocked, IRQ
  * 101/102 pulses, AIF ch51..58 start bits cleared, and the panel is composed
@@ -47,8 +48,9 @@ struct VphState {
     uint32_t vph[VPH_SIZE / 4];
     uint32_t sysv[0x1000 / 4];
     uint32_t frame;
-    QEMUTimer *tick, *lower;
+    QEMUTimer *tick, *lower, *vtick, *vlower;
     qemu_irq irq_sysv, irq_v101, irq_v102;
+    qemu_irq vd_out;                /* -> evsel engine frame (source 29) */
     QemuConsole *con;
     uint32_t w, h;
     char *pattern;                  /* debug: "bars" */
@@ -56,10 +58,41 @@ struct VphState {
 
 #define R(o) (s->vph[(o) / 4])
 
-static void vph_lower(void *opaque)
+/*
+ * SYSV is the master V clock of the camera engine: one V per engine frame
+ * (33367 us, av-cam constant 0x8257).  Per V, in this order: counter +0x98
+ * increments (so +0x28 bit0, its parity, toggles), IRQ 98 pulses, then the
+ * engine frame event (evsel source 29) fires.  av-cam's 2V mode checks the
+ * phase bit against its own V counter every frame (VD_Pre 4376D904) and
+ * VDF hands a YC pin to VPH only while +0x98 equals the pin's frame
+ * (4367EC50); a 60 Hz SYSV drifted against the engine frame and both
+ * failed every frame (docs/RE_LIVEVIEW_PIPELINE.md §5).  The panel vsync
+ * (IRQ 101/102) keeps its own 60 Hz timer [?].
+ */
+#define V_US 33367
+
+static void vph_vlower(void *opaque)
 {
     VphState *s = opaque;
     qemu_set_irq(s->irq_sysv, 0);
+    qemu_set_irq(s->vd_out, 0);
+}
+
+static void vph_vtick(void *opaque)
+{
+    VphState *s = opaque;
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+
+    s->frame++;
+    qemu_set_irq(s->irq_sysv, 1);
+    qemu_set_irq(s->vd_out, 1);
+    timer_mod(s->vlower, now + 200 * SCALE_US);
+    timer_mod(s->vtick, now + V_US * SCALE_US);
+}
+
+static void vph_lower(void *opaque)
+{
+    VphState *s = opaque;
     qemu_set_irq(s->irq_v101, 0);
     qemu_set_irq(s->irq_v102, 0);
 }
@@ -69,8 +102,6 @@ static void vph_tick(void *opaque)
     VphState *s = opaque;
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
-    s->frame++;
-    qemu_set_irq(s->irq_sysv, 1);
     /* output vsync runs whether or not VPH is configured yet: the VDF task
      * waits for IRQ 101/102 before it programs anything */
     for (int k = 0; k < 8; k++) {
@@ -247,6 +278,8 @@ static void vph_reset(DeviceState *dev)
     s->frame = 0;
     timer_mod(s->tick, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
               NANOSECONDS_PER_SECOND / 60);
+    timer_mod(s->vtick, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+              V_US * SCALE_US);
 }
 
 static void vph_realize(DeviceState *dev, Error **errp)
@@ -271,6 +304,9 @@ static void vph_init(Object *obj)
     sysbus_init_irq(sbd, &s->irq_v102);
     s->tick = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_tick, s);
     s->lower = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_lower, s);
+    s->vtick = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_vtick, s);
+    s->vlower = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_vlower, s);
+    qdev_init_gpio_out(DEVICE(obj), &s->vd_out, 1);
 }
 
 static const Property vph_props[] = {

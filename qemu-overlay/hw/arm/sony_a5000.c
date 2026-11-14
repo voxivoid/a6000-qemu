@@ -1068,8 +1068,12 @@ static void a5k_init(MachineState *ms)
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 2, pic[GIC_ID(102)]);
 
     /* timing-event selector 0xF3C30000, IRQ 83 (8 ch) / 84 (10 src) */
+    DeviceState *vph = dev;
     dev = qdev_new("cxd90014-evsel");
+    /* engine frame event (source 29) is driven by the SYSV V clock */
+    qdev_prop_set_bit(dev, "ext-vd", true);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    qdev_connect_gpio_out(vph, 0, qdev_get_gpio_in(dev, 0));
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3C30000);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(83)]);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, pic[GIC_ID(84)]);

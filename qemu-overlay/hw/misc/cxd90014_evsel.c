@@ -29,6 +29,7 @@
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"
 #include "hw/irq.h"
+#include "hw/qdev-properties.h"
 #include "qemu/timer.h"
 #include "qemu/module.h"
 #include "qom/object.h"
@@ -53,6 +54,7 @@ struct EvselState {
     uint32_t r[EV_SIZE / 4];
     uint32_t sta, stb;
     QEMUTimer *vd;
+    bool ext_vd;                    /* engine frame from SYSV (gpio in 0) */
     Cmp cmp[NCMP];
     qemu_irq irq_a, irq_b;
 };
@@ -70,9 +72,8 @@ static void ev_update(EvselState *s)
     qemu_set_irq(s->irq_b, (s->stb & R(0xF8)) != 0);
 }
 
-static void ev_vd(void *opaque)
+static void ev_frame(EvselState *s)
 {
-    EvselState *s = opaque;
     if (R(0xEC) & 1) {
         uint32_t en = R(0x10) & 0xff, c = ev_counter();
         for (int k = 0; k < 8; k++) {
@@ -83,8 +84,23 @@ static void ev_vd(void *opaque)
         s->sta |= en;
         ev_update(s);
     }
+}
+
+static void ev_vd(void *opaque)
+{
+    EvselState *s = opaque;
+    ev_frame(s);
     timer_mod(s->vd, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
               FRAME_US * SCALE_US);
+}
+
+/* engine frame from the SYSV V clock (rising edge) */
+static void ev_vd_in(void *opaque, int n, int level)
+{
+    EvselState *s = opaque;
+    if (level) {
+        ev_frame(s);
+    }
 }
 
 static void ev_cmp_fire(void *opaque)
@@ -167,8 +183,10 @@ static void ev_reset(DeviceState *dev)
     for (int k = 0; k < NCMP; k++) {
         timer_del(s->cmp[k].t);
     }
-    timer_mod(s->vd, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-              FRAME_US * SCALE_US);
+    if (!s->ext_vd) {
+        timer_mod(s->vd, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                  FRAME_US * SCALE_US);
+    }
 }
 
 static void ev_init(Object *obj)
@@ -180,6 +198,7 @@ static void ev_init(Object *obj)
     sysbus_init_irq(sbd, &s->irq_a);
     sysbus_init_irq(sbd, &s->irq_b);
     s->vd = timer_new_ns(QEMU_CLOCK_VIRTUAL, ev_vd, s);
+    qdev_init_gpio_in(DEVICE(obj), ev_vd_in, 1);
     for (int k = 0; k < NCMP; k++) {
         s->cmp[k] = (Cmp){ s, k,
                            timer_new_ns(QEMU_CLOCK_VIRTUAL, ev_cmp_fire,
@@ -187,10 +206,15 @@ static void ev_init(Object *obj)
     }
 }
 
+static const Property ev_props[] = {
+    DEFINE_PROP_BOOL("ext-vd", EvselState, ext_vd, false),
+};
+
 static void ev_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     device_class_set_legacy_reset(dc, ev_reset);
+    device_class_set_props(dc, ev_props);
 }
 
 static const TypeInfo ev_info = {
