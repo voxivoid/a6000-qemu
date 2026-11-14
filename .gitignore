@@ -11,3 +11,14 @@ __pycache__/
 .DS_Store
 /state/
 /re/ida_stor/
+# --- never publish (Sony copyright / the owner's device data) ---
+# initramfs bundles Sony kernel modules + firmware userland; rebuilt by run.sh
+/provision/*.cpio
+# Hex-Rays output of Sony binaries
+/re/ida_stor/
+# logs and RAM-snapshot data captured from the owner's real camera
+/re/real_kernel_log.txt
+/data/*.bin
+# build products
+/tools/*.dylib
+/tools/*.so
