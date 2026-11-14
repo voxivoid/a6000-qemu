@@ -16,7 +16,7 @@ __pycache__/
 /provision/*.cpio
 # Hex-Rays output of Sony binaries
 /re/ida_stor/
-# logs and RAM-snapshot data captured from the owner's real camera
+# real-camera logs; NAND dump of the owner's camera; data generated from the updater (tools/mkdata.py)
 /re/real_kernel_log.txt
 /data/*.bin
 /data/*.BIN

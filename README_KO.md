@@ -11,7 +11,7 @@
 | `patches/qemu-v10.1.0-sony-a5000.patch` | 위 변경 전체 (QEMU 원본에 재적용용) |
 | `run.sh` | 순정 커널+initrd로 부팅 (`A5K_STOCK_CONSOLE=1`이면 순정 `console=ttynull` 그대로) |
 | `provision/` | 공장식 NAND 프로그래밍 initramfs (Sony FTL이 빈 NAND를 포맷 → `NAND.BIN` 기록) |
-| `tools/` | `a5ktrace.c`(TCG 추적 플러그인: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py`(HMP), `klog.py`(Sony klog 링 읽기), `wbi.py`(실기 WBI 스냅샷 조회·페이지워크), `sym.py`(커널 심볼) |
+| `tools/` | `mkdata.py`(업데이터에서 `data/` 생성), `a5ktrace.c`(TCG 추적 플러그인: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py`(HMP), `klog.py`(Sony klog 링 읽기), `wbi.py`(실기 WBI 스냅샷 조회·페이지워크), `sym.py`(커널 심볼) |
 | `re/` | 커널 심볼(`kernel_syms.txt`). ELF 복원본(`vmlinux.elf`)·실기 커널 로그는 로컬 전용(비공개) |
 | `docs/HARDWARE.md` | SoC 모델 전체와 각 값의 출처(V/S/H) |
 
@@ -22,7 +22,9 @@
 |---|---|
 | `firmware/unpacked/...` | Sony 공식 업데이터 `Update_ILCE5000V110.exe`를 푼 것 (fwtool 구조, 또는 `A5K_FW` 지정) |
 | `data/NAND.BIN` | **본인 소유** 카메라의 NAND 덤프 (또는 `provision.sh`에 경로 인자로) |
-| `data/*.bin`, `data/wbi/` | 본인 카메라의 hand-off 페이지·서브마이컴 프레임·RAM 스냅샷 (`data/README.md`) |
+| `data/*.bin`, `data/wbi/` | 공장 RAM 스냅샷·hand-off 페이지·서브마이컴 프레임 — 업데이터에서 `tools/mkdata.py`로 생성 |
+
+단계별 방법: [`data/README.md`](data/README.md).
 
 ## QEMU 받기
 `qemu/` 폴더는 **공개하지 않습니다**. 업스트림 QEMU의 로컬 체크아웃 위에 우리 커밋을 쌓은 것입니다.

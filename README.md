@@ -11,7 +11,7 @@ Goal: run the official Sony ILCE-5000 (α5000) firmware 1.10 **unmodified**, wit
 | `patches/qemu-v10.1.0-sony-a5000.patch` | All of the above as one patch against upstream QEMU v10.1.0 |
 | `run.sh` | Boots the stock kernel + initrd (`A5K_STOCK_CONSOLE=1` keeps the stock `console=ttynull`) |
 | `provision/` | Factory-style NAND programming initramfs (the Sony FTL formats an empty NAND, then writes your `NAND.BIN`) |
-| `tools/` | `a5ktrace.c` (TCG trace plugin, build: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py` (HMP), `klog.py` (Sony klog ring), `wbi.py` (WBI snapshot lookup / page walk), `sym.py` (kernel symbols) |
+| `tools/` | `mkdata.py` (build `data/` from the updater), `a5ktrace.c` (TCG trace plugin, build: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py` (HMP), `klog.py` (Sony klog ring), `wbi.py` (WBI snapshot lookup / page walk), `sym.py` (kernel symbols) |
 | `re/` | Kernel symbols (`kernel_syms.txt`). The ELF rebuild (`vmlinux.elf`) and real-camera logs stay local (not published) |
 | `docs/` | Reverse-engineering notes (Korean). `docs/HARDWARE.md` = SoC model with the source of every value (V/S/H) |
 
@@ -22,7 +22,9 @@ All commands below run from the repository root.
 |---|---|
 | `firmware/unpacked/...` | Sony's official updater `Update_ILCE5000V110.exe`, unpacked (fwtool layout; or set `A5K_FW`) |
 | `data/NAND.BIN` | NAND dump of **your own** camera (or pass the path to `provision.sh`) |
-| `data/*.bin`, `data/wbi/` | Hand-off page, sub-micro frames, RAM snapshot from your own camera (`data/README.md`) |
+| `data/*.bin`, `data/wbi/` | Factory RAM snapshot, hand-off page and sub-micro frames, generated from the updater by `tools/mkdata.py` |
+
+Step-by-step instructions: [`data/README.md`](data/README.md).
 
 ## Getting QEMU
 The `qemu/` directory is **not published**: it is a local checkout of upstream QEMU with our commits on top.
