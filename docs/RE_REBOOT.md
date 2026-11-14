@@ -344,3 +344,242 @@ Common: fresh NAND clone, binary copied, `-M usb-socket=127.0.0.1:<p>` where USB
    after WRITE_FIRM / COMPLETE (the busy loop in RE_USB_HOST_PATH §9 is a separate issue).
 7. Whether the real bootloader also clears or ignores `pm.sus_error` on a cold power-on (no effect on the emulator
    while the hand-off page is a ROM blob).
+
+---------------------------------------------------------------------------------------------------------------------
+
+## Capture-control stop (0x300E) gate
+
+Closes open question 1 (gap (a) of §0/§1.3). Static RE: Hex-Rays + disassembly on a private IDB copy
+(`C:\a5000\emu\poff\po.i64`, from `reboot\pristine.i64`). Hex-Rays drops most globals in the link module
+(`MEMORY[x]`), so every claim about it was checked in the disassembly. Dynamic RE: HEAD binary (null SA, Sgc1 latch,
+SYSV master V), pristine NAND clone per run, no SD, `pmca-console updatershell -d socket` + `sendkey ret 400`,
+`a5ktrace` `fn=` probes reloaded at the OK press, HMP `xp`/`pmemsave`, and one gdb run that only **wrote three bytes**.
+Runs (scratch `re-poff/r1..r3`): **p1, p2** stock (both stall); **p3** with `A5K_SMFRAMES` = `data/submicro_frames.bin`
+with TLV 3 data[1] bit 6 set again (the snapshot value), then the gdb write. `[?]` = not proven.
+
+### A.0 Result
+
+| Question | Answer |
+|---|---|
+| What capcon request 8 waits for | Nothing in av-cam's own hardware. 0x300E drives the **mode sequencer** (path 1 → 0x20). Its last module request is **module 0xD = 0x0D20** ("cold power-off" mode of the sub-micro link). Module 0xD answers only when the **link driver commits mode 0x0D20**, and it commits only after a **handshake with the sub-micro**. |
+| The missing event | The **sub-micro**: (1) must acknowledge the CPU's power-off request by setting **slot-B RX TLV 0x03 data[1] bit 6** while the CPU's **slot-B TX TLV 0x0A data[1] bit 6** is set, and (2) must answer two **slot-A memory reads** (TX packet type **0x41** → RX packet type **0x40**, 256 bytes each from micro addresses **0x20000500** and **0x00030100**). The emulator's sub-micro replays a fixed frame, with the bit 6 that the snapshot had **cleared by `mkdata.py`**, and never sends a 0x40 packet. |
+| Proof | p1/p2: sequencer stuck at index 0xF, module 0xD request 0x0D20, response 0x0D00. p3 (bit 6 restored): task 48 starts the read of 0x20000500 and loops on "restart" (no 0x40 reply). p3 + gdb `byte 0x43E62C13 = 1, 0x43E62C16 = 1, 0x43E62C73 = 1` (= "both reads done"): link commits 0x0D20 → `CapconReply(0x300E)` → CameraBackground reply → im.elf inact_cmp **0x102** → `"mem"` → `cxd90014_pm_enter` → IRAM sleep code, which then spins on the DDR controller (gap (b)). |
+| Same request on a plain power-off? | Yes (static): CameraBackground sends 0x300E on every im.elf OFF, and every av-cam path into state 0x20 requests module 0xD = 0x0D20 (§A.6). |
+| Class | Missing **sub-micro behaviour** (board HLE of the micro, `hw/arm/sony_a5000.c` `a5k_submicro_*`), not an av-cam IRQ, DMA or register. |
+
+### A.1 0x300E → capcon request 8 → mode sequencer (av-cam)
+
+* `CapconExec` `437D9E68` (task 69, from queue 0x030001): 0x300E → `{0, 8, seq, replyq}` to queue **0x302D9**.
+  `tsk_capcon_sequence` `437DA408` (task 97) dispatches it to `CAM_SyncRequest_Wrapper` `4375C920(…, 0x300E)` →
+  path selector `437D8560`. The reply is `CapconReply` `4375A338` (0x300E → 776), sent by task 68 (`43A5C48A`) when
+  HS_Main has finished the path (`dword_43DC70E0 = 0x300E`). This is the same mechanism as 0x3007 (RE_PLAYBACK_SWITCH
+  §2.1).
+* Path table `0x43EC6420` (`{state, event, fn, event}`): 0x300E from every state ends in state **0x20**
+  (handlers `437D9201` state 1 → `{0x20}`, `437D9099` state 2 → `{0x20}` or `{0x43,2,0x20}`, …).
+* Observed (p1–p3, trace `PATH_setup`): when 0x300E arrives after the USB flow, the selector is in **state 1**
+  (USB connect had run 0x3007 2 → 6 and 0x3006 6 → 2 before). Transition 1 → 0x20 = step array **`0x43B7111C`**:
+  ```
+  101 201 301 401 521 601 701 960 A00 B01 C06 D00   wait 0x0810 (modules 5, C)   522 D20   wait 0x1010 (modules 5, D)   end
+  ```
+* Stuck state (p1, p2; HMP): sequencer `0x43DC7104` = `{table 0x43DC71A0, 250, 13, busy 1, steps 0x43B7111C, 17,
+  index 0x0F}`; requests `0x43DC7120[12]` = **0x0D20**, responses `0x43DC7160[12]` = **0x0D00**; every other module
+  matched. Camera-state copy `0x43D86D2E` (= `word_43D86D18 + 22`) = 0x0D20, so VD_Pre did hand the request out.
+
+### A.2 Module 0xD = the sub-micro link "power mode"
+
+* Response of module 0xD = `word_43D887AA` (HS_Main `4376B28E..4376B294`, `437D86F4(12, …)`).
+* It is written by VD_Pre `4376E172` → **`4376A54C(camstate, &word_43D887AA)`**. With the gate pointer
+  `off_43D84BB4 = &byte_43D68AC7` (set by the link at its first slot-B frame) and `byte_43D68AC7 == 0` (p2: both
+  true), it posts `{camstate, &resp}` to the link mailbox **0x1504CF**, handler **`4369D8BC`** (runs in task 66 every
+  frame, p2: `M12_task` 20/20).
+* `4369D8BC` (disassembly `4369D8BC..4369D952`): the request `camstate+22` is written into the link's mode double
+  buffer `0x43D68B3C` **only while `byte_43EDA39D != 0`**. That byte is 1 in the image (`av-cam.bin` VA 0x43EDA39D) and
+  the handler clears it: it latches once, at boot. Afterwards the handler only copies `camstate` into the request
+  record `dword_43D68B4C` (14 bytes, `{req, cam[0], cam[2], …}`) and answers with the **current committed mode**
+  (`43A3E0E6` = latest slot of `0x43D68B3C`). p2: `0x43D68B3C` = `{1, 0x0D00, 0x0D00}`.
+* The mode is committed by the **slot-B RX parser** `4369B88C` (link task 99, after every micro → CPU TLV frame), which
+  ends with `4369D880(R6)` (`4369BD54`). `R6` (disassembly `4369BB8E..4369BD80`):
+
+  | requested (`dword_43D68B4C`) | committed when | otherwise |
+  |---|---|---|
+  | 0x0D09 | `(cfg byte_43D68AC6 & 2)` or **RX TLV 0x03 data[1] bit 0** | current mode kept |
+  | **0x0D20** | (`(byte_43D68AC6 & 1)` or **RX TLV 0x03 data[1] bit 6**) **and** `byte_43E62C13` **and** `byte_43E62C16` (log 0x166) | current mode kept |
+  | anything else | — (current mode kept) | |
+
+  With bit 6 set the same function also starts the two reads (below): first time `byte_43E62C5B == 0` → log 0x161,
+  `{…, 0x20000500, 0x100}` to queue **0x2804C1**, `5B = 1`; then, once `C13 != 0` and `byte_43E62C73 == 0` → log 0x162,
+  `{…, 0x00030100, 0x100}` to 0x2804C1, `C73 = 1`.
+* `C13` / `C16` are set by link events **0x30 / 0x31** (dispatcher `4369CF88`, `4369D004..4369D010`). Those are posted
+  by `4369C42C` → `4369AFA0(0x30|0x31)` after the read result has been delivered (A.4). (`4369B6E0`, the 0x2804C0
+  handler, also sets them directly for a reply whose byte 0 ≠ 1.)
+* `byte_43D68AC6` (config block `0x43D68AB0`) = 0 at run time (p2), so only the micro bit can start it.
+* Live (p2): RX TLV 3 = `03 04 00 00 | 00 00 00 02` (bit 6 clear), `C13 = C16 = 5B = C73 = 0`.
+
+### A.3 What the CPU sends: TX TLV 0x0A data[1]
+
+`4369C580` (slot-B TX builder, before every exchange; disassembly `4369C584..4369C5E2`), TLV pointer
+`dword_43D68920[0x0A]` (`off_43D68948`), byte `+5` = data[1]:
+
+| requested mode | TX TLV 0x0A data[1] |
+|---|---|
+| 0x0D09 | bit 1 set |
+| 0x0D20 | **bit 6 set** (log 0x160 when it was clear) |
+| other | bits 6 and 1 cleared |
+
+This is the same TLV the model already parses for the lens power request (data[1] bit 0, RE_LENS_EMOUNT 2.3). So the
+handshake has the same shape as the lens one: request in TX TLV 0x0A, answer in RX TLV 0x03.
+
+### A.4 The slot-A memory read ("SaveUsr" POW/CAM)
+
+Task 48 (`439110E4` → `43913A8C`, queue 0x2804C1) turns `{addr, len}` into a chunked read through the slot-A packet.
+State: `dword_43E0C950` addr, `dword_43E0C94C` len (≤ 0x200), chunks = ceil(len / 120) → `B2/B3/B6`
+(`byte_43E749B2` total, `B3` TX chunks left, `B6` RX chunks left), `B9` RX chunk index, `BB` TX chunk index, `B8`
+"first request just sent".
+
+**CPU → micro, TX slot-A packet type 0x41** (`43915604` + `4391383C`; built instead of the normal packet while
+`B3 != 0`, one per tick, lock-step with RX):
+
+| byte | content |
+|---|---|
+| 0 | **0x41** |
+| 1..4 | micro address, LE: `addr + 120·k` |
+| 5 | chunk length n = min(len − 120·k, 0x78); **bit 7 set = write** (then data follows at 6..) |
+| 6.. | write data only; zero for a read |
+| 0x7E–0x7F | CRC-16/CCITT-FALSE, LE (as every frame) |
+
+**Micro → CPU, RX slot-A packet type 0x40** (`439149F8` → `43913AC0`): byte 0 = **0x40**, `n = byte5 & 0x7F`
+(1..0x78, and `120·B9 + n ≤ 0x200`, else the read is aborted with log 0xC0), **data at bytes 6..6+n**, valid CRC.
+The data are appended at `word_43E747B2 + 120·B9`. The address bytes 1..4 are **not checked** [?: echo them]. The
+normal field parsers do not run for a 0x40 packet.
+
+**Timing rule (important):** the RX of an exchange is what the micro loaded **before** that exchange, so the answer
+to the 0x41 sent in exchange k must come in the RX of **exchange k+1**:
+* the RX of the exchange that carried the first request is ignored (`B8`, return 18), whatever its type;
+* if a **non-0x40** RX arrives while chunks are outstanding and `B6 != B3`, the whole read restarts (`43913788`, log
+  0xC3, `B6 = B3 = B2`, `byte_43EDAA86 = 3`). This is the loop seen in p3 (`T48_restart` every second packet).
+
+Sequence for 256 bytes (3 chunks: 0x78, 0x78, 0x10): TX 0x41(k0) | RX any → TX 0x41(k1) | RX 0x40(k0) → TX 0x41(k2) |
+RX 0x40(k1) → TX normal | RX 0x40(k2) → done (log 0xC2) → `43913980` posts `{byte0 = 1, addr, len, data[≤0x200]}` to
+**0x2804C0** → `4369B6E0`: byte0 == 1 and addr 0x20000500 → `4369D64C(…, cb 4369C42C, 0x30)` (0x00030100 → 0x31).
+
+Delivery: `4369D64C` finds the region in the table at `0x43EA797C` (36-byte entries `{u16 0x185, flags, u32 mailbox,
+handler 4369D35D, addr, len, …, u8 mark}`), sets the mark and sends the data to the mailbox with `4355DC44`; the
+callback posts event 0x30/0x31. Table (static, `av-cam.bin`):
+
+| entry | micro addr | len | flags | mailbox |
+|---|---|---|---|---|
+| 0 | 0x00020280 | 0x180 | 0x0F | 0x01850001 |
+| 1 | 0x00010100 | 0x80 | 0x0F | 0x01850000 |
+| 2 | **0x20000500** | **0x100** | 0x1F | 0x01850004 |
+| 3 | **0x00030100** | **0x100** | 0x1F | 0x01850005 |
+
+The mailbox handler `4369D35C` sees the mark, logs 364 and drops the data; without the mark it would **write**
+mailbox data back into the micro (255-byte pieces through `4369D2F0`). No other receiver of 0x0185000x was found
+[?]. So the content of the read is not checked by anything that gates the off; its real content is unknown [?].
+
+### A.5 Spec for the code agent (sub-micro model, `hw/arm/sony_a5000.c`)
+
+Boundary: the micro side of the existing frame HLE (RE_SUBMICRO_LINK §6). Firmware is not touched; nothing else in
+the machine changes.
+
+1. **Power-off acknowledge (slot B).** In `a5k_submicro_slot_b()`, parse TX TLV 0x0A (`a5k_submicro_tlv(tx, 0x0a, 2)`,
+   already done for the lens) and keep `s->poff_req = t[1] & 0x42`. When building the reply:
+   * `poff_req & 0x40` → RX TLV 0x03 data[1] **|= 0x40**;
+   * `poff_req & 0x02` → RX TLV 0x03 data[1] **|= 0x01** (ack of mode 0x0D09; static only, not exercised) [?];
+   * recompute the CRC.
+   The ack follows the request (set while requested, cleared when the CPU clears it). Keep `mkdata.py` clearing
+   the snapshot bit: the initial state is "no request". Answering in the same exchange is fine: `4369B88C` re-checks
+   every frame [?: real micro latency unknown]. Log once: `sony-a5000: sub-micro power-off request acknowledged`.
+2. **Memory read (slot A).** In the slot-A path (`a5k_submicro_xfer`, both the 128-byte and the 256-byte case):
+   * If the **previous** slot-A TX was type 0x41 with byte5 bit 7 = 0 (read), the reply to **this** exchange is a
+     type-0x40 frame: `out[0] = 0x40`, `out[1..4]` = the previous TX bytes 1..4, `out[5] = n` (= previous TX byte 5),
+     `out[6..6+n)` = micro memory at that address, rest 0, CRC. Otherwise reply as today (snapshot slot A + RTC).
+   * Then remember the current TX (type, bytes 1..5, and for writes bytes 6..) for the next exchange.
+   * Micro memory: four zero-filled regions from the table in A.4 (0x00010100/0x80, 0x00020280/0x180,
+     0x20000500/0x100, 0x00030100/0x100) [? real content; zeros pass]. A read outside them returns zeros and logs
+     `LOG_UNIMP`. A write (TX byte5 bit 7) stores bytes 6..6+n into the region and is answered with a 0x40 frame
+     `n = 0` [? write ack format not decoded; no write was seen on this path].
+   * Reset all of this in `a5k_boot_reset` (power cycle).
+3. **Do not** set TLV 3 bit 6 permanently (p3 shows the read starts then): it must follow TX TLV 0x0A bit 6.
+
+Expected (USB updatershell, OK pressed), in this order:
+* av-cam log ids 0x160 (TX bit 6), 0x161, task-48 `43913A8C` with `{0x20000500, 0x100}`, three `43915604` (0x41) and
+  three `43913AC0` (0x40) without `43913788`, `4369B6E0` byte0 = 1, event 0x30 (`C13 = 1`), 0x162, the same for
+  0x00030100 (`C16 = 1`), log 0x166, `4369D880(r0 = 0x0D20)`;
+* `xp /16xh 0x83DC7160` → index 12 = 0x0D20, then the path finishes: `CapconReply` (`4375A338`, `*r0 = 0x300E`),
+  libObj `+17A156` (`cb_rcvret`), im.elf `0xADAC` with **r0 = 0x102**;
+* then A.7 (stops at gap (b) until §4.3 is implemented).
+
+### A.6 Plain power-off and other triggers
+
+* **0x300E is sent on every OFF that reaches im.elf.** `CameraBackground_inact` (libObj `0x17A9F8`) posts code 64
+  unconditionally; `sub_17A760` answers it with `sub_17A0E8(0x300E)` from states 1, 3 and 4 (state := 2). im.elf runs
+  the inact round for every upm OFF (0x920143), whatever the factor.
+* **Every path into av-cam state 0x20 needs 0x0D20.** Sequencer table (`pmemsave 0x83DC71A0`, 250 × `{from, to,
+  steps, len}`): transitions 0→20, 1→20, 2→20, 6→20, 7→20, 8→20, 0x21→20, 0x60→20 all contain `D00 … D20`; only
+  0x43→20 and 0x58→20 keep 0x0D00. **0x0D09** appears only in 0x38→9 and 8→9 (`0x43B70124`, `0x43B6FAAE`) [? which
+  request leads there; probably the WBI/warm off], 0x0D50 in 1→0x50.
+* So a cold power-off by any cause stops at the same gate, and the A.5 model fixes all of them. Warm (type 27) offs
+  were not traced [?].
+* **Non-USB triggers [?, not tested]:**
+  * Power lever = front **CAkey1 bit 0**, active low (input.ko key table, RE_INPUT_I2C_POWER §7: keycode 0x0002
+    POWER) = slot A **byte 28 bit 0** (snapshot 1 = on). The model binds only bits 1/2 (PLAY/MENU,
+    `a5k_submicro_front_key`). Binding a host key to bit 0 (held at 0 = lever off) would give a power-off
+    without USB. Which off type it produces (libObj `M_ROOT ActionReqPowerOff` defaults to type 26 → upm 27,
+    warm) is not traced.
+  * libObj `sub_319B14(20, 28, 32)` (`"Reset:1"` in `ActionRecoveryComplete`) is a cold restart from the UI, path not
+    identified.
+  * USB `updatershell` remains the proven reproducer (3/3 runs reach the gate in about 25 s after OK).
+
+### A.7 After the reply: the rest of the power-off (p3, after the byte write)
+
+Observed order (probes, ~20 s wall clock in total):
+
+1. `4369D880(0x0D20)` (task 99) → module 0xD = 0x0D20 → path end → task 68 `CapconReply(0x300E)`.
+2. libObj CameraBackground gets the reply (`+17A156`), sends inact_cmp → im.elf `0xADAC` r0 = **0x102** (the third
+   and last library after 0x155 and 0xF8).
+3. im.elf → OFF_CMP to upm → upm 33 → 34 → im.elf case **0x92014F** → `sub_9FB4(0)` (probe r2 = 0x92014F) writes
+   `"mem"` to `/sys/power/state`.
+4. Kernel suspend: all drivers suspended (no stall seen: `cxd90014_pm_prepare` / `udif_driver_suspend` returned) →
+   **`cxd90014_pm_enter` `0x40052220`** (CPU0, task im.elf) → sleep entry **`0x4037BEA0`** → copies the IRAM code →
+   **`0xC0020000`**.
+5. IRAM: MMU off. The per-channel DDR steps (+0xC4/+0xD8, +0xAC, poll +0x128) were **skipped**: `ddr_ctrl` bytes at
+   `0xC00200F4` / `0xC00200F8` = 0 in this run [?: §1.2 expects "dpd,dpd" for type 28; not traced why they are 0].
+   `+0x78` written `0x0A000000`, then **CPU0 spins at `0xC0020094`** reading `0xF0104000 + 0x7C` and comparing the low
+   byte with **0x25** (registers: R0 = 0xF0104000, R2 = 0x25, PSR SVC, IRQ off). → **gap (b)**, spec §4.3.
+6. Not reached yet: `0xC00200C8` writes `*(0xF2910048) = 0x400` (IRAM parameters seen: `0xC00200EC = 0xF2910048`,
+   `0xC00200F0 = 0x400`) = **p0.10 low** → `wfi` loop at `0xC00200DC` → **gap (c)**, sub-micro power cycle (§4.4;
+   restart bit in task-48 TX, §1.2).
+
+### A.8 Open questions
+
+1. Real micro latency for the TLV 3 bit 6 ack and real content of the four micro regions (A.4). Zeros are accepted by
+   the firmware; whether a later boot reads them back (the write-back path of `4369D35C`) is not known.
+2. Format of the micro's answer to a slot-A **write** (TX byte5 bit 7); not used on this path.
+3. Why `ddr_ctrl` is 0 in IRAM at suspend (A.7 step 5) although upm should write `"dpd,dpd"` for type 28.
+4. Which request moves av-cam to state 9 (mode 0x0D09, TLV 3 data[1] bit 0 ack), and whether warm offs (type 27) use
+   it.
+5. Off type produced by the power lever (CAkey1 bit 0) and by APO; a host-key binding for bit 0 would make a non-USB
+   regression test.
+
+### A.9 Reproduce
+
+* Probes (`fn=`; reload the file at the OK press to reset the caps):
+  ```
+  437d9e68 CapconExec  4375c920 CAM_SyncReq  43a70f76 PATH_setup  4375a338 CapconReply
+  4376a54c M12_hdl  4376a568 M12_async  4369d8bc M12_task  4369d880 SM_setmode  4369b88c SM_slotA
+  4369b6e0 SM_C0rcv  43913a8c T48_req  43915604 T48_tx41  43913ac0 T48_rx40  43913788 T48_restart
+  43913980 T48_reply  4369d64c SM_D64C  4369c42c SM_cb
+  +17a0e8 cb_send  +17a156 cb_rcvret  +17a9f8 cb_inact
+  9fb4 im_mem  40052220 pm_enter  4037bea0 sleep_entry  c0020000 iram0  c0020094 iram_7c  c00200c8 iram_poff
+  ```
+  plus `pc=0xadac,pc=0xb10a,s=0` on the plugin line (im.elf inact_cmp / inact dlsym).
+* State (HMP): `xp /16xh 0x83DC7120` / `0x83DC7160` (index 12 = module 0xD), `xp /4wx 0x83D68B38` (committed mode),
+  `xp /8xb 0x83E62C10` (`C13` = +3, `C16` = +6), `xp /8xb 0x83E62C58` (`5B` = +3), `xp /8xb 0x83E62C70` (`C73` = +3),
+  RX TLV 3: `xp /1wx 0x83D689A0` gives the TLV pointer P, then `x /8xb P`.
+* Hand check of the rest of the sequence (diagnostic only, not a fix): with TLV 3 bit 6 set
+  (`A5K_SMFRAMES` = a copy of `data/submicro_frames.bin` with byte 0xA1 |= 0x40 and the slot-B CRC recomputed), after
+  `T48_restart` appears: `arm-none-eabi-gdb -batch -ex 'target remote :PORT' -ex 'set *(unsigned char*)0x43E62C13=1'
+  -ex 'set *(unsigned char*)0x43E62C16=1' -ex 'set *(unsigned char*)0x43E62C73=1' -ex detach`.
+* Pitfall: a gdb **watchpoint** session on this machine (two watchpoints, plugin loaded) hung QEMU's main loop
+  (monitor and gdb stub dead, SIGKILL needed). Use plugin probes and plain memory reads/writes instead.
