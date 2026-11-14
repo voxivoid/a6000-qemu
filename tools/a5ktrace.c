@@ -43,17 +43,23 @@ static int ncomms;
  * Each address logs at most "fncap=N" hits (default 4) as one "A5KF" line.
  * Meant for user-space code whose load address is only known at run time.
  * "fnwords=N" adds N words at r0, "fnstr=K" the C string at *(r0 + 4K),
- * "fnr1s=1" the C string at r1.
+ * "fnr1s=1" the C string at r1; "fnr1w=N" / "fnr2w=N" up to 16 words at r1 / r2.
+ * Every A5KF line also carries the current task's comm in [brackets].
+ * More fn= line forms: "LIB.so+OFF label" = offset into a user library of
+ * the traced process (bases from its VMAs, rescanned when im.elf's mm is
+ * found); "#m TEXT" prints an "A5KMARK TEXT" line (to mark phases).
  */
 static char *fnpath;
 static int fncap = 4;
 static int fnwords;           /* "fnwords=N": also dump N words at r0 */
 static int fnstr = -1;        /* "fnstr=K": print the string *(r0 + 4K) */
 static int fnr1s;             /* "fnr1s=1": print the string at r1 */
+static int fnr1w;             /* "fnr1w=N": print N words at r1 */
+static int fnr2w;             /* "fnr2w=N": print N words at r2 */
 static GHashTable *fnset;          /* pc -> FnProbe */
 static gint64 fn_mtime, fn_checked;
 static qemu_plugin_id_t self_id;
-typedef struct { uint64_t pc; int hits; char label[48]; } FnProbe;
+typedef struct { uint64_t pc; int hits; int cap; char label[48]; } FnProbe;
 /*
  * "libobj=1" (2 = also list all im.elf file mappings): find the load address of /usr/lib/libObj.so in im.elf without a
  * debugger.  At the first probe hit from an im.elf thread ("Appframework"),
@@ -109,6 +115,34 @@ static void rdstr(uint32_t va, char *out, int n)
     g_byte_array_free(b, TRUE);
 }
 
+static uint32_t im_mm;
+static char libn[400][48];
+static uint32_t libb[400];
+static int nlib;
+static void scan_libs(void)
+{
+    uint32_t v = im_mm ? rd32(im_mm) : 0;
+    nlib = 0;
+    for (int n = 0; v && n < 3000 && nlib < 400; n++, v = rd32(v + 12)) {
+        uint32_t f = rd32(v + 76);
+        if (!f || rd32(v + 72) != 0) { continue; }
+        uint32_t de = rd32(f + 12);
+        if (!de) { continue; }
+        char nm[48]; rdstr(rd32(de + 56), nm, sizeof(nm));
+        int dup = 0;
+        for (int k = 0; k < nlib; k++) { if (!strcmp(libn[k], nm)) { dup = 1; break; } }
+        if (dup) { continue; }
+        g_strlcpy(libn[nlib], nm, sizeof(libn[0])); libb[nlib++] = rd32(v + 4);
+    }
+    g_autofree char *t = g_strdup_printf("A5KB %d libs scanned\n", nlib);
+    qemu_plugin_outs(t);
+}
+static uint32_t lib_base(const char *name)
+{
+    for (int k = 0; k < nlib; k++) { if (!strcmp(libn[k], name)) { return libb[k]; } }
+    return 0;
+}
+
 static void find_libobj(unsigned int cpu)
 {
     uint32_t sp = rd_reg(cpu, 13);
@@ -125,6 +159,8 @@ static void find_libobj(unsigned int cpu)
         return;
     }
     uint32_t mm = rd32(task + 0xcc), v = mm ? rd32(mm) : 0;
+    im_mm = mm;
+    scan_libs();
     for (int n = 0; v && n < 2000; n++, v = rd32(v + 12)) {
         uint32_t a = rd32(v + 4), e = rd32(v + 8);
         if (want_libobj > 1 && rd32(v + 72) == 0 && rd32(v + 76)) {
@@ -266,7 +302,7 @@ static void hit(unsigned int cpu, void *udata)
 static void fn_hit(unsigned int cpu, void *udata)
 {
     FnProbe *f = udata;
-    if (f->hits >= fncap) {
+    if (f->hits >= f->cap) {
         return;
     }
     f->hits++;
@@ -287,6 +323,29 @@ static void fn_hit(unsigned int cpu, void *udata)
             char t[64];
             rdstr(rd32(r0 + 4 * fnstr), t, sizeof(t));
             g_string_append_printf(g, " s=\"%s\"", t);
+        }
+    }
+    {
+        uint32_t sp = rd_reg(cpu, 13);
+        if (sp >= 0x40000000u) {
+            uint32_t task = rd32((sp & ~0x1fffu) + 12);
+            char cm[17] = "";
+            if (task) { rdstr(task + 0x1e8, cm, sizeof(cm)); }
+            g_string_append_printf(g, " [%s]", cm);
+        }
+    }
+    if (fnr1w && rd_reg(cpu, 1) >= 0x1000) {
+        uint32_t r1 = rd_reg(cpu, 1);
+        g_string_append(g, " w1=");
+        for (int k = 0; k < MIN(fnr1w, 16); k++) {
+            g_string_append_printf(g, "%08x ", rd32(r1 + 4 * k));
+        }
+    }
+    if (fnr2w && rd_reg(cpu, 2) >= 0x1000) {
+        uint32_t r2 = rd_reg(cpu, 2);
+        g_string_append(g, " w2=");
+        for (int k = 0; k < MIN(fnr2w, 16); k++) {
+            g_string_append_printf(g, "%08x ", rd32(r2 + 4 * k));
         }
     }
     if (fnr1s && rd_reg(cpu, 1) >= 0x1000) {
@@ -333,6 +392,11 @@ static bool fn_reload(void)
             fncap = atoi(l + 5);
             continue;
         }
+        if (!strncmp(l, "#m ", 3)) {
+            g_autofree char *mk = g_strdup_printf("A5KMARK %s\n", l + 3);
+            qemu_plugin_outs(mk);
+            continue;
+        }
         if (*l == '?') {
             vma_rescan = true;
             continue;
@@ -341,6 +405,20 @@ static bool fn_reload(void)
             pokes[npokes][0] = g_ascii_strtoull(l + 1, &e, 16);
             pokes[npokes++][1] = g_ascii_strtoull(e, NULL, 16);
             pokes_pending = true;
+            continue;
+        }
+        char *plus = strchr(l, '+');
+        if (plus && plus > l && *l != '+' && plus - l < 60) {
+            char nm[64]; memcpy(nm, l, plus - l); nm[plus - l] = 0;
+            if (!im_mm) { continue; }
+            uint32_t lb = lib_base(nm);
+            if (!lb) { continue; }
+            uint64_t off = g_ascii_strtoull(plus + 1, &e, 16);
+            FnProbe *f = g_new0(FnProbe, 1);
+            f->pc = (lb + off) & ~1ull;
+            f->cap = fncap;
+            g_strlcpy(f->label, g_strstrip(e), sizeof(f->label));
+            g_hash_table_replace(t, &f->pc, f);
             continue;
         }
         bool rel = *l == '+';
@@ -356,6 +434,7 @@ static bool fn_reload(void)
         }
         FnProbe *f = g_new0(FnProbe, 1);
         f->pc = pc & ~1ull;
+        f->cap = fncap;
         g_strlcpy(f->label, g_strstrip(e), sizeof(f->label));
         g_hash_table_replace(t, &f->pc, f);
     }
@@ -433,6 +512,10 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
             pokes[npokes++][1] = *e == ':' ? g_ascii_strtoull(e + 1, NULL, 16) : 1;
         } else if (!strncmp(argv[i], "fnwords=", 8)) {
             fnwords = atoi(argv[i] + 8);
+        } else if (!strncmp(argv[i], "fnr1w=", 6)) {
+            fnr1w = atoi(argv[i] + 6);
+        } else if (!strncmp(argv[i], "fnr2w=", 6)) {
+            fnr2w = atoi(argv[i] + 6);
         } else if (!strncmp(argv[i], "fnr1s=", 6)) {
             fnr1s = atoi(argv[i] + 6);
         } else if (!strncmp(argv[i], "fnstr=", 6)) {
