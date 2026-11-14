@@ -1,8 +1,8 @@
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index 2aa4b5d..b3359e0 100644
+index 2aa4b5d..a913c8a 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
-@@ -692,3 +692,22 @@ config ARMSSE
+@@ -692,3 +692,23 @@ config ARMSSE
      select UNIMP
      select SSE_COUNTER
      select SSE_TIMER
@@ -19,6 +19,7 @@ index 2aa4b5d..b3359e0 100644
 +    select CXD4115_TIMER
 +    select CXD90014_SYSCTL
 +    select CXD90014_SA
++    select CXD90014_DDRC
 +    select CXD90014_NAND
 +    select CXD90014_DMAC
 +    select CXD90014_USBHDC
@@ -176,15 +177,18 @@ index cea896b..f7a5229 100644
 +# cxd90014_gpio.c
 +cxd90014_gpio_in(int port, uint32_t value) "P%d in 0x%08x"
 diff --git a/hw/misc/Kconfig b/hw/misc/Kconfig
-index 4e35657..2b9185a 100644
+index 4e35657..4adb7c9 100644
 --- a/hw/misc/Kconfig
 +++ b/hw/misc/Kconfig
-@@ -236,3 +236,9 @@ config XLNX_VERSAL_TRNG
+@@ -236,3 +236,12 @@ config XLNX_VERSAL_TRNG
      bool
  
  source macio/Kconfig
 +
 +config CXD90014_SA
++    bool
++
++config CXD90014_DDRC
 +    bool
 +
 +config CXD90014_SYSCTL
@@ -227,10 +231,10 @@ index 8b4b61e..7659e95 100644
          return;
      case 0xF60:
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index b1d8d8e..d04bcb1 100644
+index b1d8d8e..d7af1eb 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -161,3 +161,12 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -161,3 +161,13 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
  # HPPA devices
  system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
@@ -243,11 +247,12 @@ index b1d8d8e..d04bcb1 100644
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_campig.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_ldec.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SA', if_true: files('cxd90014_sa.c'))
++system_ss.add(when: 'CONFIG_CXD90014_DDRC', if_true: files('cxd90014_ddrc.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index e3f64c0..f071422 100644
+index e3f64c0..3c1c05c 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -403,3 +403,20 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
+@@ -403,3 +403,24 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
  i2c_echo_event(const char *id, const char *event) "%s: %s"
  i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
  i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
@@ -264,6 +269,10 @@ index e3f64c0..f071422 100644
 +
 +# cxd90014_campig.c
 +cxd_campig_frame(uint64_t base, uint32_t paths) "0x%08" PRIx64 " frame done, status |= 0x%08x"
++
++# cxd90014_ddrc.c
++cxd_ddrc_rd(uint64_t off, uint32_t v) "rd +0x%03" PRIx64 " -> 0x%08x"
++cxd_ddrc_wr(uint64_t off, uint64_t v) "wr +0x%03" PRIx64 " = 0x%08" PRIx64
 +
 +# cxd90014_sa.c
 +cxd_sa_start(uint32_t core, uint32_t n, uint32_t entry, uint32_t prog, uint32_t m0, uint32_t m1, uint32_t m2, uint32_t m3) "SA%u start #%u entry 0x%08x +0x008 0x%08x mbox %08x %08x %08x %08x"

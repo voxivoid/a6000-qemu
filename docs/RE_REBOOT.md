@@ -273,7 +273,12 @@ the p0.10 write and `wfi`. DDR contents are not changed here (the power cycle in
   | 0x25 | 00 | 81 |
   | 0x31 | 02 | 80 |
 
-  Best guess [?]: 0x22 = factor, 0x24 bit0 = restart, 0x25 = cold flag | 0x80. The code agent should confirm by
+  Best guess [?]: 0x22 = factor, 0x24 bit0 = restart, 0x25 = cold flag | 0x80.
+
+  **Correction (implementation run, factor-13 cold off):** logged in `a5k_submicro_xfer`, the changed bytes are
+  +0x14 0d, +0x15 20, +0x1B 80, +0x1D 80, **+0x1E 0d**, **+0x20 01**, **+0x21 81**, +0x31 80. Entries 0x1F..0x25 in the
+  table above are four bytes too high: factor = +0x1E, restart = +0x20 bit0, cold flag | 0x80 = +0x21 [?: no restart-0
+  off observed yet, so the restart bit is unconfirmed and `poff=` still decides]. The code agent should confirm by
   logging slot-A TX in `a5k_submicro_xfer` for one `RebootCold`-type off (factor 13) and one plain off (`ExeColdOff`,
   next_boot 33 → restart 0), and fix the offsets in the model's comment.
 * **Interim** until the mapping is confirmed: a machine option `poff=restart|off`, default `restart`, with a

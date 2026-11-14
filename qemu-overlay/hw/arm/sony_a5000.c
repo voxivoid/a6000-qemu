@@ -48,6 +48,7 @@
 #include "system/system.h"
 #include "system/address-spaces.h"
 #include "system/reset.h"
+#include "system/runstate.h"
 #include "system/rtc.h"
 #include "chardev/char.h"
 #include "qom/object.h"
@@ -139,6 +140,20 @@ struct A5KMachineState {
     bool lens_pwr_req;              /* slot-B TX TLV 0x0A data[1] bit0 */
     int lens_hs[2];                 /* driven P5.4 / P2.11 */
     QEMUTimer *lens_hs_t;
+    /* sub-micro power-off (docs/RE_REBOOT.md section A.5, 4.4) */
+    uint8_t poff_req;               /* slot-B TX TLV 0x0A data[1] & 0x42 */
+    bool poff_ack_logged;
+    bool sm_rd_pending;             /* previous slot-A TX was a 0x41 */
+    uint8_t sm_rd_hdr[5];           /* its bytes 1..5 (address, length) */
+    uint8_t sm_mem[4][0x180];       /* micro memory regions (A.4 table) */
+    uint8_t sa_tx_last[128];        /* last normal slot-A TX packet */
+    uint8_t sa_tx_boot[128];        /* the first one after reset */
+    bool sa_tx_valid, sa_tx_boot_valid;
+    int poff_level;                 /* p0.10 latch as last reported */
+    bool poff_restart;              /* poff=restart (default) or off */
+    char *poff;
+    QEMUTimer *poff_t;
+    int reset_kind;                 /* A5K_RESET_* consumed on reset */
     char *cmdline;
     uint8_t *kernel, *initrd;
     size_t kernel_len, initrd_len;
@@ -492,17 +507,104 @@ static void a5k_rtc_tx(A5KMachineState *s, const uint8_t *tx)
                 "%02u:%02u:%02u UTC", w[0], w[1], w[2], w[3], w[4], w[5]);
 }
 
-static void a5k_submicro_slot_a(A5KMachineState *s, uint8_t *out)
+/*
+ * Micro memory read/written through slot-A packets 0x41 (docs/RE_REBOOT.md
+ * section A.4): the four regions of av-cam's table 0x43EA797C.  On a cold
+ * power-off av-cam reads 0x20000500 and 0x00030100 (256 bytes each) and
+ * only commits the micro's power mode 0x0D20 once both reads completed.
+ * hypothesis: the real content is unknown; nothing on the off path checks
+ * it, so zero-filled regions stand in.
+ */
+static const struct {
+    uint32_t addr, len;
+} a5k_sm_regions[4] = {
+    { 0x00010100, 0x080 },
+    { 0x00020280, 0x180 },
+    { 0x20000500, 0x100 },
+    { 0x00030100, 0x100 },
+};
+
+static uint8_t *a5k_sm_mem(A5KMachineState *s, uint32_t addr, int n)
 {
-    memcpy(out, s->submicro_frames, 128);
-    out[6] = 2;                     /* clock valid (bit 1 = write ack) */
-    if (s->rtc_ack > 0) {
-        s->rtc_ack--;
-        memcpy(out + 7, s->rtc_set, 6);
-    } else {
-        a5k_rtc_now(s, out + 7);
+    for (int i = 0; i < ARRAY_SIZE(a5k_sm_regions); i++) {
+        uint32_t off = addr - a5k_sm_regions[i].addr;
+        if (addr >= a5k_sm_regions[i].addr &&
+            off + n <= a5k_sm_regions[i].len) {
+            return s->sm_mem[i] + off;
+        }
+    }
+    qemu_log_mask(LOG_UNIMP, "sony-a5000: sub-micro memory 0x%08x+%d "
+                  "outside the known regions (zeros)\n", addr, n);
+    return NULL;
+}
+
+/*
+ * Slot-A 0x41 = CPU memory request (av-cam 43915604/4391383C): bytes 1..4
+ * micro address (LE), byte 5 = length (<= 0x78), bit 7 = write with the data
+ * at 6...  The answer is due in the RX of the NEXT exchange (the micro loads
+ * its TX before the transfer): type 0x40, bytes 1..4 address echo [? not
+ * checked by av-cam], byte 5 length, data at 6.. (parser 439149F8/43913AC0).
+ * A write is answered with length 0 [? write ack not decoded; not used on
+ * the power-off path].
+ */
+static void a5k_submicro_mem_reply(A5KMachineState *s, uint8_t *out)
+{
+    uint32_t addr = ldl_le_p(s->sm_rd_hdr);
+    bool wr = s->sm_rd_hdr[4] & 0x80;
+    int n = wr ? 0 : MIN(s->sm_rd_hdr[4] & 0x7f, 0x78);
+    uint8_t *m = n ? a5k_sm_mem(s, addr, n) : NULL;
+
+    memset(out, 0, 128);
+    out[0] = 0x40;
+    memcpy(out + 1, s->sm_rd_hdr, 4);
+    out[5] = n;
+    if (m) {
+        memcpy(out + 6, m, n);
     }
     a5k_submicro_crc(out);
+}
+
+static void a5k_submicro_mem_tx(A5KMachineState *s, const uint8_t *tx)
+{
+    s->sm_rd_pending = tx[0] == 0x41;
+    if (!s->sm_rd_pending) {
+        return;
+    }
+    memcpy(s->sm_rd_hdr, tx + 1, 5);
+    if (tx[5] & 0x80) {
+        int n = MIN(tx[5] & 0x7f, 0x78);
+        uint8_t *m = a5k_sm_mem(s, ldl_le_p(tx + 1), n);
+        if (m) {
+            memcpy(m, tx + 6, n);
+        }
+    }
+}
+
+static void a5k_submicro_slot_a(A5KMachineState *s, const uint8_t *tx,
+                                uint8_t *out)
+{
+    if (s->sm_rd_pending) {
+        a5k_submicro_mem_reply(s, out);
+    } else {
+        memcpy(out, s->submicro_frames, 128);
+        out[6] = 2;                 /* clock valid (bit 1 = write ack) */
+        if (s->rtc_ack > 0) {
+            s->rtc_ack--;
+            memcpy(out + 7, s->rtc_set, 6);
+        } else {
+            a5k_rtc_now(s, out + 7);
+        }
+        a5k_submicro_crc(out);
+    }
+    a5k_submicro_mem_tx(s, tx);
+    if (tx[0] != 0x41) {
+        memcpy(s->sa_tx_last, tx, 128);
+        s->sa_tx_valid = true;
+        if (!s->sa_tx_boot_valid) {
+            memcpy(s->sa_tx_boot, tx, 128);
+            s->sa_tx_boot_valid = true;
+        }
+    }
 }
 
 /* find TLV @id in a slot-B frame (RE_SUBMICRO_LINK.md section 3.1) */
@@ -524,18 +626,48 @@ static uint8_t *a5k_submicro_tlv(uint8_t *f, int id, int minlen)
  * in its slot-B TLV 0x0A data[1] bit0 (av-cam 436B760C), the micro answers
  * in TLV 0x03 data[3] bit0 (consumer 436B75CC; RE_LENS_EMOUNT.md 2.3).  Only
  * acknowledged with a lens model attached (lens=ekit).
+ *
+ * Power mode of the link (docs/RE_REBOOT.md sections A.2, A.3): the CPU asks
+ * for mode 0x0D20 (cold power-off) with TX TLV 0x0A data[1] bit 6 and for
+ * 0x0D09 with bit 1 (av-cam 4369C580); the slot-B RX parser 4369B88C only
+ * commits the mode once the micro reports RX TLV 0x03 data[1] bit 6 (resp.
+ * bit 0 for 0x0D09 [? static only, not exercised]).  The snapshot frame
+ * comes from a camera that was powering off (bit 6 set; mkdata.py clears
+ * it), so the ack follows the request: set while requested.  Answered in
+ * the same exchange [? real micro latency unknown; 4369B88C re-checks every
+ * frame].
  */
 static void a5k_submicro_slot_b(A5KMachineState *s, uint8_t *tx, uint8_t *out)
 {
     uint8_t *t;
+    bool dirty = false;
 
     if (tx[0] == 0x31 && (t = a5k_submicro_tlv(tx, 0x0a, 2))) {
         s->lens_pwr_req = t[1] & 1;
+        s->poff_req = t[1] & 0x42;
     }
     memcpy(out, s->submicro_frames + 128, 128);
     if (s->lens_ekit && s->lens_pwr_req &&
         (t = a5k_submicro_tlv(out, 0x03, 4))) {
         t[3] |= 1;
+        dirty = true;
+    }
+    if (s->poff_req && (t = a5k_submicro_tlv(out, 0x03, 2))) {
+        if (s->poff_req & 0x40) {
+            t[1] |= 0x40;
+        }
+        if (s->poff_req & 0x02) {
+            t[1] |= 0x01;
+        }
+        dirty = true;
+        if (!s->poff_ack_logged) {
+            s->poff_ack_logged = true;
+            info_report("sony-a5000: sub-micro power-off request "
+                        "acknowledged (TLV 0x0a data[1] = 0x%02x)",
+                        s->poff_req);
+        }
+    }
+    if (dirty) {
         a5k_submicro_crc(out);
     }
 }
@@ -554,7 +686,7 @@ static void a5k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
         a5k_submicro_slot_b(s, buf, out);
     } else {
         a5k_rtc_tx(s, buf);
-        a5k_submicro_slot_a(s, out);
+        a5k_submicro_slot_a(s, buf, out);
     }
     if (len > 128) {
         /* 256-byte exchange: slot A followed by slot B */
@@ -748,6 +880,134 @@ static const QemuInputHandler a5k_key_handler = {
 #define A5K_STUB_ENTRY_LIT  (A5K_STUB_ADDR + 20 * 4)  /* ldr pc literal */
 #define A5K_SMP_MBOX        0xC0005010ULL
 
+/*
+ * Reset kinds (docs/RE_REBOOT.md section 4.1).  A SoC reset (SYSCTL +0x44,
+ * WDT, HMP system_reset) keeps the DDR contents.  A power cycle by the
+ * sub-micro loses them: the IRAM sleep code puts DDR in deep power-down
+ * ("ddr_ctrl=dpd") and the SoC loses power, so a5k_boot_reset clears all
+ * of DDR and IRAM before rom_reset restores the ROM blobs (zero stands in
+ * for the undefined content after power loss).
+ */
+enum {
+    A5K_RESET_SOC = 0,
+    A5K_RESET_POWER,
+};
+
+#define A5K_IRAM_BASE       0xC0000000ULL
+#define A5K_IRAM_SIZE       (16 * MiB)
+#define A5K_GPIO_BASE       0xF2910000ULL
+#define A5K_POFF_PIN        10      /* p0.10, cfg.poff=0,10 */
+#define A5K_POFF_DELAY_MS   100     /* hypothesis: lets the wfi loop settle */
+
+static void a5k_dump_sa_tx(const char *what, const uint8_t *f)
+{
+    for (int o = 0; o < 64; o += 16) {
+        info_report("sony-a5000: slot-A TX %s +0x%02x: %02x %02x %02x %02x "
+                    "%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x "
+                    "%02x", what, o, f[o], f[o + 1], f[o + 2], f[o + 3],
+                    f[o + 4], f[o + 5], f[o + 6], f[o + 7], f[o + 8],
+                    f[o + 9], f[o + 10], f[o + 11], f[o + 12], f[o + 13],
+                    f[o + 14], f[o + 15]);
+    }
+}
+
+/*
+ * Restart/factor bytes of the slot-A TX packet (RE_REBOOT.md 4.4).  Seen at
+ * the p0.10 drop of an OFF_BY_UPDATE (pmca updatershell, factor 13, cold):
+ *   +0x14 0d  +0x15 20  +0x1B 80  +0x1D 80  +0x1E 0d  +0x20 01  +0x21 81
+ *   +0x31 80
+ * i.e. the RE_REBOOT.md 4.4 table with the entries 0x1F..0x25 four bytes
+ * lower (0x14, 0x15 and 0x31 match).  hypothesis: 0x1E = off factor,
+ * 0x20 bit 0 = restart, 0x21 = cold flag | 0x80; a plain off (restart 0)
+ * has not been observed yet.  Logged on every off; the decision itself is
+ * the poff= option for now.
+ */
+#define A5K_SA_TX_FACTOR    0x1E
+#define A5K_SA_TX_RESTART   0x20
+
+static void a5k_poff_cycle(void *opaque)
+{
+    A5KMachineState *s = opaque;
+    int factor = s->sa_tx_valid ? s->sa_tx_last[A5K_SA_TX_FACTOR] : -1;
+
+    info_report("sony-a5000: sub-micro power cycle (factor %d)", factor);
+    s->reset_kind = A5K_RESET_POWER;
+    qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+}
+
+/*
+ * Power-off line p0.10 (RE_REBOOT.md 1.4 step 3, 4.4): the IRAM sleep code
+ * at 0xC00200C8 writes 0xF2910048 = 0x400 (p0 output clear, from the
+ * kernel's cfg.poff=0,10) and then loops on wfi; the sub-micro sees the line
+ * drop and removes power.  With restart requested it powers the SoC up
+ * again (power cycle), otherwise it stays off.
+ */
+static void a5k_poff_line(void *opaque, int n, int level)
+{
+    A5KMachineState *s = opaque;
+    bool fall = s->poff_level && !level;
+
+    s->poff_level = level;
+    if (!fall) {
+        return;
+    }
+    /* r15 is only exact to the translation block: enough to tell IRAM */
+    uint32_t pc = current_cpu ? ARM_CPU(current_cpu)->env.regs[15] : 0;
+    info_report("sony-a5000: power-off line p0.10 low (pc ~0x%08x, "
+                "off request 0x%02x)", pc, s->poff_req);
+    if (s->sa_tx_boot_valid) {
+        a5k_dump_sa_tx("at boot", s->sa_tx_boot);
+    }
+    if (s->sa_tx_valid) {
+        a5k_dump_sa_tx("at off", s->sa_tx_last);
+        info_report("sony-a5000: slot-A TX factor byte 0x%02x = 0x%02x, "
+                    "restart byte 0x%02x = 0x%02x [?]", A5K_SA_TX_FACTOR,
+                    s->sa_tx_last[A5K_SA_TX_FACTOR], A5K_SA_TX_RESTART,
+                    s->sa_tx_last[A5K_SA_TX_RESTART]);
+    }
+    if (s->poff_restart) {
+        timer_mod(s->poff_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                  A5K_POFF_DELAY_MS * SCALE_MS);
+    } else {
+        info_report("sony-a5000: sub-micro power off");
+        qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
+    }
+}
+
+/*
+ * Bootloader stand-in: p0.10 is left driven high ("power hold") at power-on
+ * [hypothesis: Linux never configures p0.10 (p0 dir = 0x40, out = 0x01 at
+ * the shooting screen) yet the sleep code drives it low to power off, so it
+ * must have been driven high before the kernel].  Runs after the device
+ * reset cleared the GPIO latch.
+ */
+static void a5k_poff_hold(A5KMachineState *s)
+{
+    uint32_t bit = cpu_to_le32(1u << A5K_POFF_PIN);
+
+    s->poff_level = 0;
+    if (!s->gpio) {
+        return;
+    }
+    address_space_write(&address_space_memory, A5K_GPIO_BASE + 0x44,
+                        MEMTXATTRS_UNSPECIFIED, &bit, 4);   /* out set */
+    address_space_write(&address_space_memory, A5K_GPIO_BASE + 0x04,
+                        MEMTXATTRS_UNSPECIFIED, &bit, 4);   /* dir set */
+}
+
+/* sub-micro power-off / memory-read state (micro side, RE_REBOOT.md A.5) */
+static void a5k_submicro_poff_reset(A5KMachineState *s)
+{
+    s->poff_req = 0;
+    s->poff_ack_logged = false;
+    s->sm_rd_pending = false;
+    memset(s->sm_mem, 0, sizeof(s->sm_mem));
+    s->sa_tx_valid = s->sa_tx_boot_valid = false;
+    if (s->poff_t) {
+        timer_del(s->poff_t);
+    }
+}
+
 static bool a5k_ddr_range(uint32_t pa, uint32_t len)
 {
     return pa >= A5K_DDR_BASE && len <= A5K_DDR_SIZE &&
@@ -760,6 +1020,18 @@ static void a5k_boot_reset(void *opaque)
     AddressSpace *as = &address_space_memory;
     uint32_t d[8];
     bool ext;
+
+    if (s->reset_kind == A5K_RESET_POWER) {
+        /* power loss: DDR and IRAM content gone, ROM blobs come back next */
+        address_space_set(as, A5K_DDR_BASE, 0, A5K_DDR_SIZE,
+                          MEMTXATTRS_UNSPECIFIED);
+        address_space_set(as, A5K_IRAM_BASE, 0, A5K_IRAM_SIZE,
+                          MEMTXATTRS_UNSPECIFIED);
+        info_report("sony-a5000: power-on (DDR and IRAM cleared)");
+    }
+    s->reset_kind = A5K_RESET_SOC;
+    a5k_poff_hold(s);
+    a5k_submicro_poff_reset(s);
 
     address_space_read(as, A5K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED, d,
                        sizeof(d));
@@ -1020,7 +1292,7 @@ static void a5k_init(MachineState *ms)
     }
     qdev_prop_set_bit(dev, "lens-attached", s->lens_ekit);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2910000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, A5K_GPIO_BASE);
     for (int pn = 0; pn <= 16; pn++) {
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), pn,
                            pic[GIC_ID(pn < 16 ? 121 + pn : 144)]);
@@ -1030,6 +1302,22 @@ static void a5k_init(MachineState *ms)
     }
     s->gpio = dev;
     s->submicro_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_submicro_tick, s);
+    /* power-off line p0.10 -> sub-micro (power cycle / power off) */
+    if (!s->poff || !strcmp(s->poff, "restart")) {
+        s->poff_restart = true;
+    } else if (!strcmp(s->poff, "off")) {
+        s->poff_restart = false;
+    } else {
+        error_report("sony-a5000: poff=%s: expected restart or off", s->poff);
+        exit(1);
+    }
+    qemu_log_mask(LOG_UNIMP, "sony-a5000: power-off line: restart decision "
+                  "from poff=%s, not from the slot-A TX restart bit (offsets "
+                  "unconfirmed, RE_REBOOT.md 4.4)\n",
+                  s->poff_restart ? "restart" : "off");
+    s->poff_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_poff_cycle, s);
+    qdev_connect_gpio_out_named(dev, "out", 0 * 32 + A5K_POFF_PIN,
+                                qemu_allocate_irq(a5k_poff_line, s, 0));
     if (s->lens_ekit) {
         /* lens handshake echo: P5.4 -> P0.5, P2.11 -> P2.10 */
         qemu_irq *hs = qemu_allocate_irqs(a5k_lens_hs_out, s, 2);
@@ -1210,6 +1498,9 @@ static void a5k_init(MachineState *ms)
                                pic[GIC_ID(173 + u * 8 + c)]);
         }
     }
+
+    /* DDR controller (IRAM sleep code, docs/RE_REBOOT.md 4.3) */
+    sysbus_create_simple("cxd90014-ddrc", 0xF0104000, NULL);
 
     /* DMP SMAPH-S30 GPU (grm_gles.ko + libObj rm_*), GIC 76 */
     sysbus_create_simple("dmp-smaph-s30", 0xF1000000, pic[GIC_ID(76)]);
@@ -1546,6 +1837,17 @@ static void a5k_set_loader(Object *o, const char *v, Error **errp)
     A5K_MACHINE(o)->loader = g_strdup(v);
 }
 
+static char *a5k_get_poff(Object *o, Error **errp)
+{
+    return g_strdup(A5K_MACHINE(o)->poff);
+}
+
+static void a5k_set_poff(Object *o, const char *v, Error **errp)
+{
+    g_free(A5K_MACHINE(o)->poff);
+    A5K_MACHINE(o)->poff = g_strdup(v);
+}
+
 static char *a5k_get_preload(Object *o, Error **errp)
 {
     return g_strdup(A5K_MACHINE(o)->preload);
@@ -1603,6 +1905,10 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
                                   a5k_set_loader);
     object_class_property_set_description(oc, "loader",
         "Stage-1 loader initramfs (bootloader NAND duties), see docs/BOOT.md");
+    object_class_property_add_str(oc, "poff", a5k_get_poff, a5k_set_poff);
+    object_class_property_set_description(oc, "poff",
+        "restart|off: what the sub-micro does when the power-off line "
+        "p0.10 drops (default restart = power cycle)");
     object_class_property_add_str(oc, "preload", a5k_get_preload,
                                   a5k_set_preload);
     object_class_property_set_description(oc, "preload",

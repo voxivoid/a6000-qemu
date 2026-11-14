@@ -42,7 +42,8 @@ Every value here was recovered from the official 1.10 firmware (kernel
 | sio0..4 | 0xF2405000 + 0x200·n | 201..205 | — |
 | clkrst3 | 0xF2900000 | — | unimp |
 | ldec (LZ decoder) | 0xF2903000 | 171 | — |
-| gpio_p0..p17 | 0xF2910000 + 0x100·n | — | unimp (`set_led` uses p0 +0x44/+0x48) |
+| gpio_p0..p17 | 0xF2910000 + 0x100·n | — | cxd90014-gpio; p0.10 = power-off line: the board sets it high at reset (bootloader stand-in, H) and a 1→0 edge (IRAM sleep code, `0xF2910048 = 0x400`) triggers the sub-micro power cycle / power off (`poff=`) — V for the updater restart (`docs/RE_REBOOT.md` §4.4) |
+| DDR controller | 0xF0104000 | — | cxd90014-ddrc: +0xAC command (bit1 → +0x128 bit12 done), +0x12C W1C, +0x78[31:24] requested state, +0x7C low byte 0x25 when 0x0A requested; register names H — V for the IRAM sleep code (`docs/RE_REBOOT.md` §4.3) |
 | system ctrl | 0xF2915000 | — | cxd90014-sysctl: +0 chip id 0x500 (S), +0x44/+0x48 rst set/clr, 0x11 = SoC reset — V |
 | otg | 0xF2920000 | 232 (VBUS), 233 (ID) | cxd90014-usbhdc: +0x10 bit0 VBUS active low, bit1 ID; 3 = no cable, 2 = A5KU client connected; GIC 232 pulse on change — V (`docs/RE_USB_DEVICE_CONTROLLER.md` §6/§9) |
 | hdmi | 0xF2A24000 | — | — |
