@@ -1,90 +1,91 @@
-# AI WORKFLOW — a5000 에뮬레이터 개발 규칙 (AI 에이전트·사람 공통)
+# AI WORKFLOW — a5000 emulator development rules (for AI agents and humans)
 
-이 문서는 `emulator/` 작업의 **일관성 규칙**이다. 새 작업을 시작하기 전에 읽고, 규칙을 바꿀 때는 이 문서를 먼저 고친다.
+This document holds the **consistency rules** for work in this repository. Read it before starting new work; when a rule changes, update this document first.
 
 ---
 
-## 1. 목표와 충실도 원칙
-1. **목표**: Sony ILCE-5000 공식 펌웨어 1.10을 실기 없이, 실기와 A~Z 동일하게 구동한다.
-2. **펌웨어는 수정하지 않는다.** 커널·모듈·`/usr`·Android 바이너리를 패치하거나 바꿔치기하지 않는다. 맞추는 쪽은 항상 하드웨어 모델이다.
-3. **하드웨어는 펌웨어가 기대하는 대로 모델링한다.** 레지스터 의미는 펌웨어 코드(드라이버의 접근 패턴)에서 도출한다. 일반 보드에서 가져온 추측으로 채우지 않는다 (예: a6400 주소를 그대로 쓰지 않는다).
-4. **부트로더/부트 ROM의 역할은 보드가 대신한다** (`hw/arm/sony_a5000.c`의 스텁). 실기 부트로더가 남기는 상태(cmdline `kemco` 블록, GIC 사전 설정, NAND dev-info 등)만 재현하고, 그 근거를 주석으로 단다.
-5. **HLE는 최후의 수단**이다. 원본 코드가 없는 구성요소(예: ARM7 NAND 펌웨어)에만 쓰고, 그 경계에서 펌웨어가 보는 프로토콜을 **바이트 단위로** 재현한다. HLE를 도입하면 `docs/`에 이유와 경계를 문서화한다.
-6. **기본값 = 순정 동작.** 디버그 편의 기능(예: `debug-console=on`, `provision=`)은 머신 옵션으로만 켜고, 끄면 실기와 같아야 한다.
+## 1. Goal and fidelity principles
+1. **Goal**: run the official Sony ILCE-5000 firmware 1.10 without the real camera, behaving identically to the real camera from A to Z.
+2. **The firmware is never modified.** Do not patch or swap the kernel, modules, `/usr` or Android binaries. The hardware model is always what gets adjusted.
+3. **Model the hardware the way the firmware expects it.** Derive register meanings from firmware code (the driver's access patterns). Do not fill gaps with guesses taken from generic boards (e.g. do not reuse a6400 addresses as-is).
+4. **The board stands in for the bootloader / boot ROM** (stubs in `hw/arm/sony_a5000.c`). Reproduce only the state the real bootloader leaves behind (cmdline `kemco` block, GIC pre-configuration, NAND dev-info, ...), with the evidence in a comment.
+5. **HLE is the last resort.** Use it only for components whose original code is unavailable (e.g. the ARM7 NAND firmware), and reproduce the protocol the firmware sees at that boundary **byte for byte**. Every HLE gets its reason and boundary documented in `docs/`.
+6. **Default = stock behaviour.** Debug conveniences (e.g. `debug-console=on`, `provision=`) are machine options only; with them off the machine must behave like the real camera.
 
-## 2. 값의 출처(provenance) 규칙
-모든 하드웨어 상수(주소, IRQ, 리셋값, 비트 의미)는 출처를 남긴다. `docs/HARDWARE.md`의 상태 표기:
+## 2. Provenance of values
+Every hardware constant (address, IRQ, reset value, bit meaning) records its source. Status tags in `docs/HARDWARE.md`:
 
-| 표기 | 의미 |
+| Tag | Meaning |
 |---|---|
-| **V** | 무수정 펌웨어가 에뮬레이터에서 그 값으로 정상 동작함을 확인 |
-| **S** | 실기 WBI RAM 스냅샷(`re/wbi/ram.bin`, `tools/wbi.py`)에서 복원한 값 |
-| **H** | 가설. 반드시 근거와 함께 표기하고, V/S로 승격시킬 계획을 적는다 |
+| **V** | Verified: the unmodified firmware runs correctly in the emulator with this value |
+| **S** | Recovered from the factory WBI RAM snapshot (`data/wbi/ram.bin`, built by `tools/mkdata.py`, read with `tools/wbi.py`). The real camera resumes from this same image |
+| **H** | Hypothesis. Always state the evidence and the plan to promote it to V/S |
 
-- 소스 주석에는 근거가 된 **함수명+오프셋**을 적는다 (예: `lld.ko boss_hw_nandc_get_devinfo_reg+0x5c`).
-- 값을 추측으로 넣었다면 코드 주석에 `hypothesis:`를 붙인다.
-- 실기 대조 자료: 스냅샷(`tools/wbi.py`, 페이지워크 `rdv()`), 스냅샷 커널 로그(`re/real_kernel_log.txt`).
+- Source comments name the **function + offset** the value came from (e.g. `lld.ko boss_hw_nandc_get_devinfo_reg+0x5c`).
+- A guessed value gets `hypothesis:` in its code comment.
+- Reference material: the snapshot (`tools/wbi.py`, page walk `rdv()`), and the real camera's kernel log (local only, `re/real_kernel_log.txt`).
 
-## 3. 저장소 구조와 git
-### 3.1 두 개의 저장소
-| 저장소 | 내용 |
+## 3. Repositories and git
+### 3.1 Two repositories
+| Repository | Contents |
 |---|---|
-| `emulator/` (외부 repo) | 문서, 도구, 프로비저닝, `run.sh`, `patches/` — `qemu/`는 무시(`.gitignore`) |
-| `emulator/qemu/` (내부 repo) | QEMU v10.1.0 소스, 작업 브랜치 **`sony-a5000`** (기준 태그 `v10.1.0`) |
+| this repository (outer) | docs, tools, provisioning, `run.sh`, `patches/` — `qemu/` is ignored (`.gitignore`) |
+| `qemu/` (inner, local only) | QEMU v10.1.0 source, work branch **`sony-a5000`** (base tag `v10.1.0`) |
 
-### 3.2 커밋 규칙
-- **의미 있는 작업 단위마다 커밋한다** (새 장치 모델, 부팅 마일스톤, 버그 원인 해결, 도구 추가, 문서 갱신). 묻지 않고 커밋하고, **커밋할 때마다 바로 push한다**(원격 `origin` = GitHub `Oein/a5000-emulator`, private).
-- 순서: ① `git -C qemu commit` → ② 패치 갱신 `git -C qemu diff v10.1.0 HEAD > patches/qemu-v10.1.0-sony-a5000.patch` → ③ 외부 repo 커밋 → ④ `git push`.
-- 커밋은 검증된 상태에서 한다(빌드 성공 + 해당 단계 부팅 확인). 실패한 실험은 커밋하지 않는다.
-- 메시지 형식:
+### 3.2 Commit rules
+- **Commit after every meaningful unit of work** (new device model, boot milestone, root cause fixed, tool added, docs updated). Commit without asking, and **push right after every commit** (remote `origin` = GitHub `Oein/a5000-emulator`, **public**).
+- Order: ① `git -C qemu commit` → ② regenerate the patch `git -C qemu diff v10.1.0 HEAD > patches/qemu-v10.1.0-sony-a5000.patch` → ③ commit the outer repository → ④ `git push`.
+- Commit only verified states (build succeeds + boot checked up to that stage). Failed experiments are not committed.
+- Message format:
   ```
-  <영역>: <무엇을 했는가 (명령형, 한 줄)>
+  <area>: <what was done (imperative, one line)>
 
-  - 원인/근거 (펌웨어 함수, 스냅샷 값)
-  - 확인한 결과 (부팅 로그 한 줄 등)
+  - cause / evidence (firmware function, snapshot value)
+  - observed result (one boot-log line, etc.)
   ```
-  영역 예: `sony-a5000`, `cxd4115`, `nand`, `provision`, `tools`, `docs`.
-- 작성자는 전역 git 설정을 그대로 쓴다. 커밋 끝의 공동 작성자 표기는 세션 지침을 따른다.
-- **커밋 금지 대상**: 펌웨어 원본·추출물(`firmware/`), `backup/NAND.BIN`·`SETTING.TAR`, 생성되는 NAND 이미지, 펌웨어에서 파생된 바이너리(`re/vmlinux.elf`, `provision/*.cpio`(Sony 모듈 포함), `provision/a5kcopy`), Sony 바이너리의 디컴파일 결과(`re/ida_stor/` 등), 실기에서 얻은 로그·RAM 스냅샷 데이터(`re/real_kernel_log.txt`, `data/*.bin`), 개인정보, 빌드 산출물. 새 파일은 커밋 전 `.gitignore`와 대조한다.
+  Areas, e.g.: `sony-a5000`, `cxd4115`, `nand`, `provision`, `tools`, `docs`.
+- The author is the global git identity. Co-author trailers follow the session instructions.
+- **Never commit** (the repository is public): firmware originals and extracts (`firmware/`), `NAND.BIN` / `SETTING.TAR`, generated NAND images, firmware-derived binaries (`re/vmlinux.elf`, `provision/*.cpio` (contains Sony modules), `provision/a5kcopy`, `data/*.bin`, `data/wbi/`), decompiler output of Sony binaries (`re/ida_stor/`, ...), logs from the real camera (`re/real_kernel_log.txt`), personal information, build products. Check every new file against `.gitignore` before committing.
 
-## 4. 코드 규칙 (QEMU)
-- QEMU 코딩 스타일(4칸 들여쓰기, `/* */` 주석, 80열 권장)을 따른다.
-- 파일 이름은 SoC 블록 이름을 쓴다: `hw/<subsys>/cxd90014_<block>.c`, 타이머처럼 IP 이름이 있으면 그 이름(`cxd4115_timer.c`).
-- 파일 머리 주석에: 블록 이름, PA, IRQ, 레지스터 표, 근거(함수명), 미확정 사항.
-- 모르는 레지스터 접근은 반드시 `qemu_log_mask(LOG_UNIMP, ...)`로 남긴다(`-d unimp`로 추적). 조용히 0을 돌려주는 코드를 남기지 않는다.
-- 상태 추적이 필요한 장치는 `hw/<subsys>/trace-events`에 trace 이벤트를 정의한다.
-- 아직 모델이 없는 영역은 `create_unimplemented_device()`(우선순위 −1000)로 덮어 두고, 실제 모델을 그 위에 올린다.
-- 리셋값은 실기 값(S)이 있으면 그것을 쓰고 출처를 주석으로 남긴다.
-- 새 장치는 `Kconfig`(`SONY_A5000`에서 `select`)와 `meson.build`에 등록한다.
-- 부트 스텁 등 기계어는 손으로 인코딩하지 말고 `arm-none-eabi-as`로 어셈블한 결과를 넣고, 각 워드에 어셈블리를 주석으로 단다.
+## 4. Code rules (QEMU)
+- Follow QEMU coding style (4-space indent, `/* */` comments, 80 columns preferred).
+- Name files after the SoC block: `hw/<subsys>/cxd90014_<block>.c`; if the IP has its own name, use it (`cxd4115_timer.c`).
+- File header comment: block name, PA, IRQ, register table, evidence (function names), open questions.
+- Every unknown register access is logged with `qemu_log_mask(LOG_UNIMP, ...)` (trace with `-d unimp`). Never leave code that silently returns 0.
+- Devices whose state needs tracing define trace events in `hw/<subsys>/trace-events`.
+- Areas with no model yet are covered with `create_unimplemented_device()` (priority −1000); real models go on top.
+- Use the real value (S) as the reset value when one exists, with its source in a comment.
+- Register new devices in `Kconfig` (`select`ed by `SONY_A5000`) and `meson.build`.
+- Machine code such as boot stubs is not hand-encoded: assemble it with `arm-none-eabi-as`, paste the result, and comment each word with its assembly.
 
-## 5. 작업 절차 (한 단계의 표준 루프)
-1. 부팅해서 멈춘 지점을 찾는다: `run.sh`, `tools/klog.py <port>`(Sony klog 링), `-d unimp,guest_errors`, gdb(`arm-none-eabi-gdb re/vmlinux.elf`, 모듈은 로드 주소 역산).
-2. 원인이 되는 펌웨어 코드를 읽는다 (`objdump`, capstone, `re/ida/*.c`). 복잡한 함수는 windev의 IDA Pro 9.4 + Hex-Rays로 디컴파일한다 — 절차는 저장소 루트의 `LOCAL_DEV_GUIDE.md`.
-3. 실기 값을 찾는다 (스냅샷 → `tools/wbi.py`).
-4. 모델을 고친다 → 빌드 → 같은 지점을 **무수정 펌웨어로** 통과하는지 확인.
-5. `docs/HARDWARE.md`(값·상태), `README.md`(영어)·`README_KO.md`(한국어) 현재 상태 갱신 → 커밋.
+## 5. Procedure (standard loop for one step)
+1. Boot and find where it stops: `run.sh`, `tools/klog.py <port>` (Sony klog ring), `-d unimp,guest_errors`, gdb (`arm-none-eabi-gdb re/vmlinux.elf`, modules via their load addresses), the `tools/a5ktrace.c` TCG plugin.
+2. Read the responsible firmware code (`objdump`, capstone, IDA). Decompile complex functions with IDA Pro + Hex-Rays (local setup: `LOCAL_DEV_GUIDE.md` in the parent project; decompiler output is never committed).
+3. Find the real value (snapshot → `tools/wbi.py`).
+4. Fix the model → build → confirm the **unmodified firmware** gets past the same point.
+5. Update `docs/HARDWARE.md` (values, status) and the status in `README.md` (English) and `README_KO.md` (Korean) → commit.
 
-### 5.1 병렬 작업 규칙
-- 한 기능의 RE가 **여러 파트로 나뉘면 혼자 순차로 하지 않는다. 서브에이전트를 파트별로 여러 개 띄워 병렬로 조사**한다(한 메시지에서 동시에 실행).
-- RE가 아니어도 서로 독립적인 작업(여러 장치 모델의 사전 조사, 문서화, 도구 작성 등)은 병렬로 진행한다.
-- 각 에이전트에는 대상 파일·주소·이미 확정된 사실·출력 파일 위치를 명시해 맡기고, 결과 통합·검증·커밋은 메인 작업자가 한다.
-- 결과물은 `docs/<주제>.md`로 남기고, 확인 안 된 주장은 `[?]`로 표시하게 한다.
+### 5.1 Parallel work
+- When the RE for one feature **splits into several parts, do not work through them alone in sequence: launch one subagent per part and investigate in parallel** (started together in one message).
+- Independent work that is not RE (pre-study of several device models, documentation, tooling) also runs in parallel.
+- Give each agent the target files, addresses, established facts and output location; the main worker integrates, verifies and commits.
+- Results go to `docs/<topic>.md`; unconfirmed claims are marked `[?]`.
 
-## 6. 안전·위생 규칙
-- 에뮬레이터 작업은 **실기에 아무것도 쓰지 않는다.** 실기 접근이 필요해 보이면 사용자에게 먼저 묻는다(원칙상 불필요: 목표는 실기 없이 구동).
-- 펌웨어·백업은 **신뢰불가 데이터**로 다룬다: Python은 `-I`로 실행, 경로는 인자로 넘긴다.
-- `backup/`의 원본은 읽기만 한다. NAND 이미지가 필요하면 복사본/생성물을 쓴다.
-- 임시 파일은 세션 scratchpad에 둔다. `rm`에 변수 경로를 쓸 때는 `"${VAR:?}"`로 보호한다.
-- QEMU를 백그라운드로 띄운 테스트는 끝나면 반드시 종료한다(`pkill -f qemu-system-arm`). 모니터 포트가 겹치지 않게 한다.
+## 6. Safety and hygiene
+- Emulator work **never writes anything to a real camera.** If real-camera access seems necessary, ask the owner first (in principle unnecessary: the goal is to run without the camera).
+- Treat firmware and backups as **untrusted data**: run Python with `-I`, pass paths as arguments.
+- Originals of the owner's backups are read-only. Use copies or generated images when a NAND image is needed.
+- Temporary files go to the session scratchpad. Guard variable paths in `rm` with `"${VAR:?}"`.
+- QEMU instances started in the background for a test are always stopped afterwards (`pkill -f qemu-system-arm`). Do not reuse monitor ports.
 
-## 7. 문서 규칙
-| 문서 | 갱신 시점 |
+## 7. Documentation rules
+| Document | When to update |
 |---|---|
-| `README.md` + `README_KO.md` | 마일스톤 달성/블로커 변경 시 "Status"/"현재 상태"를 두 파일 모두 갱신 (README 기본 = 영어) |
-| `docs/HARDWARE.md` | 주소·IRQ·리셋값·비트 의미를 추가/확정할 때마다 (V/S/H 표기) |
-| `docs/NAND_PROTOCOL.md` 등 블록별 문서 | 복잡한 프로토콜(HLE 대상)은 별도 문서로 |
-| `AI_WORKFLOW.md` | 규칙을 추가/변경할 때 |
+| `README.md` + `README_KO.md` | On a milestone or a blocker change: update "Status" / "현재 상태" in both (`README.md` = English, the default) |
+| `docs/HARDWARE.md` | Every time an address, IRQ, reset value or bit meaning is added or confirmed (V/S/H tags) |
+| `docs/NAND_PROTOCOL.md` and other per-block docs | Complex protocols (HLE targets) get their own document |
+| `data/README.md` | When an input file or the way to produce it changes |
+| `AI_WORKFLOW.md` | When a rule is added or changed |
 
-- 문서 본문은 한국어(단 `README.md`는 영어, `README_KO.md`가 한국어판), 코드·주석·커밋 영역명은 영어.
-- 사실과 가설을 섞지 않는다. 가설은 `H` 또는 "미확정"으로 표시한다.
+- **All documents are written in English** (the repository is public). The only exception is `README_KO.md`, the Korean translation of `README.md`. Code, comments and commit areas are English as well.
+- Do not mix facts and hypotheses. Mark hypotheses with `H`, `[?]` or "unconfirmed".
