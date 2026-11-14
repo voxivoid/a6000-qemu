@@ -88,3 +88,9 @@ libObj 사용자 코드 브레이크: libObj 베이스는 실행마다 다름 �
   UPM 서비스(0x9241C2/0x9243D8 배터리 레벨, 0x924126 전원 상태, 0x924223 발열)만 task 48에서 갱신된다.
 - 가설: 앱의 기동 상태 전이는 부트 사유/전원 상태(hand-off 페이지의 스냅샷 값: boot factor 7, loader mode 12)와
   서브마이컴 상태에 달려 있다. 다음 단계 = appFw(Appframework) 상태 머신이 어떤 이벤트를 기다리는지 특정.
+- 실험: hand-off 페이지 boot factor(0x8002104C)를 7 → 1(upm `k_upm_setup_boot_factor`의 전원키 경로)로 바꿔도
+  (`A5K_HANDOFF=<file>`, run.sh) VPH/SD/GPU 동작에 변화 없음.
+- appFw 상세 로그 스위치 `byte_F13D88`(libObj, `testmode_debugPrint` → osal 0x8F0139 텍스트 메시지 +20)를 커널
+  `access_process_vm`(0x400C5AB4)을 gdb `call`로 불러 im.elf 메모리에 1로 기록(26 s, 50 s 시점 모두 성공) → 이후
+  **앱 로그 0건**: Appframework 메인 루프는 poll()에서 유휴, 다음 이벤트(전원 ON 계열로 추정)를 기다린다.
+  (다른 프로세스 메모리 쓰기 절차: `__kmalloc(16,0x20)`로 커널 버퍼 → `access_process_vm(task, va, kbuf, n, write)`.)
