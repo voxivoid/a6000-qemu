@@ -128,7 +128,15 @@ static void chan_tick(void *opaque)
         c->base_count = 0;
         c->base_ns = now;
         if (c->ctrl & CTRL_ONESHT) {
+            /*
+             * A one-shot match ends the run and clears START: av-cam's
+             * timer setup (439193f4 / 4391944e) refuses a channel whose
+             * START reads 1 (-3 "busy") and nothing in its ISR clears it
+             * (docs/RE_LENS_EMOUNT.md §9.1: lens handshake ch10, imager
+             * power wait ch11).
+             */
             c->running = false;
+            c->ctrl &= ~CTRL_START;
         }
     }
     chan_update_irq(c);
