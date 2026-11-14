@@ -65,10 +65,9 @@ Every hardware constant (address, IRQ, reset value, bit meaning) records its sou
 4. Fix the model → build → confirm the **unmodified firmware** gets past the same point.
 5. Update `docs/HARDWARE.md` (values, status) and the status in `README.md` (English) and `README_KO.md` (Korean) → commit.
 
-### 5.1 Parallel work
-- When the RE for one feature **splits into several parts, do not work through them alone in sequence: launch one subagent per part and investigate in parallel** (started together in one message).
-- Independent work that is not RE (pre-study of several device models, documentation, tooling) also runs in parallel.
-- **One role per agent.** An RE agent only reverse-engineers and writes the spec doc (no code). A code agent only implements from an existing spec (in its own `qemu` git worktree), with no open-ended RE. Never add unrelated tasks to an agent that is already running; start a new single-role agent instead. Per topic: RE agent → `docs/RE_<topic>.md` → code agent.
+### 5.1 Agents
+- **One agent at a time.** No parallel agents: the main worker waits for the running agent, integrates, verifies and commits, then starts the next one from its queue.
+- **One role per agent.** An RE agent only reverse-engineers and writes the spec doc (no code). A code agent only implements from an existing spec (in its own `qemu` git worktree), with no open-ended RE. Never add unrelated tasks to a running agent. Per topic: RE agent → `docs/RE_<topic>.md` → code agent.
 - Give each agent the target files, addresses, established facts and output location; the main worker integrates, verifies and commits.
 - Results go to `docs/<topic>.md`; unconfirmed claims are marked `[?]`.
 
