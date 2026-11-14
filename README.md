@@ -7,13 +7,23 @@ Goal: run the official Sony ILCE-5000 (α5000) firmware 1.10 **unmodified**, wit
 ## Layout
 | Path | Contents |
 |---|---|
-| `qemu/` | QEMU v10.1.0 + the a5000 machine (`hw/arm/sony_a5000.c`, `hw/timer/cxd4115_timer.c`, `hw/misc/cxd90014_*.c`, `hw/block/cxd90014_nand.c`, `hw/display/{cxd90014_vph,dmp_smaph,dmp_shader}.c`, Cortex-A5 in `target/arm/tcg/cpu32.c`) |
+| `qemu/` | **Not in this repository** (git-ignored local checkout, see *Getting QEMU* below). QEMU v10.1.0 + the a5000 machine (`hw/arm/sony_a5000.c`, `hw/timer/cxd4115_timer.c`, `hw/misc/cxd90014_*.c`, `hw/block/cxd90014_nand.c`, `hw/display/{cxd90014_vph,dmp_smaph,dmp_shader}.c`, Cortex-A5 in `target/arm/tcg/cpu32.c`) |
 | `patches/qemu-v10.1.0-sony-a5000.patch` | All of the above as one patch against upstream QEMU v10.1.0 |
 | `run.sh` | Boots the stock kernel + initrd (`A5K_STOCK_CONSOLE=1` keeps the stock `console=ttynull`) |
 | `provision/` | Factory-style NAND programming initramfs (the Sony FTL formats an empty NAND, then writes your `NAND.BIN`) |
 | `tools/` | `a5ktrace.c` (TCG trace plugin, build: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py` (HMP), `klog.py` (Sony klog ring), `wbi.py` (WBI snapshot lookup / page walk), `sym.py` (kernel symbols) |
 | `re/` | Kernel symbols (`kernel_syms.txt`). The ELF rebuild (`vmlinux.elf`) and real-camera logs stay local (not published) |
 | `docs/` | Reverse-engineering notes (Korean). `docs/HARDWARE.md` = SoC model with the source of every value (V/S/H) |
+
+## Getting QEMU
+The `qemu/` directory is **not published**: it is a local checkout of upstream QEMU with our commits on top.
+Everything we changed in QEMU is in `patches/qemu-v10.1.0-sony-a5000.patch`, which applies cleanly to the `v10.1.0` tag:
+```sh
+cd emulator
+git clone --branch v10.1.0 --depth 1 https://gitlab.com/qemu-project/qemu.git qemu
+git -C qemu apply ../patches/qemu-v10.1.0-sony-a5000.patch
+mkdir -p qemu/build
+```
 
 ## Build / run
 ```sh

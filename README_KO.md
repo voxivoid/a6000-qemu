@@ -7,13 +7,23 @@
 ## 구성
 | 경로 | 내용 |
 |---|---|
-| `qemu/` | QEMU v10.1.0 + a5000 머신 (`hw/arm/sony_a5000.c`, `hw/timer/cxd4115_timer.c`, `hw/misc/cxd90014_sysctl.c`, `hw/block/cxd90014_nand.c`, `target/arm/tcg/cpu32.c`의 cortex-a5) |
+| `qemu/` | **이 저장소에 없음**(git 제외된 로컬 체크아웃, 아래 *QEMU 받기* 참고). QEMU v10.1.0 + a5000 머신 (`hw/arm/sony_a5000.c`, `hw/timer/cxd4115_timer.c`, `hw/misc/cxd90014_sysctl.c`, `hw/block/cxd90014_nand.c`, `target/arm/tcg/cpu32.c`의 cortex-a5) |
 | `patches/qemu-v10.1.0-sony-a5000.patch` | 위 변경 전체 (QEMU 원본에 재적용용) |
 | `run.sh` | 순정 커널+initrd로 부팅 (`A5K_STOCK_CONSOLE=1`이면 순정 `console=ttynull` 그대로) |
 | `provision/` | 공장식 NAND 프로그래밍 initramfs (Sony FTL이 빈 NAND를 포맷 → `NAND.BIN` 기록) |
 | `tools/` | `a5ktrace.c`(TCG 추적 플러그인: `cc -shared -fPIC -o tools/liba5ktrace.dylib tools/a5ktrace.c -Iqemu/include/qemu $(pkg-config --cflags --libs glib-2.0) -undefined dynamic_lookup`), `mon.py`(HMP), `klog.py`(Sony klog 링 읽기), `wbi.py`(실기 WBI 스냅샷 조회·페이지워크), `sym.py`(커널 심볼) |
 | `re/` | 커널 심볼(`kernel_syms.txt`). ELF 복원본(`vmlinux.elf`)·실기 커널 로그는 로컬 전용(비공개) |
 | `docs/HARDWARE.md` | SoC 모델 전체와 각 값의 출처(V/S/H) |
+
+## QEMU 받기
+`qemu/` 폴더는 **공개하지 않습니다**. 업스트림 QEMU의 로컬 체크아웃 위에 우리 커밋을 쌓은 것입니다.
+QEMU에서 바꾼 전부는 `patches/qemu-v10.1.0-sony-a5000.patch`에 있고, `v10.1.0` 태그에 그대로 적용됩니다:
+```sh
+cd emulator
+git clone --branch v10.1.0 --depth 1 https://gitlab.com/qemu-project/qemu.git qemu
+git -C qemu apply ../patches/qemu-v10.1.0-sony-a5000.patch
+mkdir -p qemu/build
+```
 
 ## 빌드 / 실행
 ```sh
