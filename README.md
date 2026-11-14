@@ -78,7 +78,7 @@ Keys pressed in the first ~20 s after the first-boot dialog appears are ignored 
 - ⏳ GPU: geometry programs (real point/line drawing), 14 GLES1-package shader opcodes, ETC1, depth/mip memory layouts unconfirmed (`docs/RE_GPU_P3D_CMD.md` §7)
 - ✅ Updater mode: with `/setting/updater/mode` in the emulated NAND the stage-1 loader boots the updater core (nflasha1) like the bootloader; it reaches a root shell and the UFP USB wait (`docs/RE_UPDATER_BOOT.md`)
 - ⏳ Camera front end: sensor writer (P2S, IRQ 38), front-end frame IRQs, AIF channel groups (IRQs 40–50) modelled; capture errors gone, live view still black (no YC-output request yet, `docs/RE_SENSOR_ISP.md` §7). Test bars: `-global cxd90014-vph.pattern=bars`
-- ✅ SA DSP cores: null model (`cxd90014_sa.c`) completes the imager's defect-table job → the engine reaches monitoring; the shooting screen now shows the exposure readout (shutter/aperture scales). Live view itself still stops before YC state 2 (`docs/RE_LIVEVIEW_REQUEST.md` §9); PLAY/SD repair get past the camera stop but sometimes end on a black screen (`docs/RE_SD_MEDIA_SERVICE.md` §10)
+- ✅ SA DSP cores: null model (`cxd90014_sa.c`) completes the imager's defect-table job → the engine reaches monitoring; the shooting screen now shows the exposure readout (shutter/aperture scales). Live view itself still stops before YC state 2 (`docs/RE_LIVEVIEW_REQUEST.md` §9); PLAY and SD work: no-card playback view; with a card the image-database dialog creates the database on the card (first SD writes) (`docs/RE_PLAYBACK_SWITCH.md`)
 - ⬜ Sensor/ISP (live view), lens serial protocol, audio
 
 ## Firmware and legal notice

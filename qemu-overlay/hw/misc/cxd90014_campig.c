@@ -28,6 +28,14 @@
  * GPIO out 0 pulses once per frame (frame end); the board connects it to
  * the unit's AIF channel group and the SIF counters.
  *
+ * +0x200..0x2FF "Sgc1" line latch (CamCore::Sgc1 436A70DC, docs/
+ *   RE_PLAYBACK_SWITCH.md §6): writing 1 to +0x214 latches +0x218 and
+ *   bit0 self-clears at once (the guest polls it with IRQs masked on
+ *   CPU3, so it must not depend on a timer).  +0x218 low 14 bits must be
+ *   5..0x3FFE, or 0x3FFF ("no sync") while +0x210 bit0 = 0; we latch
+ *   0x00800080 (hypothesis: the real value is the current line position).
+ *   +0x210 bit16 reads 0; the rest reads back.
+ *
  * cxd90014-sif: SIF sync-code receivers 0xF3122000..0xF3123FFF.  The
  * imager driver reads one 16-bit sync-code counter per block
  * (ReadSIFScodeCnt 436B2474: 0xF3122330, 0xF3122224, 0xF3123330,
@@ -49,7 +57,7 @@
 #define TYPE_CXD_CAMPIG "cxd90014-campig"
 OBJECT_DECLARE_SIMPLE_TYPE(CamPigState, CXD_CAMPIG)
 
-#define PIG_SIZE  0x100
+#define PIG_SIZE  0x400                 /* +0x200..0x2FF: Sgc1 latch */
 #define FRAME_US  33367                 /* engine constant 0x8257 */
 #define PATHS     0x0F000000u
 
@@ -99,6 +107,11 @@ static uint64_t pig_read(void *opaque, hwaddr off, unsigned size)
     case 0x38 ... 0x3C:
     case 0x50 ... 0x54:
         return R(off);
+    case 0x210:
+        return R(off) & ~(1u << 16);
+    case 0x200 ... 0x20C:
+    case 0x214 ... 0x2FC:
+        return R(off);
     }
     qemu_log_mask(LOG_UNIMP, "cxd90014-campig: rd 0x%08" HWADDR_PRIx
                   " -> 0x%x\n", s->base + off, R(off));
@@ -119,6 +132,16 @@ static void pig_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
         break;
     case 0x4C:
         s->st4c &= ~v;
+        break;
+    case 0x214:
+        if (v & 1) {
+            R(0x218) = (R(0x210) & 1) ? 0x00800080 : 0x3FFF;
+        }
+        R(off) = v & ~1u;
+        break;
+    case 0x200 ... 0x210:
+    case 0x218 ... 0x2FC:
+        R(off) = v;
         break;
     case 0x00 ... 0x0C:
     case 0x14 ... 0x2C:
