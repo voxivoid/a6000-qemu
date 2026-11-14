@@ -1138,6 +1138,35 @@ static void a5k_init(MachineState *ms)
         }
     }
 
+    /* ---- SA DSP cores, "null SA" (docs/RE_SA_DSP.md §5) ----
+     * Four cores (av-cam accessors 43923E74..43924660), each with source
+     * A/B/C interrupts.  A GO completes on source A with factor 0x01; B and
+     * C are wired but never raised.  ID strings from the task-44 compare
+     * table 4391B334.  These blocks were on the io-f0 register file before;
+     * the clock/reset block 0xF3400000 stays there. */
+    {
+        static const struct {
+            hwaddr base; int irq[3]; const char *id;
+        } sa[] = {
+            { 0xF34A0000, { 51, 52, 53 }, "ZMA0V1.0SA5_V1.0" },
+            { 0xF34B0000, { 54, 55, 56 }, "ZMA1V1.0SA5_V1.0" },
+            { 0xF34C0000, { 61, 62, 63 }, "SA0_V1.0SA5_V1.0" },
+            { 0xF35C0000, { 64, 65, 66 }, "SA1_V1.0SA5_V1.0" },
+        };
+        for (int i = 0; i < ARRAY_SIZE(sa); i++) {
+            dev = qdev_new("cxd90014-sa");
+            qdev_prop_set_uint32(dev, "index", i);
+            qdev_prop_set_uint64(dev, "base", sa[i].base);
+            qdev_prop_set_string(dev, "core-id", sa[i].id);
+            sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+            sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, sa[i].base);
+            for (int k = 0; k < 3; k++) {
+                sysbus_connect_irq(SYS_BUS_DEVICE(dev), k,
+                                   pic[GIC_ID(sa[i].irq[k])]);
+            }
+        }
+    }
+
     /* Debug view of guest frame buffers in a QEMU window (no MMIO; the
      * firmware cannot see it).  -M ...,fb=addr,w,h,stride,fmt[;...] or at
      * run time: qom-set /machine/fbview fb "..." */

@@ -329,3 +329,18 @@ ModelManager object: r0 of `MM_trans`. State: words 8 / 9 / 11 / 13 / 41 / 42.
    yet exercised.
 6. Stability: one run with the 21:00 build oopsed in av-cam (`liro-kliro_100`, PC `0x4396BFA6`, NULL + 0x78) with the
    plugin loaded. It is the same family as RE_SENSOR_ISP §7.4 and RE_ENGINE_TICK §11.4 **[?]**.
+
+## 10. Implementation status (null SA)
+Gate A is closed by the null SA model (RE_SA_DSP §5/§9): `liro-kliro_90` no longer parks in `4398EA5B`, and
+`AV_4067cb` runs for every `AV_4067`. **Gate B also passes now**: after `BGCmdStart`, `BG_reply(32)` arrives and
+`EE_STOP_cmp` (`libObj+3CDDD4`) fires, so it depended on the imager / mode sequencer, not on separate hardware.
+Acceptance (§7.4) as of this change:
+1. With a card: `VM_requestModel(0x5E)` → `EE_STOP_issue` → `BG_reply` → `EE_STOP_cmp` → **`ModelRepairToInstance`
+   runs**. The screen then stays black and no write command reaches the card (only CMD17/18 reads). AUTOREPAIR does
+   not complete and MENU does not respond, so Format could not be reached. Next layer: the repair model / libmpr
+   scenario (§9 q5), not investigated.
+2. Format → CMD24/25: not reached (see 1).
+3. Without a card: PLAY → `EE_STOP_CMP` arrives (seen in 2 runs within about 15 s of PLAY; in 2 other runs it had not
+   arrived about 40 s after PLAY when they were stopped). The "no memory card" playback view appeared in one run. In
+   another the screen stayed black for more than 2 min after `EE_STOP_CMP` and PLAY was ignored (sequencer on step
+   array `0x43B71526`, all modules matched). Before the SA model, the no-card view appeared without `EE_STOP_CMP`.

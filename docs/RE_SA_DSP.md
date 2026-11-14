@@ -307,3 +307,39 @@ would need either an SA ISA emulator or per-program HLE, which is not needed for
   43ac84ba load      4391cfc0 start_core
   ```
 * `-d unimp`: grep `f34a0|f34b0|f34c0|f35c0` for core access and `f3400` for clock/reset.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 9. Implementation status (null SA, `hw/misc/cxd90014_sa.c`)
+
+Implemented as specified in §5 (qemu branch `null-sa`, commit "cxd90014-sa: null SA DSP cores", on top of
+`0779785`). Four `cxd90014-sa` instances at 0xF34A0000 / 0xF34B0000 / 0xF34C0000 / 0xF35C0000 (0x1000 each, priority 0
+over `io-f0`), IRQs A/B/C = GIC 51–53, 54–56, 61–63, 64–66 (B/C wired, never raised). Properties: `index`, `base`
+(log only), `core-id` (16 characters, required), `delay-us` (default 100, hypothesis). Every GO is logged with the
+trace event `cxd_sa_start` (core, start number, +0x030, +0x008, +0x110..+0x11C) and a `LOG_UNIMP` line
+`cxd90014-sa<n>: start #k entry … mbox …`; completion with `cxd_sa_done`. Accesses to undocumented offsets log
+`LOG_UNIMP`. Guest RAM is never read or written.
+
+Run results (pristine NAND clones, `a5ktrace` probes of §8 and RE_SD_MEDIA_SERVICE §8, boots r1–r6):
+
+| check | result |
+|---|---|
+| SA starts before the shooting screen | **only SA0**, entry `0x11E10600`, `+0x008 = 0x80000000`, mailbox `11CB0000 10A1B000 0 0`. **8 starts per boot** (ConvZ1C is called 8 times by the step-1 loop; §4.5 / RE_LIVEVIEW_REQUEST §4.5 open question: the loop does terminate) |
+| completion path | each start: `irq_evt` (`43925888`, src 0) → `start_done` (`4391D3BC`) → `sa_cmd(0x23)` → `sa_wait(0x23)`. No `!!!ZIT ERROR!!!` (`AV_err` strings are only HS overflow / `GetImagerTemperature`) |
+| imager job | busy `0x43ED6D67 = 0`, module 10 reaches 0x83 then 0x00 |
+| mode sequencer | step **42** of 43 with every `actual == target` (`0102 0202 0302 0405 0502 0602 0702 … 0a00 0b10 0c02`) in r1–r3; `0x43D874F0 = 8040b24a 00000003`, `dword_43D8AF48[0] = 1` (YC output 0 requested) |
+| SA1–SA3, sources B/C | never started / never accessed during boot, PLAY or MENU |
+| regressions | 6/6 boots (r1–r6) reach the shooting screen; MENU from the shooting screen opens (2/2). MENU after PLAY without a card: 1/3 (the other two stay black after PLAY, see RE_SD_MEDIA_SERVICE §10) |
+
+Where it stops next (not investigated further):
+* **YC state 2 / panel YUV.** The EE sequence `43546E40` now runs (Image records from `437E3910`, about one per frame
+  while sampled), but `437737D4` (state 2), `VphUpdateYuvCall 43661BC8` and `438F6CF4` get 0 hits. VPH `+0x144 =
+  0x03000232` (bit0, YUV layer, clear) and ch51 (`0xF3441220…`) stays 0, so `pattern=bars` shows nothing either. The
+  next gate is inside the EE sequence / Image pipeline (RE_LIVEVIEW_REQUEST §5 items 2–3; develop/resize IRQs 67–75,
+  VFX 77/78 not checked).
+* **After EE stop.** Gate B (`0x3007`, RE_SD_MEDIA_SERVICE §7.3) now passes, see that document's status section. After
+  `EE_STOP_CMP` the playback view does not always open (screen stays black).
+
+Pre-rebase note: on the older base (`9c364ce`, without the evsel / SYSV-parity fix) one of four boots stopped at step 29
+(module 3 `0x25` vs `0x26`) with a black screen, and module 1 stayed `0x1A` at step 42 in the others. Not seen on
+`0779785`.

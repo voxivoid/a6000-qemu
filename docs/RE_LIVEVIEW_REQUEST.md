@@ -253,3 +253,10 @@ buffer. Confirm at run time that busy (`0x43ED6D67`) really returns to 0. If not
 * RAM to check (HMP `xp`, PA = VA + 0x40000000): `0x83DC7110` (sequencer idx), `0x83DC7120`/`0x83DC7160`
   (target/actual), `0x83D874F0`, `0x83ED6D60` (imager seq), `0x83D8AF48` (YC outputs).
 * Run `-d unimp` and grep `f34a|f340` to see the SA0 start sequence of §3.3.
+
+## 9. Implementation status (null SA)
+The SA model of §4 is in (`hw/misc/cxd90014_sa.c`, RE_SA_DSP §9). Result: ConvZ1C on SA0 completes (8 calls per boot,
+the step-1 loop terminates), busy `0x43ED6D67` returns to 0, the mode sequencer passes step 33 and finishes step 42
+with all modules matched (module 1 = 0x02), `0x43D874F4 = 0x03`, `dword_43D8AF48[0] = 1`. As in §3.4, YC state 2 is
+still not reached: the EE sequence `43546E40` and `437E3910` now run, but `437737D4`, `VphUpdateYuvCall 43661BC8` and
+`438F6CF4` get 0 hits, VPH `+0x144` bit0 stays 0 and ch51 is not programmed. §5 items 2–3 are the next gate.

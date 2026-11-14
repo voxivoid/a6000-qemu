@@ -1,8 +1,8 @@
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index 2aa4b5d..ff86584 100644
+index 2aa4b5d..b1b58a7 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
-@@ -692,3 +692,20 @@ config ARMSSE
+@@ -692,3 +692,21 @@ config ARMSSE
      select UNIMP
      select SSE_COUNTER
      select SSE_TIMER
@@ -18,6 +18,7 @@ index 2aa4b5d..ff86584 100644
 +    select UNIMP
 +    select CXD4115_TIMER
 +    select CXD90014_SYSCTL
++    select CXD90014_SA
 +    select CXD90014_NAND
 +    select CXD90014_DMAC
 +    select DMP_SMAPH
@@ -173,13 +174,16 @@ index cea896b..f7a5229 100644
 +# cxd90014_gpio.c
 +cxd90014_gpio_in(int port, uint32_t value) "P%d in 0x%08x"
 diff --git a/hw/misc/Kconfig b/hw/misc/Kconfig
-index 4e35657..8a17a3a 100644
+index 4e35657..2b9185a 100644
 --- a/hw/misc/Kconfig
 +++ b/hw/misc/Kconfig
-@@ -236,3 +236,6 @@ config XLNX_VERSAL_TRNG
+@@ -236,3 +236,9 @@ config XLNX_VERSAL_TRNG
      bool
  
  source macio/Kconfig
++
++config CXD90014_SA
++    bool
 +
 +config CXD90014_SYSCTL
 +    bool
@@ -221,10 +225,10 @@ index 8b4b61e..7659e95 100644
          return;
      case 0xF60:
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index b1d8d8e..3c8a124 100644
+index b1d8d8e..d04bcb1 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -161,3 +161,11 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -161,3 +161,12 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
  # HPPA devices
  system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
@@ -236,11 +240,12 @@ index b1d8d8e..3c8a124 100644
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_p2s.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_campig.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_ldec.c'))
++system_ss.add(when: 'CONFIG_CXD90014_SA', if_true: files('cxd90014_sa.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index e3f64c0..0d77223 100644
+index e3f64c0..f071422 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -403,3 +403,16 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
+@@ -403,3 +403,20 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
  i2c_echo_event(const char *id, const char *event) "%s: %s"
  i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
  i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
@@ -257,6 +262,10 @@ index e3f64c0..0d77223 100644
 +
 +# cxd90014_campig.c
 +cxd_campig_frame(uint64_t base, uint32_t paths) "0x%08" PRIx64 " frame done, status |= 0x%08x"
++
++# cxd90014_sa.c
++cxd_sa_start(uint32_t core, uint32_t n, uint32_t entry, uint32_t prog, uint32_t m0, uint32_t m1, uint32_t m2, uint32_t m3) "SA%u start #%u entry 0x%08x +0x008 0x%08x mbox %08x %08x %08x %08x"
++cxd_sa_done(uint32_t core, uint32_t factor, uint32_t mask) "SA%u done, factor A 0x%02x mask 0x%02x"
 diff --git a/hw/timer/Kconfig b/hw/timer/Kconfig
 index b3d823c..44c8809 100644
 --- a/hw/timer/Kconfig
