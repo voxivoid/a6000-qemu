@@ -185,10 +185,21 @@ Running with test values gives `(−0.625, 0.75, 0, 1)`. Matches hand calculatio
 | 0x07 / 0x08 | EX2 / LG2 | | [?] presumed from pow pattern (LG2 → MUL → EX2) |
 | 0x11 | MOVA | a0 = (int) src1 | [?] pairs with the following `?9x` relative-address reads |
 | 0x1E | CMP | cond[c] = src1[c] OP src2[c]. OP = w1[18:16] | [?] 3 = GT, 4 = EQ fitted from GLES1 flag checks. 0 NE, 1 LT, 2 LE, 5 GE presumed |
-| 0x20 | TEX | dst = sample(unit = w1[16:14], coord = src1) | [V] pattern. unit field is [?] |
+| 0x20 | TEX | dst = sample(unit = w1[16:14], coord = src1) | [V] pattern. unit field is [?]. The interpreter calls `tex_sample` exactly once per executed TEX, in program order; the rasteriser relies on this to pair fetches for the mip LOD (checked by `test_dmp_shader`) |
 | 0x2B | TEX→color + END | o1 = src1 (mask), end | [?] last instruction of the 2D texture FS. No END after it |
 | 0x24, 0x3D | conditional branch | §8 | [?] |
-| 0x0B 0x0D 0x0E 0x0F 0x12 0x13 0x18 0x19 0x1A 0x1F 0x26 0x27 0x29 0x2A | not implemented | used only in GLES1 lighting/texgen/GS paths | `LOG_UNIMP` then false |
+| 0x0B 0x0D 0x0E 0x0F 0x12 0x13 0x18 0x19 0x1A 0x1F 0x26 0x27 0x29 0x2A | not implemented | used only in GLES1 lighting/texgen/GS paths (§7.1) | `LOG_UNIMP` then false |
+
+### 7.1 Where the unimplemented opcodes occur (static scan of the GLES1 package, 947 instructions)
+Counts: 0x0B ×33, 0x0E ×10, 0x0F ×5, 0x18 ×5, 0x1F ×3, 0x2A ×3, 0x13 ×2, 0x19 ×2, 0x26 ×2, 0x27 ×2, 0x29 ×2, 0x0D ×1, 0x12 ×1, 0x1A ×1.
+- 0..455 (vertex part): only 0x0F (52-53, `X4/X3 ← f(X6, c21/c22)`, lighting setup), 0x0E (56) and 0x1A (152) are used.
+- 456..946: 0x1C8 = 456 is where the driver writes its generated fragment program, so the package's own code there is overwritten
+  in the compositing state. The rest of this region contains control ops 5, 6 and 0x11 (presumed geometry EMIT family) and most of the
+  unknown opcodes: 0x18/0x19/0x1F/0x26/0x27/0x2A/0x13 at 618-645 and all 33 0x0B (mostly with constant `c102`) at 759-923. This is probably the
+  point-sprite / line geometry code [?].
+- None of them runs on the screens inventoried in `RE_GPU_P3D_CMD.md` §7 (no `dmp-shader:` message at all). Their semantics are
+  not derivable from these uses without a reference (no compiler on the device, no source for the package), so they stay
+  unimplemented rather than guessed.
 
 ## 8. Control flow (opcode 0, w1[15:12])
 
@@ -210,7 +221,8 @@ Conditional branch `op 0x24 / 0x3D`, target = w0 [?]:
 - With this assumption the GLES1 package compositing path comes out correct (§9). Other paths (lighting, fog, palette) are not verified.
 
 ## 9. Verification (`tools/test_dmp_shader.c`)
-Build/run commands are at the top of the file. Firmware files are read as data only. Result: **25/25 PASS**.
+Build/run commands are at the top of the file. Firmware files are read as data only. Result: **26/26 PASS**
+(25 program checks + the one-`tex_sample`-call-per-fetch contract).
 - Simple GLES2 (0xe813c4, 0xe814c4)
   - VS pass-through: `gl_Position = a_position`, `v_texCoord`
   - FS: `= filterColor`, `texture2D(s_texture)*filterColor`
@@ -230,7 +242,8 @@ Build/run commands are at the top of the file. Firmware files are read as data o
 ## 10. Remaining work / unconfirmed
 - Actual meaning of the X/Y copy rule (§5.3), w1[18], w1[28], w1[29].
 - CMP modes 0/1/2/5, low nibble of branch condition, CALL/RET/block marker.
-- Unimplemented opcodes (§7) — GLES1 lighting (`0x0F`, `0x0E`, `0x1A` …), texgen, GS (point/line program `dmp_point_shader_prog`).
+- Unimplemented opcodes (§7, §7.1) — GLES1 lighting (`0x0F`, `0x0E`, `0x1A` …), texgen, GS (point/line program `dmp_point_shader_prog`).
+  The stock UI screens up to the shooting screen use none of them (inventory: `RE_GPU_P3D_CMD.md` §7).
   - When these paths execute, `LOG_UNIMP` (`-d unimp`) prints `dmp-shader: opcode at N`.
 - ROM.y value, TEX unit field, exact meaning of 0x2B.
 - Depth prologue (uses op 0x11.8) is skipped in the default state, so it is not implemented.

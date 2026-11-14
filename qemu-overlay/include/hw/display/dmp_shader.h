@@ -44,7 +44,10 @@ typedef struct DmpShaderProg {
      * Texture fetch, provided by the rasteriser (dmp_smaph.c).  unit is the
      * texture unit / sampler number as encoded in the instruction, coord
      * the (s, t, r, q) operand; rgba receives the filtered texel as floats
-     * in [0, 1].  NULL when no texture state is available.
+     * in [0, 1].  NULL when no texture state is available.  The
+     * interpreter calls it exactly once per executed fetch, in program
+     * order: the rasteriser counts the calls to pair the fetches of the
+     * neighbouring-pixel runs it uses for the mip level of detail.
      */
     void (*tex_sample)(void *opaque, unsigned unit, const float coord[4],
                        float rgba[4]);

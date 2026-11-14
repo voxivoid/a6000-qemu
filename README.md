@@ -66,7 +66,8 @@ Keys pressed in the first ~20 s after the first-boot dialog appears are ignored 
 - ✅ Camera buttons (`docs/RE_ENGINE_TICK.md` §11): wheel/centre = ADC ladder ch 0x0D, DELETE = ch 0x0C, MOVIE = GPIO P10.10, MENU/PLAY = sub-micro slot A byte 28
 - ✅ First-boot setup completes: area (world map) → date/time → PlayMemories notice → shooting mode (no SD: lens warning → shooting-screen OSD)
 - ⏳ With SD: blank screen in what is probably the image-database repair view; menu/wheel unresponsive in shooting mode — under investigation
-- ⏳ Some Rigel compositing shader opcodes, depth/stencil, lines/points, mipmaps not implemented (`docs/RE_ENGINE_TICK.md`)
+- ✅ GPU: all 779 draws from first boot to the shooting screen render (Rigel compositing included); depth/stencil, mipmaps, border wrap added and tested with synthetic lists (`tools/test_dmp_p3d.py`, `tools/test_dmp_shader.c`)
+- ⏳ GPU: geometry programs (real point/line drawing), 14 GLES1-package shader opcodes, ETC1, depth/mip memory layouts unconfirmed (`docs/RE_GPU_P3D_CMD.md` §7)
 - ⬜ Sensor/ISP (live view), lens, audio, RTC
 
 ## Firmware and legal notice

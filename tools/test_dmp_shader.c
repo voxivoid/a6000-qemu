@@ -189,9 +189,12 @@ static void check(const char *what, const float *got, const float *exp,
     ok ? npass++ : nfail++;
 }
 
+static unsigned ntex;           /* fetch callbacks since the last run() */
+
 static void fake_tex(void *opaque, unsigned unit, const float *t, float *o)
 {
     (void)opaque;
+    ntex++;
     o[0] = t[0];
     o[1] = t[1];
     o[2] = 0.25f + unit;
@@ -206,6 +209,7 @@ static int run(DmpShaderStage st, unsigned entry, const DmpVec4 *in,
 {
     P.entry = entry;
     P.tex_sample = fake_tex;
+    ntex = 0;
     memset(out, 0, sizeof(DmpVec4) * DMP_SH_NUM_OUTPUT);
     if (!dmp_shader_run(st, &P, in, nin, out, DMP_SH_NUM_OUTPUT)) {
         printf("FAIL run returned false (entry %u)\n", entry);
@@ -325,6 +329,10 @@ static void t_simple(void)
             float e[4] = { 0.125f * fc[0], 0.625f * fc[1], 0.25f * fc[2],
                            0.75f * fc[3] };
             check("tex FS = texture2D*filterColor", r[1].v, e, 0xf);
+            /* contract in dmp_shader.h: one tex_sample call per fetch
+             * (the rasteriser's mip LOD pairs fetches by call order) */
+            float nt[4] = { ntex, 0, 0, 0 }, one[4] = { 1, 0, 0, 0 };
+            check("tex FS: one tex_sample call per fetch", nt, one, 1);
         }
     }
 }

@@ -49,7 +49,7 @@ An entry is 8 bytes `[header][value]` (two little-endian 32-bit words). Order is
 | 0x47 | s16 x, s16 y | scissor min. Units are half pixels, origin is viewport center: `2·x0 − 0x49.x` | |
 | 0x48 | s16 x, s16 y | scissor max (exclusive): `2·(x0+w) − 0x49.x` | |
 | 0x49 | u16 x, u16 y | viewport center ×2 = `2·vpX + W`, `2·vpY + H` | |
-| 0x4A | 24 bits | depth offset (units/65535 × 16777000) | unused in model |
+| 0x4A | 24 bits | polygon offset: `units / 65535 × 16777000`, rounded (only for units > 0 with the default depth range; otherwise 0 and the FS depth prologue does it) | `sub_600EB0` L1359315-1359350. Model adds `0x4A / 16777000` to the fragment depth |
 | 0x44 | | written 0 at list end [?] | |
 
 Window coords are `x = 0x49.x/2 + ndc.x·0x42`, `y = 0x49.y/2 + ndc.y·0x43` (GL convention, y-up).
@@ -65,14 +65,14 @@ Measured PPF: `0xC10 = 0x4401` = flip, input/output format 4.
 | 0x101 | 0-2 eqRGB, 8-10 eqA, 16-19 srcRGB, 20-23 dstRGB, 24-27 srcA, 28-31 dstA | Blend. Factors: 0 ZERO, 1 ONE, 2/3 (1−)SRC_COLOR, 4/5 (1−)DST_COLOR, 6/7 (1−)SRC_ALPHA, 8/9 (1−)DST_ALPHA, 10-13 CONST, 14 SATURATE. Equations: 0 ADD, 1 SUB, 2 REV_SUB |
 | 0x102 | 0-3 | logic op (ignored in blend mode) |
 | 0x103 | RGBA8 | blend constant color |
-| 0x104 | 0 en, 4-6 func, 8-15 ref | Alpha test. Compare funcs: 0 NEVER, 1 ALWAYS, 2 EQ, 3 NE, 4 LT, 5 LE, 6 GT, 7 GE |
-| 0x105 | 0 en, 4-6 func, 8-15 compare mask, 16-23 ref, 24-31 write mask | Stencil (mask positions reversed vs ctrulib) [? unverified on real hardware] |
-| 0x106 | 0-2 sfail, 4-6 zfail, 8-10 zpass | stencil ops |
-| 0x107 | 0 depth test, 4-6 func, 8-11 RGBA write, 12 depth write | |
+| 0x104 | 0 en, 4-6 func, 8-15 ref | Alpha test. Compare funcs: 0 NEVER, 1 ALWAYS, 2 EQ, 3 NE, 4 LT, 5 LE, 6 GT, 7 GE (driver: GL_NEVER→0, GL_LESS→4, GL_EQUAL→2, GL_LEQUAL→5, GL_GREATER→6, GL_NOTEQUAL→3, GL_GEQUAL→7, GL_ALWAYS→1; L1360600) |
+| 0x105 | 0 en, 4-6 func, 8-15 value mask, 16-23 ref, 24-31 write mask | Stencil. Context fields: +1580 func, +1584 ref → bits 16-23, +1588 value mask → bits 8-15, +1696 write mask → bits 24-31 (L1360673). Enable bit only if the framebuffer has a stencil buffer (+6262). Test = `(ref & mask) func (stencil & mask)` (GL) |
+| 0x106 | 0-2 sfail, 4-6 zfail, 8-10 zpass | Stencil ops: 0 KEEP, 1 ZERO, 2 REPLACE, 3 INCR, 4 DECR, 5 INVERT, 6 INCR_WRAP, 7 DECR_WRAP (GL enum switch at L1360700-1360823) |
+| 0x107 | 0 depth test, 4-6 func, 8-11 RGBA write, 12 depth write | Same func encoding as 0x104. bit12 = depth mask, only set while the depth test is on (GL: no depth writes with the test off). Bits 8-11 = R, G, B, A colour mask (L1360879) |
 | 0x10A | 0xB / 0xC | framebuffer mode [?] (0xC if the FBO is an untiled texture) |
 | 0x10B / 0x10C | 0-3 | color read / write enable |
-| 0x10D / 0x10E | bit0 stencil, bit1 depth | depth/stencil read / write |
-| 0x10F | 0-1 | depth format: 0 D16, 2 D24 [?], 3 D24S8 |
+| 0x10D / 0x10E | bit0 stencil, bit1 depth | depth/stencil read / write enable. Derived from the enables: depth test → read bit1, + depth mask → write bit1; stencil test → read bit0, + non-zero write mask → write bit0 (L1360930-1360974) |
+| 0x10F | 0-1 | depth format: 0 D16, 2 D24 [?], 3 D24S8 (only written when the framebuffer has a depth buffer, +6262) |
 | 0x110 | 16-18 | **color format**: 0 RGBA8 (PICA word order), 2 RGB5A1, 3 RGB565, 4 RGBA4, 5 RGBA8 (GL byte order R,G,B,A) |
 | 0x111 | PA>>4 | depth buffer |
 | 0x112 | PA>>4 | color buffer |
@@ -80,6 +80,11 @@ Measured PPF: `0xC10 = 0x4401` = flip, input/output format 4.
 | 0x115 | bit0 | dither |
 | 0x116 / 0x117 | PA>>4 / 1 | list-end sync/flush (§2) |
 
+- Model of the depth/stencil buffer (all [?] for layout, no stock list uses it yet): same size and 8×8 Morton tiling as the colour buffer;
+  D16 = 16-bit LE, D24 = 3 bytes LE, D24S8 = 32-bit LE word with depth in bits 0-23 and stencil in bits 24-31 (PICA200 layout).
+  Order per fragment: alpha test → stencil test (fail: sfail op) → depth test (zfail / zpass op, depth write) → colour write enable → blend → colour mask.
+  Fragment depth = FS output 0 component z, which starts as the rasterised window z (`z_ndc·0.5 + 0.5`); the GLES2 depth prologue
+  (FS entry not skipped by +9) rewrites it [? component].
 - The color buffer is **8×8 Morton tiled**. Matches PPF reading the panel OSD target (`0x8D7B0500`, 640×480 RGBA4) tiled→linear.
 - Confirmed rendering comes out correct on screen (§6).
 
@@ -97,11 +102,12 @@ Measured PPF: `0xC10 = 0x4401` = flip, input/output format 4.
 | 0x210 / 0x211 | 4 bits per buffer | buffer's first slot |
 | 0x212-0x215 | 8 bits per buffer | stride − 1 |
 | 0x216+i | 32 | PA of buffer i (i < 16) |
-| 0x400 | | 0x1000300 (points/lines), 0x1000200 (triangles) [?] |
-| 0x401 | | primitive: 0 points, 0x10 lines, 0x802 line strip, 0x3020 triangles, 0x20 strip/fan |
-| 0x402 / 0x403 | | line strip control / 0xA0304 (triangles) [?] |
-| 0x404 | 0-1 | topology: 0 list, 1 strip, 2 fan (bit5 always 1) |
-| 0x405 / 0x406 | | related to shader output count [?] (`v473[13..15]−1`) |
+| 0x400 | | 0x1000300 (points/lines), 0x1000200 (triangles); `(v<<8) \| 0x1000000` when context +1524 = 0x1100 [?]. Bit 8 presumably = geometry stage on |
+| 0x401 | | primitive, by GL mode (+1764): 0 GL_POINTS → 0, 1 GL_LINES → 0x10, 3 GL_LINE_STRIP → 0x802, 4 GL_TRIANGLES → 0x3020, 5/6 strip/fan → 0x20 (L1358474) |
+| 0x402 | | 0x2000008 for GL_LINE_STRIP, else 0 [?] |
+| 0x403 | | 4 for points/lines, 0xA0304 for triangles [?] |
+| 0x404 | 0-1 | topology: 0x20 list (points, lines, triangles), 0x21 strip (line strip, triangle strip), 0x22 fan |
+| 0x405 / 0x406 | | shader output counts − 1 (`v473[13..15]`); for points/lines the geometry program's counts (+5356 / +5360) [?] |
 | 0x408-0x410 | (size<<16 \| offset) | internal vertex/varying memory layout [?]. Not needed by the model |
 
 Measured UI example (`0x202 = 0x90000004`):
@@ -110,6 +116,13 @@ Measured UI example (`0x202 = 0x90000004`):
 - Input mapping `0x204 = 0x43201`.
 
 GL_LINE_LOOP is converted by the driver to a strip + a 2-vertex LINES.
+
+Points and lines go through a geometry stage on the real GPU: the driver loads its internal programs `dmp_point_shader_prog` /
+`dmp_line_shader_prog` (symbols in `libGLESv2_dmp.so`; the code is not decoded) that expand each point/line to triangles.
+The model does **not** run them. Fallback (hypothesis, labelled in the code): points and lines are rasterised directly from the vertex
+program outputs, 1 pixel wide, point varyings constant, line varyings perspective-correct along the line, line end point excluded
+(half-open, as GL). Point size and line width are not known to the model. The first such draw logs
+`dmp-smaph: point/line primitive ... rasterised without the geometry stage` under `-d unimp`.
 
 ### 3.4 Programmable unit (code/constant upload; semantics in the SHADER doc)
 | reg | Meaning | Evidence |
@@ -140,11 +153,11 @@ GL_LINE_LOOP is converted by the driver to a strip + a 2-vertex LINES.
 | 0x585+11u | unit u: border color (r<<24 \| g<<16 \| b<<8 \| a) |
 | 0x586+11u | allocated size `(w8<<16) \| h8` (aligned to multiples of 8, memory layout) |
 | 0x587+11u | original size `(w<<16) \| h` (coordinate scale) |
-| 0x588+11u | LOD bias (bits 0-12), min/max level (16-19, 24-27) |
+| 0x588+11u | bits 0-12 LOD bias, signed 5.8 fixed point (driver: `(bias+16)·256` folded to 13 bits; bias −3 if texture flag +53). Bits 16-19 min level, 24-27 max level (= levels − 1, clamped). **Both 0 for GL_NEAREST / GL_LINEAR min filters** (`sub_5FD100`) |
 | 0x589+11u | texel PA>>3 (+X face for cubemaps) |
 | 0x58A-0x58E+11u | remaining cubemap face PA>>3 |
 | 0x58F+11u | format: bits 0-4 code, bit9 ETC1, bit12 = texture object +48 (presumed untiled layout [?]) |
-| 0x5DD+u | sampler: bit0 1, bit1 mag LINEAR, bit2 min LINEAR, bit24 mipmap, bits 8-9 wrap T, bits 12-13 wrap S (0 edge, 1 border, 2 repeat, 3 mirror) |
+| 0x5DD+u | sampler (`sub_5FCED0`): bit0 1, bit1 mag LINEAR, bit2 min LINEAR (GL_LINEAR, GL_LINEAR_MIPMAP_*), bit24 linear **between mip levels** (GL_*_MIPMAP_LINEAR only; GL_*_MIPMAP_NEAREST sets no extra bit, the level range in 0x588 enables the mips), bits 8-9 wrap T, bits 12-13 wrap S (0 GL_CLAMP_TO_EDGE, 1 GL_CLAMP_TO_BORDER (0x812D), 2 GL_REPEAT, 3 GL_MIRRORED_REPEAT). Written as `1` alone when the unit is unused |
 
 Format codes (L1401420~): 0 RGBA8 (PICA), 25 (0x19) GL_RGBA/UNSIGNED_BYTE (bytes R,G,B,A), 2 RGB5A1, 3 RGB565, 4 RGBA4,
 5 LA8, 7 L8, 8 A8, 12 ETC1, 24 YUV422 family [?].
@@ -152,6 +165,12 @@ Format codes (L1401420~): 0 RGBA8 (PICA), 25 (0x19) GL_RGBA/UNSIGNED_BYTE (bytes
 - Texels are **8×8 Morton tiled**, row 0 is the top of the image (first uploaded row).
   - Detiling the measured A8 texture `0x8E738000` (408×40) shows the (Korean-locale) dialog text "Set area/date/time." upright.
   - The RGBA4 dialog frame `0x8DFB0200` (600×416) was confirmed the same way.
+- Border colour 0x585+11u = float colour ×255 packed `r<<24 | g<<16 | b<<8 | a` (`sub_5FD100`).
+- Mip levels in the model (layout [?], PICA200-like, no stock list uses mipmaps yet): level k follows level k−1 at the 0x589 address,
+  allocated size `max(8, aligned size of level 0 >> k)` per axis, same tiling. LOD: the model runs the fragment program at (x+1, y) and
+  (x, y+1) in a recording pass (only for draws with a unit whose max level > 0), pairs the texture fetches by call order, and uses
+  `λ = log2(max(|∂(u,v)/∂x|, |∂(u,v)/∂y|)) + bias`, then clamps to [min, max] level. λ ≤ 0 → mag filter on the min level;
+  bit24 clear → nearest level; bit24 set → blend of two levels.
 - 0x1019 (= 25 | bit12) is used when compositing the Rigel window buffer (`0x8E9B7B80`, 640×480). The buffer content is a solid color, so byte order and layout are not yet confirmed [?].
 
 ## 4. Model pipeline (dmp_smaph.c)
@@ -164,14 +183,19 @@ Format codes (L1401420~): 0 RGBA8 (PICA), 25 (0x19) GL_RGBA/UNSIGNED_BYTE (bytes
    - All varyings are perspective-correct interpolated.
    - FS input k = VS output k [?]. Input 0 is replaced with (x+0.5, y+0.5, z, 1/w).
 5. `dmp_shader_run(FRAGMENT)` → output V1 = RGBA (V0 = depth), following the hypothesis in `dmp_shader.c` [?].
-   - alpha test → color write enable (0x10C) → blend (0x100/0x101/0x103) → channel mask (0x107) → write to tiled buffer.
-6. Not implemented: depth/stencil test (UI draws without a depth buffer: 0x10D/0x10E = 0, 0x111 not written), point/line primitives, mipmaps, ETC1, dither, logic op.
+   - alpha test → stencil test → depth test (+ stencil ops, depth write) → color write enable (0x10C) → blend (0x100/0x101/0x103) → channel mask (0x107) → write to tiled buffer.
+   - Draws with mip levels run the FS twice more per pixel for the LOD (§3.5).
+6. Points/lines: fallback rasteriser without the geometry stage (§3.3).
+7. Not implemented: geometry programs, near-plane clipping, ETC1, dither, logic op (the driver never enables it).
 
 ## 5. Remaining work / verification plan
 - [?] The value 0x116/0x117 sync actually writes to memory. Harmless for now since the driver does not poll it.
 - [?] 0x450 auto-increment, 0x581-0x584 sampler mapping, 0x10A, 0x400/0x402/0x403/0x405/0x406.
 - [?] Shader output/input register semantics (position, color, depth, discard). Must be reconciled with `RE_GPU_P3D_SHADER.md`.
-- Depth/stencil implementation (likely used by Android GL apps, 3D effects such as `SequenceApp3DZoomCmd`, etc.).
+- Depth/stencil, mip levels, border wrap and the point/line fallback are implemented and checked with synthetic lists
+  (`tools/test_dmp_p3d.py`, qtest, 15/15). Their memory layouts (depth buffer, mip chain) are PICA200-based [?]: confirm on the first stock
+  list that uses them (Android GL apps, 3D effects such as `SequenceApp3DZoomCmd`, …).
+- Decode `dmp_point_shader_prog` / `dmp_line_shader_prog` and the geometry opcodes to replace the point/line fallback.
 
 ## 6. Measured results (2026-11-14, unmodified firmware, first-boot "Area/Date/Time" screen)
 - ~60 s after boot, 44 P3D lists and 32 draws execute (`p3d-draw` in `-trace dmp_smaph_job`).
@@ -193,4 +217,20 @@ Format codes (L1401420~): 0 RGBA8 (PICA), 25 (0x19) GL_RGBA/UNSIGNED_BYTE (bytes
   - This buffer is **RGBA4444**. Evidence: P3D 0x110 = 4, PPF `0xC10 = 0x4401` (input/output format 4), background pixel `0x000F` = opaque black.
   - However, the current VPH scanout model (console 0 / `screendump`) reads this buffer as RGB565, so the same screen appears with a navy background and color-shifted buttons.
   - VPH channel format interpretation must be fixed to RGBA4 (cxd90014_vph.c's responsibility).
-- Unresolved: the Rigel window composite program (target `0x8D858080`) stops the interpreter at shader op 0x1E (opcode not implemented in `dmp_shader.c`), so those 2 draws write no pixels.
+- (Resolved since: the Rigel window composite program (target `0x8D858080`, VS 0 / FS 0x1C8) used to stop at shader op 0x1E; CMP is now
+  implemented and the composite draws shade every pixel, see §7.)
+
+## 7. Inventory of the stock UI (2026-11-14)
+Method: per-draw state dump (temporary instrumentation, not in the tree) + `-d unimp,guest_errors`, unmodified firmware, keys sent with
+HMP `sendkey <key> 400` (the default 100 ms press is too short for the ADC key scan). Path: first-boot dialog → area setting (world map) →
+date/time list → date/time editor → date format → OK → PlayMemories notice → lens notice → shooting screen (with and without "NO CARD").
+
+- **779 draws, 0 failures**: no vertex or fragment program returned false, no GPU `LOG_UNIMP` / guest error.
+- Targets: 775 to the 640×480 RGBA4 OSD `0x8D7B0500`, 4 to the RGBA8 (GL byte order) Rigel composite `0x8D858080`.
+- Primitives: only 0x401 = 0x20 (776 triangle strips, 3 fans). No points, no lines, no indexed-u8.
+- Programs: VS 0x38 + FS 0x3E (466) or FS 0x63 (310), GLES1 package VS 0 + FS 0x1C8 (3, Rigel composite).
+- Fragment state is constant: depth/stencil off (`0x107 = 0xF40`, `0x105 = 0xFF00FF70`, `0x10D = 0x10E = 0`, `0x111 = 0`), alpha test
+  ALWAYS (`0x104 = 0x10`), blend on with ONE/ZERO (469) or SRC_ALPHA/ONE_MINUS_SRC_ALPHA, ONE/ONE_MINUS_SRC_ALPHA (310).
+- Textures: RGBA4 (626), A8 (145), format 0x1019 (5); samplers NEAREST/LINEAR only, max level 0 everywhere (no mipmaps).
+- So none of the previously missing features is reached by these screens; they were implemented for other users of the GPU
+  (Android GL, 3D effects, playback) and verified with synthetic lists only.

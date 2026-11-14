@@ -48,7 +48,8 @@
 - ✅ BOSS LDEC LZ77 디코더 메모리 모드(/dev/ldec) → appFw abort 해소. Rigel WindowServer·appFw가 **프레임 렌더링 중**, Android도 기동
 - ✅ CPU별 hwtimer(타이머 ch5..8) 자유 계수 수정 → liro dly_tsk 정상 → VPH가 **패널 OSD 레이어를 프레임마다 설정**(ch53 = UI 버퍼)
 - ✅ **GPU P3D 명령 리스트 실행**(디코더·래스터라이저·텍스처·블렌딩, `docs/RE_GPU_P3D_CMD.md`) + 셰이더 인터프리터(진행 중) + 패널 OSD RGBA4444 → **순정 UI 첫 화면(지역/날짜/시간 설정 대화상자)이 QEMU 창에 표시**
-- ⏳ Rigel 윈도우 합성 셰이더 일부 opcode 미구현, 깊이/스텐실·선/점·밉맵 미구현 상세 `docs/RE_ENGINE_TICK.md`
+- ✅ GPU: 첫 부팅~촬영 화면의 draw 779개 전부 렌더링(Rigel 합성 포함). 깊이/스텐실·밉맵·border wrap 추가, 합성 명령 리스트로 테스트(`tools/test_dmp_p3d.py`, `tools/test_dmp_shader.c`)
+- ⏳ GPU: geometry 프로그램(실제 점/선), GLES1 패키지 셰이더 opcode 14개, ETC1, 깊이/밉 메모리 배치 미확정 (`docs/RE_GPU_P3D_CMD.md` §7)
 - ✅ SD 카드: 서브마이컴 슬롯 스위치 모델 → 순정 미디어 스택이 카드 초기화·FAT 읽기 (`-drive if=sd` / `A5K_SD`)
 - ✅ 카메라 버튼(`docs/RE_ENGINE_TICK.md` §11): 휠·가운데 = ADC 래더 ch 0x0D, DELETE = ch 0x0C, MOVIE = GPIO P10.10, MENU/PLAY = 서브마이컴 slot A 바이트 28 (호스트: 방향키/Enter/M/P/R/Delete, HMP `sendkey`)
 - ✅ 첫 부팅 설정 완주: 지역 설정(세계 지도) → 날짜/시간 → PlayMemories 안내 → 촬영 모드 (SD 없음: 렌즈 경고 → 촬영 OSD)
