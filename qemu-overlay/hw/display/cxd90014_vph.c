@@ -16,8 +16,8 @@
  *
  * Every 1/60 s: SYSV counter++ and IRQ 98 pulse; if VPH is clocked, IRQ
  * 101/102 pulses, AIF ch51..58 start bits cleared, and the panel is composed
- * (YUV 4:2:2 under the OSD) into QEMU graphic console 0.
- * OSD at 16 bpp = RGBA4444 (A low nibble); the YUV packing is a hypothesis.
+ * (live-view luma plane under the OSD) into QEMU graphic console 0.
+ * OSD at 16 bpp = RGBA4444 (A low nibble); ch51 = 8-bit luma plane.
  *
  * Debug option (not hardware): pattern=bars composes 75% colour bars in
  * place of the guest's YUV buffer whenever the panel YUV layer is enabled
@@ -113,11 +113,6 @@ static void vph_tick(void *opaque)
     timer_mod(s->tick, now + NANOSECONDS_PER_SECOND / 60);
 }
 
-static inline uint8_t clip(int v)
-{
-    return v < 0 ? 0 : v > 255 ? 255 : v;
-}
-
 static void vph_update(void *opaque)
 {
     VphState *s = opaque;
@@ -130,7 +125,7 @@ static void vph_update(void *opaque)
     uint32_t *dst = surface_data(surf);
     memset(dst, 0, (size_t)W * H * 4);
 
-    /* YUV layer (ch51), packed YUYV 4:2:2 [?] */
+    /* YUV layer (ch51) */
     if ((R(0x144) & 1) && s->pattern && !strcmp(s->pattern, "bars")) {
         static const uint32_t bars[8] = {
             0xbfbfbf, 0xbfbf00, 0x00bfbf, 0x00bf00,
@@ -143,27 +138,27 @@ static void vph_update(void *opaque)
             }
         }
     } else if (R(0x144) & 1) {
+        /*
+         * ch51 as programmed for live view: one 8-bit luma plane, +0x24
+         * bytes per line, +0x28 bytes skipped after each line, +0x2C
+         * lines - 1 (1024 x 516, pitch 0x480); no C plane in the layer
+         * descriptor (438F6CF4), shown as grey.  The YUV-layer scaler at
+         * +0x300 maps it to the panel size; here nearest-neighbour
+         * (docs/RE_LIVEVIEW_IMAGE.md).  hypothesis: full-range luma.
+         */
         uint32_t base = R(AIF(0) + 0x20), lb = R(AIF(0) + 0x24);
+        uint32_t pitch = lb + R(AIF(0) + 0x28);
         uint32_t lines = R(AIF(0) + 0x2C) + 1;
-        int32_t pitch = (int16_t)R(AIF(0) + 0x48);
-        if (!pitch) {
-            pitch = lb;
-        }
-        if (base && lb && lines < 4096) {
+        if (base && lb && lb <= 8192 && lines < 4096) {
             g_autofree uint8_t *row = g_malloc(lb);
-            for (uint32_t y = 0; y < MIN(lines, H); y++) {
-                address_space_read(&address_space_memory, base + y * pitch,
+            for (uint32_t y = 0; y < H; y++) {
+                uint32_t sy = (uint64_t)y * lines / H;
+                address_space_read(&address_space_memory,
+                                   base + (uint64_t)sy * pitch,
                                    MEMTXATTRS_UNSPECIFIED, row, lb);
-                for (uint32_t x = 0; x + 1 < MIN(lb / 2, W); x += 2) {
-                    int y0 = row[2 * x], u = row[2 * x + 1] - 128;
-                    int y1 = row[2 * x + 2], v = row[2 * x + 3] - 128;
-                    for (int i = 0; i < 2; i++) {
-                        int yy = i ? y1 : y0;
-                        dst[y * W + x + i] = 0xff000000u |
-                            clip(yy + 1.402 * v) << 16 |
-                            clip(yy - 0.344 * u - 0.714 * v) << 8 |
-                            clip(yy + 1.772 * u);
-                    }
+                for (uint32_t x = 0; x < W; x++) {
+                    uint8_t l = row[(uint64_t)x * lb / W];
+                    dst[y * W + x] = 0xff000000u | l << 16 | l << 8 | l;
                 }
             }
         }
