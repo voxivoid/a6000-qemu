@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..481b0e8
+index 0000000..22f4cfe
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,985 @@
+@@ -0,0 +1,1038 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -77,6 +77,8 @@ index 0000000..481b0e8
 +#include "hw/misc/unimp.h"
 +#include "hw/arm/boot.h"
 +#include "hw/sd/sdhci.h"
++#include "hw/misc/cxd90014_adc.h"
++#include "ui/input.h"
 +#include "hw/misc/cxd90014_sio.h"
 +#include "hw/qdev-properties.h"
 +#include "hw/qdev-properties-system.h"
@@ -156,6 +158,7 @@ index 0000000..481b0e8
 +    int submicro_step;
 +    bool submicro;
 +    uint8_t *submicro_frames;
++    DeviceState *adc[2];
 +    char *submicro_file;
 +    char *cmdline;
 +    uint8_t *kernel, *initrd;
@@ -442,6 +445,51 @@ index 0000000..481b0e8
 +              (s->submicro_step ? SCALE_MS : 49 * SCALE_MS));
 +}
 +
++/*
++ * Camera buttons from the host keyboard (QEMU window or HMP "sendkey").
++ * Wiring from input.ko's key table (Backup 0x1120000, docs/RE_INPUT_I2C_POWER.md
++ * §7) and libInputServant's Sony-code -> Linux-code table:
++ *   ADC ch 0x0D (= unit 1 ch 1) resistor ladder, pressed level bands:
++ *     0..91 LEFT (0x1AC), 92..273 MENU (0x03), 274..439 RIGHT (0x15),
++ *     440..599 UP (0x30), 600..772 DOWN (0x1AF); released = 1023
++ *   GPIO P10.10 active low = centre/OK (0x1F0 -> Linux 232)
++ * Host keys: arrows, Enter = centre, M = MENU.  Band mid-points are used.
++ */
++static void a5k_key_event(DeviceState *dev, QemuConsole *src,
++                          InputEvent *evt)
++{
++    A5KMachineState *s = A5K_MACHINE(qdev_get_machine());
++    InputKeyEvent *key = evt->u.key.data;
++    int qcode = qemu_input_key_value_to_qcode(key->key);
++    bool down = key->down;
++    int level = -1;
++
++    switch (qcode) {
++    case Q_KEY_CODE_LEFT:  level = 45;  break;
++    case Q_KEY_CODE_M:     level = 182; break;
++    case Q_KEY_CODE_RIGHT: level = 356; break;
++    case Q_KEY_CODE_UP:    level = 520; break;
++    case Q_KEY_CODE_DOWN:  level = 686; break;
++    case Q_KEY_CODE_RET:
++    case Q_KEY_CODE_KP_ENTER:
++        if (s->gpio) {
++            qemu_set_irq(qdev_get_gpio_in(s->gpio, 10 * 32 + 10), !down);
++        }
++        return;
++    default:
++        return;
++    }
++    if (s->adc[1]) {
++        cxd90014_adc_set(s->adc[1], 1, down ? level : 1023);
++    }
++}
++
++static const QemuInputHandler a5k_key_handler = {
++    .name  = "sony-a5000 buttons",
++    .mask  = INPUT_EVENT_MASK_KEY,
++    .event = a5k_key_event,
++};
++
 +/* ---- per-reset boot (runs after the ROM reset) ---- */
 +
 +#define A5K_LOADER_DESC     0x80027000ULL
@@ -662,9 +710,14 @@ index 0000000..481b0e8
 +
 +    /* ADC units 0/1 (resistor-ladder keys, zoom lever), GIC 215/216 */
 +    for (int u = 0; u < 2; u++) {
-+        sysbus_create_simple("cxd90014-adc", 0xF2406000 + u * 0x1000,
-+                             pic[GIC_ID(215 + u)]);
++        s->adc[u] = sysbus_create_simple("cxd90014-adc",
++                                         0xF2406000 + u * 0x1000,
++                                         pic[GIC_ID(215 + u)]);
 +    }
++
++    /* camera buttons from the host keyboard (after GPIO and ADC exist) */
++    qemu_input_handler_activate(
++        qemu_input_handler_register(NULL, &a5k_key_handler));
 +
 +    /* SIO ch0..4, GIC 201..205; sub-micro link on ch0 (frames) / ch3 */
 +    dev = qdev_new("cxd90014-sio");
@@ -2305,10 +2358,10 @@ index 0000000..00a9c5b
 +type_init(vph_register)
 diff --git a/hw/display/dmp_shader.c b/hw/display/dmp_shader.c
 new file mode 100644
-index 0000000..cd558c6
+index 0000000..148c228
 --- /dev/null
 +++ b/hw/display/dmp_shader.c
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,375 @@
 +/*
 + * DMP SMAPH-S30 ("SUGILITE") programmable shader unit -- interpreter (a5000).
 + *
@@ -2318,39 +2371,41 @@ index 0000000..cd558c6
 + * descriptor table (0x460 index / 0x461 data, 128 entries) and one float
 + * constant file (0x450 index / 0x451..0x454 x,y,z,w as IEEE f32).  VS entry
 + * = reg 0x442, FS entry = reg 0x443 (the caller puts it in prog->entry).
-+ * Evidence and the full field table: docs/RE_GPU_P3D_SHADER.md.
++ * Evidence, field table and what is hypothesis: docs/RE_GPU_P3D_SHADER.md.
 + *
 + * Instruction (w0 = first word written to 0x459, w1 = second):
-+ *   w0[31:28] src1 index (bit 4 = w1[0])    w0[27:24] src1 file (2 = V)
-+ *   w0[23:21] src2 file (0 R, 1 ROM, 2 V, 4 U)  w0[16:12] src2 index
++ *   w0[31:28] src1 index[3:0], w1[2:0] src1 index[6:4]
++ *   w0[27:24] src1 select: bit1 = V file, bit0 = Y file, bit3 = +a0
++ *   w1[7]     src1 from the constant file U (and: no Y copy of the result)
++ *   w0[23:21] src2 file (0 X, 1 Y, 2 V, 4 U)   w0[20:12] src2 index
 + *   w0[6:0]   operand descriptor index
-+ *   w1[27:20] opcode   w1[19] dst is V (in/out file)   w1[11:8] dst index
-+ *   w1 == 0x00004000 with opcode 0: END; w0 == w1 == 0: NOP
++ *   w1[27:20] opcode   w1[19] dst = output file O
++ *   w1[11:8]  dst index   (w1[28], w1[5]: Y-copy control, see sh_write)
++ *   opcode 0 = control: NOP (all zero), w1[15:12] 1 CALL, 2 RET, 3 JMP,
++ *   4 END, 0xd marker; opcodes 0x24/0x3d = conditional branch to w0.
 + * Operand descriptor:
 + *   [29:26] write mask (bit 26 = x)   [25:21] src1 modifier, [20:13] src1
 + *   swizzle, [12:8] src2 modifier, [7:0] src2 swizzle (2 bits/comp, x low)
-+ *   modifier: bit 4 = negate, low 3 bits == 3 = operand is the ROM vector
++ *   modifier: bit 4 negate; low 3 bits: 3 = ROM vector, 2 = w forced to 1
++ *   (op 0x02: w dropped)
 + *
-+ * Register files (as modelled; see the RE doc for what is hypothesis):
-+ *   V  in/out: VS attributes in, VS outputs out (o0 = clip position);
-+ *      FS: preloaded with the varyings, V0 = depth out, V1 = colour out
-+ *   R  general file, initialised from the constant file; FS varyings
-+ *      1..n-1 are also preloaded into R1..R(n-1)
-+ *   U  constant file, read-only (src2 file 4)
++ * Register files (see the RE doc for the evidence and the open points):
++ *   V  input file (VS attributes / FS varyings), read-only
++ *   O  output file (dst w1[19]); starts as a copy of V.  VS o0 = clip
++ *      position; FS o0 = depth, o1 = colour.  In the FS an output write is
++ *      also visible in X (GLES1 fragment programs read it back)
++ *   X  general file, initialised from the constant file
++ *   Y  second view of the general file (src1 select bit 0, src2 file 1)
++ *   U  constant file, read-only
 + *   ROM constant vector (0, 0.5, 1, 2)   hypothesis: y component unknown
-+ *
-+ * Implemented opcodes: 0x0c MOV, 0x01 ADD, 0x03 MUL, 0x02 SUM3 (horizontal
-+ * x+y+z, hypothesis), 0x1c MAX / 0x1d MIN (hypothesis, order unverified),
-+ * 0x20 TEX (unit = w1[16:14], hypothesis), 0x2b TEX-result to colour + END
-+ * (hypothesis).  Branches (0x24..), loops and the remaining ALU opcodes used
-+ * only by the GLES1 fixed-function package are not implemented: run returns
-+ * false and logs the opcode once under LOG_UNIMP.
 + */
 +
 +#ifndef DMP_SHADER_STANDALONE
 +#include "qemu/osdep.h"
 +#include "qemu/log.h"
++#include <math.h>
 +#else
++#include <math.h>
 +#include <stdio.h>
 +#include <string.h>
 +#define LOG_UNIMP 0
@@ -2358,24 +2413,29 @@ index 0000000..cd558c6
 +#endif
 +#include "hw/display/dmp_shader.h"
 +
-+#define SH_NREG       128          /* R file size (index is at most 5 bits) */
-+#define SH_MAX_STEPS  4096
++#define SH_NREG       DMP_SH_NUM_FUNIF
++#define SH_NV         16
++#define SH_MAX_STEPS  20000
++#define SH_STACK      8
 +
 +static const float sh_rom[4] = { 0.0f, 0.5f, 1.0f, 2.0f };
 +
 +typedef struct ShCtx {
-+    DmpVec4 r[SH_NREG];
++    DmpVec4 x[SH_NREG];
 +    DmpVec4 y[SH_NREG];
-+    DmpVec4 v[DMP_SH_NUM_INPUT > DMP_SH_NUM_OUTPUT ? DMP_SH_NUM_INPUT
-+                                                   : DMP_SH_NUM_OUTPUT];
++    DmpVec4 v[SH_NV];           /* inputs (attributes / varyings) */
++    DmpVec4 o[SH_NV];           /* outputs */
 +    const DmpShaderProg *p;
++    bool fs;
++    int a0;                     /* address register (op 0x11) */
++    bool cond[4];               /* comparison flags (op 0x1e) */
 +} ShCtx;
 +
 +static bool sh_unimp(uint32_t a, uint32_t w0, uint32_t w1, const char *why)
 +{
 +    static uint32_t seen[32];
 +    static unsigned nseen;
-+    uint32_t key = w1 & 0x0ff00000u;
++    uint32_t key = (w1 >> 20) & 0xff ? w1 & 0x0ff00000u : w1 & 0xff000u;
 +
 +    for (unsigned i = 0; i < nseen; i++) {
 +        if (seen[i] == key) {
@@ -2398,63 +2458,111 @@ index 0000000..cd558c6
 +        float f = s[(swz >> (2 * c)) & 3];
 +        o[c] = (mod & 0x10) ? -f : f;
 +    }
++    if ((mod & 7) == 2) {
++        o[3] = 1.0f;                        /* hypothesis: homogeneous */
++    }
 +}
 +
 +static const float *sh_src1(ShCtx *c, uint32_t w0, uint32_t w1)
 +{
-+    unsigned idx = (w0 >> 28) | ((w1 & 1) << 4);
++    unsigned sel = (w0 >> 24) & 0xf;
++    int idx = (w0 >> 28) | ((w1 & 7) << 4);
 +
-+    switch ((w0 >> 24) & 0xf) {
-+    case 2:
-+        return c->v[idx & (DMP_SH_NUM_INPUT - 1)].v;
-+    case 1:
-+        return c->y[idx].v;
-+    default:
-+        return c->r[idx].v;
++    if (sel & 8) {
++        idx += c->a0;                       /* relative addressing */
 +    }
++    idx &= SH_NREG - 1;
++    if (sel & 2) {
++        return c->v[idx & (SH_NV - 1)].v;
++    }
++    if (w1 & 0x80) {
++        return c->p->funif[idx].v;
++    }
++    return (sel & 1) ? c->y[idx].v : c->x[idx].v;
 +}
 +
 +static const float *sh_src2(ShCtx *c, uint32_t w0)
 +{
-+    unsigned idx = (w0 >> 12) & 0x1f;
++    unsigned idx = ((w0 >> 12) & 0x1ff) & (SH_NREG - 1);
 +
 +    switch ((w0 >> 21) & 7) {
 +    case 1:
-+        return sh_rom;
++        return c->y[idx].v;
 +    case 2:
-+        return c->v[idx & (DMP_SH_NUM_INPUT - 1)].v;
++        return c->v[idx & (SH_NV - 1)].v;
 +    case 4:
 +        return c->p->funif[idx].v;
 +    default:
-+        return c->r[idx].v;
++        return c->x[idx].v;
++    }
++}
++
++static void sh_store(float *d, unsigned mask, const float *res)
++{
++    for (int k = 0; k < 4; k++) {
++        if (mask & (1u << k)) {
++            d[k] = res[k];
++        }
 +    }
 +}
 +
 +static void sh_write(ShCtx *c, uint32_t w1, unsigned mask, const float *res)
 +{
 +    unsigned idx = (w1 >> 8) & 0xf;
-+    float *d[2] = { NULL, NULL };
 +
-+    if (w1 & 0x00080000u) {                 /* V: output / in-out file */
-+        d[0] = c->v[idx].v;
-+    } else if (w1 & 0x80) {                 /* X only */
-+        d[0] = c->r[idx].v;
-+    } else if (w1 & 0x20) {                 /* Y only */
-+        d[0] = c->y[idx].v;
-+    } else {                                /* X and Y */
-+        d[0] = c->r[idx].v;
-+        /* hypothesis: w1 bit 28 with dst code 0x40 suppresses the Y copy */
-+        if (!((w1 & 0x10000040u) == 0x10000040u)) {
-+            d[1] = c->y[idx].v;
++    if (w1 & 0x00080000u) {                 /* output file */
++        sh_store(c->o[idx].v, mask, res);
++        if (c->fs) {
++            /* hypothesis: in the FS, V k is also visible as X k */
++            sh_store(c->x[idx].v, mask, res);
++        }
++        return;
++    }
++    sh_store(c->x[idx].v, mask, res);
++    /*
++     * hypothesis (fitted to the libObj programs, doc §6.3): w1 bit 7, or
++     * w1 bit 28 without w1 bit 5, writes X only; other writes update Y too.
++     */
++    if (!(w1 & 0x80) && (!(w1 & 0x10000000u) || (w1 & 0x20))) {
++        sh_store(c->y[idx].v, mask, res);
++    }
++}
++
++/*
++ * comparison src1 OP src2.  hypothesis: 3 = GT and 4 = EQ are fitted to the
++ * GLES1 package flag tests (doc §7); 0/1/2/5 are guesses.
++ */
++static bool sh_cmp(unsigned mode, float a, float b, bool *ok)
++{
++    *ok = true;
++    switch (mode) {
++    case 0: return a != b;
++    case 1: return a < b;
++    case 2: return a <= b;
++    case 3: return a > b;
++    case 4: return a == b;
++    case 5: return a >= b;
++    }
++    *ok = false;
++    return false;
++}
++
++/*
++ * branch condition w1[19:12]: 2 bits per component, x in the top pair.
++ * hypothesis: bit 1 of a pair = ignore this component, bit 0 = required
++ * flag value; all non-ignored components must match (AND).
++ */
++static bool sh_cond(ShCtx *c, uint32_t w1)
++{
++    bool r = true;
++
++    for (int k = 0; k < 4; k++) {
++        unsigned f = (w1 >> (18 - 2 * k)) & 3;
++        if (!(f & 2) && c->cond[k] != (bool)(f & 1)) {
++            r = false;
 +        }
 +    }
-+    for (int j = 0; j < 2 && d[j]; j++) {
-+        for (int k = 0; k < 4; k++) {
-+            if (mask & (1u << k)) {
-+                d[j][k] = res[k];
-+            }
-+        }
-+    }
++    return (w1 & 0x400) ? !r : r;   /* hypothesis: w1[10] inverts */
 +}
 +
 +bool dmp_shader_run(DmpShaderStage stage, const DmpShaderProg *prog,
@@ -2462,43 +2570,78 @@ index 0000000..cd558c6
 +                    DmpVec4 *out, unsigned nout)
 +{
 +    ShCtx c;
-+    unsigned pc = prog->entry;
++    unsigned pc = prog->entry, sp = 0, stack[SH_STACK];
 +
 +    c.p = prog;
-+    for (unsigned i = 0; i < SH_NREG; i++) {
-+        c.r[i] = i < DMP_SH_NUM_FUNIF ? prog->funif[i] : (DmpVec4){ { 0 } };
-+    }
-+    memcpy(c.y, c.r, sizeof(c.y));
++    c.fs = stage == DMP_SH_FRAGMENT;
++    c.a0 = 0;
++    memset(c.cond, 0, sizeof(c.cond));
++    memcpy(c.x, prog->funif, sizeof(c.x));
++    memcpy(c.y, prog->funif, sizeof(c.y));
 +    memset(c.v, 0, sizeof(c.v));
-+    for (unsigned i = 0; i < nin && i < DMP_SH_NUM_INPUT; i++) {
++    for (unsigned i = 0; i < nin && i < SH_NV; i++) {
 +        c.v[i] = in[i];
-+        /* hypothesis: FS varying k also appears in R[k] (k >= 1) */
-+        if (stage == DMP_SH_FRAGMENT && i >= 1) {
-+            c.r[i] = in[i];
++        /* hypothesis: FS varying k also appears in X/Y k (k >= 1) */
++        if (c.fs && i >= 1) {
++            c.x[i] = in[i];
 +            c.y[i] = in[i];
 +        }
 +    }
 +
-+    for (unsigned step = 0; step < SH_MAX_STEPS; step++, pc++) {
++    /* outputs start as a copy of the inputs (FS: o1.rgb = varying 1 when
++     * only o1.w is written, gemini FS 0xe80f92) */
++    memcpy(c.o, c.v, sizeof(c.o));
++
++    for (unsigned step = 0; step < SH_MAX_STEPS; step++) {
 +        if (2 * pc + 1 >= DMP_SH_MAX_CODE) {
 +            return sh_unimp(pc, 0, 0, "pc out of range");
 +        }
 +        uint32_t w0 = prog->code[2 * pc], w1 = prog->code[2 * pc + 1];
 +        unsigned op = (w1 >> 20) & 0xff;
++        unsigned next = pc + 1;
 +
 +        if (op == 0) {
-+            if (w0 == 0 && w1 == 0) {
-+                continue;                       /* NOP */
++            switch ((w1 >> 12) & 0xff) {
++            case 0x0:
++                if (w0 == 0 && w1 == 0) {
++                    break;                      /* NOP */
++                }
++                return sh_unimp(pc, w0, w1, "control op");
++            case 0x1:                           /* CALL w0 */
++                if (sp >= SH_STACK) {
++                    return sh_unimp(pc, w0, w1, "call stack overflow");
++                }
++                stack[sp++] = next;
++                next = w0;
++                break;
++            case 0x2:                           /* RET */
++                if (!sp) {
++                    goto done;
++                }
++                next = stack[--sp];
++                break;
++            case 0x3:                           /* JMP w0 */
++                next = w0;
++                break;
++            case 0x4:                           /* END */
++                goto done;
++            case 0xd:                           /* block marker [?] */
++                break;
++            default:
++                return sh_unimp(pc, w0, w1, "control op");
 +            }
-+            if ((w1 & 0xf000u) == 0x4000u) {
-+                break;                          /* END */
-+            }
-+            return sh_unimp(pc, w0, w1, "control op");
++            pc = next;
++            continue;
++        }
++        if (op == 0x24 || op == 0x3d) {        /* conditional branch */
++            pc = sh_cond(&c, w1) ? w0 : next;
++            continue;
 +        }
 +
 +        uint32_t d = prog->opdesc[w0 & 0x7f];
 +        unsigned mask = (d >> 26) & 0xf;
 +        float a[4], b[4], r[4];
++        bool ok;
 +
 +        sh_swz(sh_src1(&c, w0, w1), (d >> 13) & 0xff, (d >> 21) & 0x1f, a);
 +        sh_swz(sh_src2(&c, w0), d & 0xff, (d >> 8) & 0x1f, b);
@@ -2517,19 +2660,53 @@ index 0000000..cd558c6
 +                r[k] = a[k] * b[k];
 +            }
 +            break;
-+        case 0x02:                              /* SUM3, hypothesis */
-+            r[0] = r[1] = r[2] = r[3] = a[0] + a[1] + a[2];
++        case 0x02:                              /* horizontal sum (DP) */
++            r[0] = a[0] + a[1] + a[2];
++            if ((((d >> 21) & 7) != 2)) {
++                r[0] += a[3];
++            }
++            r[1] = r[2] = r[3] = r[0];
 +            break;
-+        case 0x1c:                              /* MAX, hypothesis */
++        case 0x04:                              /* RCP, hypothesis */
++            r[0] = r[1] = r[2] = r[3] = 1.0f / a[0];
++            break;
++        case 0x05:                              /* RSQ */
++            r[0] = r[1] = r[2] = r[3] = 1.0f / sqrtf(a[0]);
++            break;
++        case 0x07:                              /* EX2, hypothesis */
++            r[0] = r[1] = r[2] = r[3] = exp2f(a[0]);
++            break;
++        case 0x08:                              /* LG2, hypothesis */
++            r[0] = r[1] = r[2] = r[3] = log2f(a[0]);
++            break;
++        case 0x11:                              /* MOVA: a0 = src1, hyp. */
++            for (int k = 0; k < 4; k++) {
++                if (mask & (1u << k)) {
++                    c.a0 = (int)a[k];
++                    break;
++                }
++            }
++            pc = next;
++            continue;
++        case 0x1c:                              /* MAX */
 +            for (int k = 0; k < 4; k++) {
 +                r[k] = a[k] > b[k] ? a[k] : b[k];
 +            }
 +            break;
-+        case 0x1d:                              /* MIN, hypothesis */
++        case 0x1d:                              /* MIN */
 +            for (int k = 0; k < 4; k++) {
 +                r[k] = a[k] < b[k] ? a[k] : b[k];
 +            }
 +            break;
++        case 0x1e:                              /* CMP -> cond[] */
++            for (int k = 0; k < 4; k++) {
++                c.cond[k] = sh_cmp((w1 >> 16) & 7, a[k], b[k], &ok);
++                if (!ok) {
++                    return sh_unimp(pc, w0, w1, "compare mode");
++                }
++            }
++            pc = next;
++            continue;
 +        case 0x20:                              /* TEX */
 +            if (prog->tex_sample) {
 +                prog->tex_sample(prog->tex_opaque, (w1 >> 14) & 7, a, r);
@@ -2538,11 +2715,7 @@ index 0000000..cd558c6
 +            }
 +            break;
 +        case 0x2b:                              /* colour out + END, hyp. */
-+            for (int k = 0; k < 4; k++) {
-+                if (mask & (1u << k)) {
-+                    c.v[1].v[k] = a[k];
-+                }
-+            }
++            sh_store(c.o[1].v, mask, a);
 +            goto done;
 +        default:
 +            return sh_unimp(pc, w0, w1, "opcode");
@@ -2552,15 +2725,16 @@ index 0000000..cd558c6
 +        fprintf(stderr, "  %4u %08x %08x op%02x m%x a(%g %g %g %g) "
 +                "b(%g %g %g %g) -> %c%u (%g %g %g %g)\n", pc, w0, w1, op,
 +                mask, a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3],
-+                "RKVV"[(w1 >> 18) & 3], (w1 >> 8) & 0xf,
++                (w1 & 0x80000u) ? 'V' : 'X', (w1 >> 8) & 0xf,
 +                r[0], r[1], r[2], r[3]);
 +#endif
++        pc = next;
 +    }
++    return sh_unimp(pc, 0, 0, "step limit");
 +done:
-+    for (unsigned i = 0; i < nout && i < DMP_SH_NUM_OUTPUT; i++) {
-+        out[i] = c.v[i];
++    for (unsigned i = 0; i < nout && i < DMP_SH_NUM_OUTPUT && i < SH_NV; i++) {
++        out[i] = c.o[i];
 +    }
-+    (void)stage;
 +    return true;
 +}
 diff --git a/hw/display/dmp_smaph.c b/hw/display/dmp_smaph.c
@@ -4170,10 +4344,10 @@ index 8b4b61e..7659e95 100644
      case 0xF60:
 diff --git a/hw/misc/cxd90014_adc.c b/hw/misc/cxd90014_adc.c
 new file mode 100644
-index 0000000..3402a9e
+index 0000000..bc17661
 --- /dev/null
 +++ b/hw/misc/cxd90014_adc.c
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,128 @@
 +/*
 + * CXD90014 ADC unit (a5000): PA 0xF2406000 + 0x1000*u, GIC 215 + u.
 + * From av-cam.bin (docs/RE_AVCAM_IRQ_BOOT.md, 0x4391722c result reader):
@@ -4183,7 +4357,8 @@ index 0000000..3402a9e
 + *   +0x44 (div<<8)|n, +0x48 timing
 + * All results read 1023: every resistor-ladder key released, zoom lever in
 + * its neutral band (input.ko key table, docs/RE_INPUT_I2C_POWER.md).
-+ * Results can later be driven by a key-injection front end.
++ * The board drives levels with cxd90014_adc_set() (key front end in
++ * hw/arm/sony_a5000.c).
 + */
 +#include "qemu/osdep.h"
 +#include "hw/sysbus.h"
@@ -4191,6 +4366,7 @@ index 0000000..3402a9e
 +#include "qemu/timer.h"
 +#include "qemu/module.h"
 +#include "qom/object.h"
++#include "hw/misc/cxd90014_adc.h"
 +
 +#define TYPE_CXD_ADC "cxd90014-adc"
 +OBJECT_DECLARE_SIMPLE_TYPE(AdcState, CXD_ADC)
@@ -4254,6 +4430,14 @@ index 0000000..3402a9e
 +    .endianness = DEVICE_LITTLE_ENDIAN,
 +    .valid = { .min_access_size = 2, .max_access_size = 4 },
 +};
++
++void cxd90014_adc_set(DeviceState *dev, int ch, uint16_t level)
++{
++    AdcState *s = CXD_ADC(dev);
++    if (ch >= 0 && ch < 12) {
++        s->result[ch] = level & 0x3ff;
++    }
++}
 +
 +static void adc_reset(DeviceState *dev)
 +{
@@ -5538,10 +5722,10 @@ index c5b6db4..1e3ced9 100644
 +cxd4115_fire(uint32_t ch, uint32_t ctrl) "ch%u match ctrl=0x%x"
 diff --git a/include/hw/display/dmp_shader.h b/include/hw/display/dmp_shader.h
 new file mode 100644
-index 0000000..968a569
+index 0000000..4c23ceb
 --- /dev/null
 +++ b/include/hw/display/dmp_shader.h
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,79 @@
 +/*
 + * DMP SMAPH-S30 programmable shader units — interpreter interface (a5000).
 + *
@@ -5602,13 +5786,39 @@ index 0000000..968a569
 +
 +/*
 + * Run one invocation.  in[] are the input registers (vertex attributes or
-+ * interpolated varyings), out[] receive the output registers.  Returns
++ * interpolated varyings), out[] receive the output registers.  What the
++ * interpreter uses from prog (docs/RE_GPU_P3D_SHADER.md §1):
++ *   code[]   words written through P3D 0x459, indexed from address 0
++ *            (0x458 = instruction address, i.e. word index / 2)
++ *   opdesc[] 0x461 data at index 0x460 (0..127)
++ *   funif[]  0x451..0x454 (raw IEEE f32) at index 0x450
++ *   entry    VS: P3D 0x442, FS: P3D 0x443
++ *   tex_sample/tex_opaque for opcode 0x20
++ * Conventions: VS out[0] = clip position; FS in[k] = VS out[k]; FS
++ * out[1] = colour (out[0] = depth from the 9-instruction prologue).
++ * Not used: ncode, nopdesc, iunif, bunif, in_map, out_map, extra.  Returns
 + * false on an undecodable instruction (the caller then skips the
 + * primitive and logs once under LOG_UNIMP).
 + */
 +bool dmp_shader_run(DmpShaderStage stage, const DmpShaderProg *prog,
 +                    const DmpVec4 *in, unsigned nin,
 +                    DmpVec4 *out, unsigned nout);
++
++#endif
+diff --git a/include/hw/misc/cxd90014_adc.h b/include/hw/misc/cxd90014_adc.h
+new file mode 100644
+index 0000000..5c073f0
+--- /dev/null
++++ b/include/hw/misc/cxd90014_adc.h
+@@ -0,0 +1,10 @@
++/* CXD90014 ADC unit — analog inputs driven by the board (key ladders). */
++#ifndef HW_MISC_CXD90014_ADC_H
++#define HW_MISC_CXD90014_ADC_H
++
++#include "hw/qdev-core.h"
++
++/* Set the 10-bit level of channel ch (0..11) as the next scans read it. */
++void cxd90014_adc_set(DeviceState *dev, int ch, uint16_t level);
 +
 +#endif
 diff --git a/include/hw/misc/cxd90014_sio.h b/include/hw/misc/cxd90014_sio.h

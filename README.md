@@ -36,7 +36,9 @@ emulator/run.sh -display none -serial stdio -s # + gdb: arm-none-eabi-gdb emulat
 - ✅ **GPU P3D 명령 리스트 실행**(디코더·래스터라이저·텍스처·블렌딩, `docs/RE_GPU_P3D_CMD.md`) + 셰이더 인터프리터(진행 중) + 패널 OSD RGBA4444 → **순정 UI 첫 화면(지역/날짜/시간 설정 대화상자)이 QEMU 창에 표시**
 - ⏳ Rigel 윈도우 합성 셰이더 일부 opcode 미구현, 깊이/스텐실·선/점·밉맵 미구현 상세 `docs/RE_ENGINE_TICK.md`
 - ✅ SD 카드: 서브마이컴 슬롯 스위치 모델 → 순정 미디어 스택이 카드 초기화·FAT 읽기 (`-drive if=sd` / `A5K_SD`)
-- ⬜ 키 입력(첫 화면 진행에 필요), 센서/ISP(라이브뷰), 렌즈, 오디오
+- ✅ 카메라 버튼: 호스트 키보드 → ADC 래더(ch 0x0D)·GPIO P10.10 (방향키/M=MENU/Enter=가운데, HMP `sendkey`) — 첫 대화상자 "확인" 동작
+- ⏳ 다음 화면(지역 설정) 검정 — 조사 중
+- ⬜ 센서/ISP(라이브뷰), 렌즈, 오디오
 
 ## 사용
 ```sh
