@@ -273,7 +273,12 @@ static void a5k_write_stub(void)
     for (size_t i = 0; i < ARRAY_SIZE(stub); i++) {
         stub[i] = cpu_to_le32(stub[i]);
     }
-    rom_add_blob_fixed("a5k.stub", stub, sizeof(stub), A5K_STUB_ADDR);
+    /* word 20 (the kernel entry literal) is left out of the ROM blobs:
+     * a5k_boot_reset() writes it on every reset (normally
+     * A5K_KERNEL_ADDR; the updater core enters elsewhere) */
+    rom_add_blob_fixed("a5k.stub", stub, 20 * 4, A5K_STUB_ADDR);
+    rom_add_blob_fixed("a5k.stub-gicd", &stub[21], 56 * 4,
+                       A5K_STUB_ADDR + 21 * 4);
 }
 
 /*
@@ -560,36 +565,88 @@ static const QemuInputHandler a5k_key_handler = {
     .event = a5k_key_event,
 };
 
-/* ---- per-reset boot (runs after the ROM reset) ---- */
+/* ---- per-reset boot (a legacy reset handler; it is registered before
+ * rom_reset, so it must not write into ROM blobs) ---- */
 
 #define A5K_LOADER_DESC     0x80027000ULL
 #define A5K_DESC_MAGIC      0x424b3541      /* "A5KB" */
+/*
+ * Optional descriptor extension (words 5..7): {"A5KX", kdst, idst}.
+ * Stage 1 writes it when it boots an image whose load addresses are not
+ * the normal ones -- the updater core on nflasha1 (/boot/loadaddr.txt
+ * "0x81528000,0x80628000": a zImage entered at its load address, cramfs
+ * initrd at 0x80628000).  See docs/RE_UPDATER_BOOT.md.
+ */
+#define A5K_DESC_XMAGIC     0x584b3541      /* "A5KX" */
+#define A5K_STUB_ENTRY_LIT  (A5K_STUB_ADDR + 20 * 4)  /* ldr pc literal */
+#define A5K_SMP_MBOX        0xC0005010ULL
+
+static bool a5k_ddr_range(uint32_t pa, uint32_t len)
+{
+    return pa >= A5K_DDR_BASE && len <= A5K_DDR_SIZE &&
+           pa - A5K_DDR_BASE <= A5K_DDR_SIZE - len;
+}
 
 static void a5k_boot_reset(void *opaque)
 {
     A5KMachineState *s = opaque;
     AddressSpace *as = &address_space_memory;
-    uint32_t d[5];
+    uint32_t d[8];
+    bool ext;
 
     address_space_read(as, A5K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED, d,
                        sizeof(d));
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 8; i++) {
         d[i] = le32_to_cpu(d[i]);
     }
-    if (d[0] == A5K_DESC_MAGIC && d[2] && d[2] <= A5K_INITRD_ADDR -
-        A5K_KERNEL_ADDR && d[4] <= 8 * MiB) {
+    /*
+     * A reset sends the secondaries back to the boot-ROM wait loop
+     * (a5k_write_smp_stub); the release mailbox written by the previous
+     * kernel's cxd90014_smp_init must not survive it, or they jump into
+     * that kernel's (now stale) secondary entry before the new kernel
+     * releases them.  On power-on the IRAM is zero, which is the state
+     * reproduced here [hypothesis: the real boot ROM/bootloader clears
+     * it; the normal boot only worked because stage 2 reloads the same
+     * kernel at the same address].
+     */
+    uint32_t mbox[3] = { 0 };
+    address_space_write(as, A5K_SMP_MBOX, MEMTXATTRS_UNSPECIFIED, mbox,
+                        sizeof(mbox));
+
+    uint32_t entry = cpu_to_le32(A5K_KERNEL_ADDR);
+    address_space_write(as, A5K_STUB_ENTRY_LIT, MEMTXATTRS_UNSPECIFIED,
+                        &entry, 4);
+
+    ext = d[0] == A5K_DESC_MAGIC && d[5] == A5K_DESC_XMAGIC &&
+          a5k_ddr_range(d[6], d[2]) && a5k_ddr_range(d[7], d[4]) &&
+          (d[6] >= d[7] + d[4] || d[7] >= d[6] + d[2]);
+    if (d[0] == A5K_DESC_MAGIC && d[2] &&
+        (ext || (d[2] <= A5K_INITRD_ADDR - A5K_KERNEL_ADDR &&
+                 d[4] <= 8 * MiB))) {
         /* stage 2: kernel + initrd read from NAND by stage 1 */
+        uint32_t kdst = ext ? d[6] : A5K_KERNEL_ADDR;
+        uint32_t idst = ext ? d[7] : A5K_INITRD_ADDR;
         g_autofree uint8_t *k = g_malloc(d[2]);
         g_autofree uint8_t *r = g_malloc(MAX(d[4], 1));
         address_space_read(as, d[1], MEMTXATTRS_UNSPECIFIED, k, d[2]);
         address_space_read(as, d[3], MEMTXATTRS_UNSPECIFIED, r, d[4]);
-        address_space_write(as, A5K_KERNEL_ADDR, MEMTXATTRS_UNSPECIFIED,
-                            k, d[2]);
-        address_space_write(as, A5K_INITRD_ADDR, MEMTXATTRS_UNSPECIFIED,
-                            r, d[4]);
-        uint32_t zero = 0;
+        address_space_write(as, kdst, MEMTXATTRS_UNSPECIFIED, k, d[2]);
+        address_space_write(as, idst, MEMTXATTRS_UNSPECIFIED, r, d[4]);
+        uint32_t zero[6] = { 0 };
         address_space_write(as, A5K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED,
-                            &zero, 4);
+                            zero, sizeof(zero));
+        if (ext) {
+            /* enter the image at its load address (boot stub literal) */
+            entry = cpu_to_le32(kdst);
+            address_space_write(as, A5K_STUB_ENTRY_LIT,
+                                MEMTXATTRS_UNSPECIFIED, &entry, 4);
+            info_report("sony-a5000: stage 2 — kernel %u B @0x%08x, "
+                        "initrd %u B @0x%08x from NAND", d[2], kdst, d[4],
+                        idst);
+            /* this kernel carries its own built-in command line and has
+             * no kemco parser: no kemco block */
+            goto out;
+        }
         info_report("sony-a5000: stage 2 — kernel %u B, initrd %u B from NAND",
                     d[2], d[4]);
     } else {
@@ -604,6 +661,7 @@ static void a5k_boot_reset(void *opaque)
         }
     }
     a5k_write_kemco(s->cmdline);
+out:
     if (s->submicro_t && s->submicro) {
         s->submicro_step = 0;
         timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
@@ -614,7 +672,7 @@ static void a5k_boot_reset(void *opaque)
 static void a5k_init_done(Notifier *n, void *data)
 {
     A5KMachineState *s = container_of(n, A5KMachineState, init_done);
-    qemu_register_reset(a5k_boot_reset, s);   /* after rom_reset */
+    qemu_register_reset(a5k_boot_reset, s);   /* before rom_reset */
 }
 
 /* ---- machine ---- */
@@ -965,7 +1023,7 @@ static void a5k_init(MachineState *ms)
 
     /* ---- load firmware images ----
      * Kernel, initrd and the kemco command line are (re)written on every
-     * reset by a5k_boot_reset(), which runs after the ROM reset:
+     * reset by a5k_boot_reset() (none of them lies in a ROM blob):
      *  - stage 2: the loader descriptor "A5KB" at PA 0x80027000 is valid ->
      *    the kernel/initrd that stage 1 read from the emulated NAND are
      *    moved into place (what the Sony bootloader does);

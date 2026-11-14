@@ -4,6 +4,9 @@
 #   - mount MUMIN and leave its state at PA 0x80000000 (nand.ko boot_mode=0
 #     re-registers it), 128 KiB
 #   - /setting/Backup.bin  -> the PA in its header (0x82EC0000)
+#   - boot-mode decision (docs/RE_UPDATER_BOOT.md): if /setting/updater/mode
+#     exists, boot the updater core from nflasha1 (/boot/vmlinux.bin +
+#     /boot/initrd.img at the addresses in /boot/loadaddr.txt); otherwise
 #   - /system/av-cam.bin   -> PA 0x83541000 (liro.ko adr=)
 #   - /system/vmlinux.bin, /system/initrd.img -> staging, then reset into
 #     stage 2 through the board's loader descriptor at PA 0x80027000
@@ -16,17 +19,38 @@ insmod /kmod/lld.ko
 insmod /kmod/nand.ko boot_mode=1
 # device numbers as in the stock initrd's /dev:
 # nflashaN = 252:N (raw), dnflashaN = 252:128+N (LZPT-decompressing)
+mknod /dev/nflasha1 b 252 1
 mknod /dev/nflasha2 b 252 2
 mknod /dev/dnflasha3 b 252 131
-mkdir -p /mnt/setting /mnt/system
+mkdir -p /mnt/setting /mnt/system /mnt/updater
 fail() { echo "a5k-loader: FAILED: $1"; cat /proc/partitions; exec /bin/sh; }
 # nand.ko's device struct (fixed: same module load order as the stock initrd)
 a5kcopy -mumin 0x3f03ad20 || fail mumin
 mount -t vfat -o ro /dev/nflasha2 /mnt/setting || fail setting
 a5kcopy -backup /mnt/setting/Backup.bin || fail backup
-mount -t vfat -o ro /dev/dnflasha3 /mnt/system || fail "system mount"
-a5kcopy -f2p /mnt/system/av-cam.bin 0x83541000 || fail av-cam
-a5kcopy -stage2 /mnt/system/vmlinux.bin /mnt/system/initrd.img || fail stage2
+if [ -f /mnt/setting/updater/mode ]; then
+    # updater core (nflasha1, plain FAT): "<kernel PA>,<initrd PA>"
+    echo "a5k-loader: /setting/updater/mode set -> updater core (nflasha1)"
+    mount -t vfat -o ro /dev/nflasha1 /mnt/updater || fail "updater mount"
+    LA=$(cat /mnt/updater/boot/loadaddr.txt) || fail loadaddr
+    KDST=$(echo "$LA" | sed 's/,.*//')
+    IDST=$(echo "$LA" | sed 's/^[^,]*,//; s/[^0-9a-fA-Fx].*//')
+    len() { sed -n 's/^a5kcopy: loaded \(0x[0-9a-f]*\) bytes.*/\1/p'; }
+    KLEN=$(a5kcopy -f2p /mnt/updater/boot/vmlinux.bin 0x90000000 | len)
+    ILEN=$(a5kcopy -f2p /mnt/updater/boot/initrd.img 0x90400000 | len)
+    [ -n "$KDST" ] && [ -n "$IDST" ] && [ -n "$KLEN" ] && [ -n "$ILEN" ] ||
+        fail "updater stage2"
+    # descriptor {"A5KB", kpa, klen, ipa, ilen, "A5KX", kdst, idst},
+    # magic word written last
+    a5kcopy -w32 0x80027004 0x90000000 $KLEN 0x90400000 $ILEN \
+        0x584b3541 $KDST $IDST || fail "updater desc"
+    a5kcopy -w32 0x80027000 0x424b3541 || fail "updater desc"
+    echo "a5k-loader: updater kernel $KLEN @$KDST, initrd $ILEN @$IDST"
+else
+    mount -t vfat -o ro /dev/dnflasha3 /mnt/system || fail "system mount"
+    a5kcopy -f2p /mnt/system/av-cam.bin 0x83541000 || fail av-cam
+    a5kcopy -stage2 /mnt/system/vmlinux.bin /mnt/system/initrd.img || fail stage2
+fi
 # read-only mounts: no unmount needed (and umount of the LZPT device
 # blocks); the reset discards stage 1 anyway
 echo "a5k-loader: entering stage 2"

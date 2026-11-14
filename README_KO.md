@@ -55,6 +55,7 @@
 - ✅ 첫 부팅 설정 완주: 지역 설정(세계 지도) → 날짜/시간 → PlayMemories 안내 → 촬영 모드 (SD 없음: 렌즈 경고 → 촬영 OSD)
 - ✅ 셔터 대기 레벨 수정(카메라가 S1/S2를 누른 채로 부팅하고 있었음): 촬영 모드에서 MENU·휠 가운데 버튼 동작, 셔터·줌 레버 연결 (`docs/RE_ENGINE_TICK.md` §12)
 - ⏳ SD 있음: 이미지 DB 자동 복구 뷰(AUTOREPAIR)가 빈 화면, 메뉴의 포맷도 멈춤 — 둘 다 SD 명령을 내지 않음, 조사 중
+- ✅ 업데이터 모드: 에뮬레이션 NAND에 `/setting/updater/mode`가 있으면 1단계 로더가 부트로더처럼 업데이터 코어(nflasha1)로 부팅 → 루트 셸·UFP USB 대기까지 (`docs/RE_UPDATER_BOOT.md`)
 - ⬜ 센서/ISP(라이브뷰), 렌즈, 오디오
 
 ## 사용
