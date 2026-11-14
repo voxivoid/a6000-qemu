@@ -34,10 +34,10 @@ index dc68391..02fcce7 100644
 +arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
 diff --git a/hw/arm/sony_a5000.c b/hw/arm/sony_a5000.c
 new file mode 100644
-index 0000000..df15952
+index 0000000..5900b43
 --- /dev/null
 +++ b/hw/arm/sony_a5000.c
-@@ -0,0 +1,865 @@
+@@ -0,0 +1,905 @@
 +/*
 + * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
 + *
@@ -77,6 +77,7 @@ index 0000000..df15952
 +#include "hw/misc/unimp.h"
 +#include "hw/arm/boot.h"
 +#include "hw/sd/sdhci.h"
++#include "hw/misc/cxd90014_sio.h"
 +#include "hw/qdev-properties.h"
 +#include "hw/qdev-properties-system.h"
 +#include "system/blockdev.h"
@@ -154,6 +155,8 @@ index 0000000..df15952
 +    QEMUTimer *submicro_t;
 +    int submicro_step;
 +    bool submicro;
++    uint8_t *submicro_frames;
++    char *submicro_file;
 +    char *cmdline;
 +    uint8_t *kernel, *initrd;
 +    size_t kernel_len, initrd_len;
@@ -335,33 +338,45 @@ index 0000000..df15952
 +}
 +
 +/*
-+ * Sub-micro (power micro) handshake, observation stage: after boot the real
-+ * micro raises its request line p0.0 and gives an edge on p0.7 (IRQ 128),
-+ * which makes av-cam start the SIO ch0 link (docs/RE_AVCAM_IRQ_BOOT.md §5).
-+ * Only the handshake is emulated here; no frames are answered yet.
++ * Sub-micro (power/front micro) HLE, transport level only
++ * (docs/RE_SUBMICRO_LINK.md).  The micro strobes p0.12 (IRQ 133, link event
++ * 0) while its request line p3.17 stays low; av-cam then runs one 128-byte
++ * full-duplex exchange: CPU status frame (type 0x31) out, micro status frame
++ * (0x30) in.  On its periodic tick the CPU also clocks a 128-byte slot-A
++ * packet; the micro's slot-A (0x20) comes back.  Both reply frames are the
++ * real camera's own frames from the WBI snapshot (data/submicro_frames.bin;
++ * the power-off flag in TLV 3 cleared, CRC-16/CCITT-FALSE recomputed).
++ * Contents are replayed as-is, never synthesised.
 + */
-+static void a5k_submicro_attn(void *opaque)
++static void a5k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
++{
++    A5KMachineState *s = opaque;
++    if (len < 128 || !s->submicro_frames) {
++        memset(buf, 0, len);            /* 8-byte header phase: nothing */
++        return;
++    }
++    const uint8_t *f = s->submicro_frames + (buf[0] == 0x31 ? 128 : 0);
++    memcpy(buf, f, 128);
++    if (len > 128) {
++        memcpy(buf + 128, s->submicro_frames + 128, MIN(len - 128, 128));
++    }
++}
++
++static void a5k_submicro_tick(void *opaque)
 +{
 +    A5KMachineState *s = opaque;
 +    if (!s->gpio) {
 +        return;
 +    }
-+    /* step 0/1: p0.0 high + p0.7 edge (event 16); step 2/3: p0.12 edge
-+     * (IRQ 133, link event 0) [experimental ordering] */
-+    /* micro "request" line: p3.17 on this unit (av-cam reads the port/pin
-+     * from globals @0x43d684e4/0x43d684b4, set from Backup) */
-+    qemu_set_irq(qdev_get_gpio_in(s->gpio, 3 * 32 + 17), 1);
-+    if (s->submicro_step < 2) {
-+        qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 7), s->submicro_step & 1);
-+    } else {
-+        qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 12), s->submicro_step & 1);
-+    }
-+    s->submicro_step++;
++    /* p0.12 must be LOW when the engine tick samples it, otherwise the CPU
++     * skips its slot-A exchange ("FrtComSkip"): give a 1 ms strobe every
++     * 50 ms (each edge is a link event 0; the trailing one is ignored in
++     * the states it lands in). */
++    qemu_set_irq(qdev_get_gpio_in(s->gpio, 3 * 32 + 17), 0); /* request low */
++    s->submicro_step ^= 1;
++    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 12), s->submicro_step);
 +    timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-+              (s->submicro_step < 4 ? 10 * SCALE_MS : NANOSECONDS_PER_SECOND));
-+    if (s->submicro_step >= 4) {
-+        s->submicro_step = 2;       /* keep edging p0.12 once a second */
-+    }
++              (s->submicro_step ? SCALE_MS : 49 * SCALE_MS));
 +}
 +
 +/* ---- per-reset boot (runs after the ROM reset) ---- */
@@ -580,7 +595,7 @@ index 0000000..df15952
 +        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 17 + pn, pic[GIC_ID(137 + pn)]);
 +    }
 +    s->gpio = dev;
-+    s->submicro_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_submicro_attn, s);
++    s->submicro_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_submicro_tick, s);
 +
 +    /* ADC units 0/1 (resistor-ladder keys, zoom lever), GIC 215/216 */
 +    for (int u = 0; u < 2; u++) {
@@ -588,9 +603,21 @@ index 0000000..df15952
 +                             pic[GIC_ID(215 + u)]);
 +    }
 +
-+    /* SIO ch0..4 (ch0 = sub-micro link), GIC 201..205 */
++    /* SIO ch0..4, GIC 201..205; sub-micro link on ch0 (frames) / ch3 */
 +    dev = qdev_new("cxd90014-sio");
 +    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
++    if (s->submicro) {
++        gsize flen;
++        const char *fn = s->submicro_file ? s->submicro_file :
++                         "emulator/data/submicro_frames.bin";
++        if (!g_file_get_contents(fn, (gchar **)&s->submicro_frames, &flen,
++                                 NULL) || flen < 256) {
++            error_report("sony-a5000: submicro frames %s missing", fn);
++            exit(1);
++        }
++        cxd90014_sio_attach(dev, 0, a5k_submicro_xfer, s);
++        cxd90014_sio_attach(dev, 3, a5k_submicro_xfer, s);
++    }
 +    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2405000);
 +    for (int c = 0; c < 5; c++) {
 +        sysbus_connect_irq(SYS_BUS_DEVICE(dev), c, pic[GIC_ID(201 + c)]);
@@ -786,6 +813,17 @@ index 0000000..df15952
 +    A5K_MACHINE(o)->debug_console = v;
 +}
 +
++static char *a5k_get_smcf(Object *o, Error **errp)
++{
++    return g_strdup(A5K_MACHINE(o)->submicro_file);
++}
++
++static void a5k_set_smcf(Object *o, const char *v, Error **errp)
++{
++    g_free(A5K_MACHINE(o)->submicro_file);
++    A5K_MACHINE(o)->submicro_file = g_strdup(v);
++}
++
 +static bool a5k_get_smc(Object *o, Error **errp)
 +{
 +    return A5K_MACHINE(o)->submicro;
@@ -857,7 +895,9 @@ index 0000000..df15952
 +
 +    object_class_property_add_bool(oc, "submicro", a5k_get_smc, a5k_set_smc);
 +    object_class_property_set_description(oc, "submicro",
-+        "Emulate the power micro's attention handshake (experimental)");
++        "Sub-micro (power micro) HLE replaying the real camera's frames");
++    object_class_property_add_str(oc, "submicro-frames", a5k_get_smcf,
++                                  a5k_set_smcf);
 +    object_class_property_add_str(oc, "fb", a5k_get_fb, a5k_set_fb);
 +    object_class_property_set_description(oc, "fb",
 +        "Debug frame-buffer view: addr,w,h,stride,fmt[;...]");
