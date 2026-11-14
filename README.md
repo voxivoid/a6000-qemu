@@ -34,7 +34,22 @@ The `qemu/` directory is **not published**. It is rebuilt from upstream QEMU `v1
 ./setup-qemu.sh     # clone v10.1.0 into qemu/, copy qemu-overlay/, apply the patch
 ```
 Developers working in `qemu/` (branch `sony-a5000`) run `tools/export-qemu.sh` after each QEMU commit to refresh `qemu-overlay/` and the patch.
-Camera buttons from the host: arrow keys / Enter = wheel and centre, `M` = MENU, `P` = PLAY, `R` = MOVIE, Delete = DELETE (or HMP `sendkey`). SD card: `-drive if=sd` / `A5K_SD`.
+SD card: `-drive if=sd` / `A5K_SD`.
+
+### Keys (QEMU window)
+| Host key | Camera button | Emulated hardware path |
+|---|---|---|
+| Enter (or keypad Enter) | control wheel centre (OK) | ADC unit 1 ch 1 (ch 0x0D) ladder, level 45 |
+| ↑ / ← / ↓ / → | control wheel up / left / down / right | same ladder, levels 182 / 356 / 520 / 686 |
+| Delete / Backspace (Mac: ⌫) | DELETE (trash) | ADC unit 0 ch 1 (ch 0x0C) ladder, level 45 |
+| `M` | MENU | sub-micro slot A frame byte 28 bit 2 |
+| `P` | PLAY (playback) | sub-micro slot A frame byte 28 bit 1 |
+| `R` | MOVIE (record) | GPIO P10.10, active low |
+| — | shutter half / full, zoom lever, wheel rotation | not wired yet |
+
+Keys are also accepted from the HMP monitor: `sendkey ret`, `sendkey down`, `sendkey m`, ...
+QEMU's own hot keys: Ctrl+Opt+G releases the mouse, Ctrl+Opt+1 / 2 switch between the panel (console 0) and the debug frame-buffer view.
+Keys pressed in the first ~20 s after the first-boot dialog appears are ignored by the firmware (input service not active yet).
 
 ## Status (2026-11-14)
 - Note: the debug serial console (`A5K_DEBUG_CONSOLE=1`) changes the stock cmdline and shares UART0 with av-cam's monitor; the UI is only tested without it
