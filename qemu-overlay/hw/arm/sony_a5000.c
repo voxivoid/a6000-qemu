@@ -41,8 +41,10 @@
 #include "hw/misc/cxd90014_adc.h"
 #include "ui/input.h"
 #include "hw/misc/cxd90014_sio.h"
+#include "hw/misc/a5k_nfc.h"
 #include "hw/qdev-properties.h"
 #include "hw/qdev-properties-system.h"
+#include "net/net.h"
 #include "system/blockdev.h"
 #include "system/block-backend.h"
 #include "system/system.h"
@@ -51,6 +53,7 @@
 #include "system/runstate.h"
 #include "system/rtc.h"
 #include "chardev/char.h"
+#include "monitor/qdev.h"
 #include "qom/object.h"
 
 #define A5K_DDR_BASE        0x80000000ULL
@@ -61,6 +64,8 @@
  * hand-off (0x80000000+0x20000) and the wbimem page at 0x80021000 */
 #define A5K_ATAG_ADDR       0x80024000ULL
 #define A5K_STUB_ADDR       0x80025000ULL
+#define A5K_STUB_ENTRY      22  /* word: ldr pc literal (kernel entry) */
+#define A5K_STUB_TABLE      23  /* word: ITARGETSR table */
 #define A5K_HANDOFF_RTC_LOST 0x800210E4ULL  /* docs/RE_RTC.md section 2 */
 /* hand-off page (wbimem=0x1000@0x80021000), docs/RE_WARM_RESUME.md 1.2 */
 #define A5K_HANDOFF_PAGE    0x80021000ULL
@@ -126,6 +131,7 @@ struct A5KMachineState {
     char *loader;
     char *fb;
     char *usb_socket;               /* A5KU server address HOST:PORT */
+    char *nfc;                      /* NFC "virtual phone" chardev id */
     DeviceState *gpio;
     QEMUTimer *submicro_t;
     int submicro_step;
@@ -142,12 +148,12 @@ struct A5KMachineState {
     bool rtc_set_valid;
     int rtc_ack;                    /* replies that still echo rtc_set */
     bool rtc_lost;
+    bool wifi_off;                  /* wifi=off: mmc1 bus left empty */
     /* E-mount lens (docs/RE_LENS_EMOUNT.md section 5) */
     char *lens;
     bool lens_ekit;
     bool lens_pwr_req;              /* slot-B TX TLV 0x0A data[1] bit0 */
-    int lens_hs[2];                 /* driven P5.4 / P2.11 */
-    QEMUTimer *lens_hs_t;
+    DeviceState *lens_dev;          /* a5k-lens (lens=ekit) */
     /* sub-micro power-off (docs/RE_REBOOT.md section A.5, 4.4) */
     uint8_t poff_req;               /* slot-B TX TLV 0x0A data[1] & 0x42 */
     bool poff_ack_logged;
@@ -171,6 +177,9 @@ struct A5KMachineState {
     int reset_kind;                 /* A5K_RESET_* consumed on reset */
     /* warm off -> HOT resume (docs/RE_WARM_RESUME.md section 3) */
     bool warm_resume;               /* -M warm-resume=on|off */
+    bool hdmi;                      /* -M hdmi=on|off: cable plugged */
+    char *hdmi_edid;                /* -M hdmi-edid=FILE */
+    DeviceState *hdmi_tx, *cec;
     bool dram_retained;             /* last off kept DDR in self-refresh */
     uint32_t hot_entry;             /* resume vector for the HOT reset */
     uint8_t *handoff_pristine;      /* factory hand-off ROM blob copy */
@@ -288,19 +297,24 @@ static void a5k_write_stub(void)
      *  - make the ack-less frame sources edge-triggered: SYSV 98/99 and the
      *    VPH vsyncs 101/102 (their av-cam handlers never touch the device,
      *    as level interrupts they would re-enter endlessly) [hypothesis];
+     *  - same for the NFC data-ready IRQ 125 (P0.4, ICFGR7 bit 27): its
+     *    ISR nfc_rsrc_irq only posts an event, one reader command must be
+     *    one ISR run (docs/RE_NFC.md section 4.3) [hypothesis];
      *  - r0 = 0, r1 = machine id, r2 = tags, jump to the kernel.
      */
-    uint32_t stub[21 + 56] = {
-        0xe59f3030,             /* ldr r3, =0xF8001820        */
-        0xe59f4030,             /* ldr r4, =0xF8001900        */
-        0xe28f6044,             /* add r6, pc, #0x44 (table)  */
+    uint32_t stub[A5K_STUB_TABLE + 56] = {
+        0xe59f3038,             /* ldr r3, =0xF8001820        */
+        0xe59f4038,             /* ldr r4, =0xF8001900        */
+        0xe28f604c,             /* add r6, pc, #0x4c (table)  */
         0xe4965004,             /* 1: ldr r5, [r6], #4        */
         0xe4835004,             /* str r5, [r3], #4           */
         0xe1530004,             /* cmp r3, r4                 */
         0x3afffffb,             /* blo 1b                     */
-        0xe59f301c,             /* ldr r3, =0xF8001C18 (ICFGR6) */
-        0xe59f501c,             /* ldr r5, =0x28A0            */
+        0xe59f3024,             /* ldr r3, =0xF8001C18 (ICFGR6) */
+        0xe59f5024,             /* ldr r5, =0x28A0            */
         0xe5835000,             /* str r5, [r3]               */
+        0xe3a05302,             /* mov r5, #0x08000000        */
+        0xe5835004,             /* str r5, [r3, #4] (ICFGR7)  */
         0xe3a00000,             /* mov r0, #0                 */
         0xe59f1014,             /* ldr r1, =A5K_MACH_ID       */
         0xe59f2014,             /* ldr r2, =A5K_ATAG_ADDR     */
@@ -320,17 +334,17 @@ static void a5k_write_stub(void)
                 w |= 1u << (8 * b);
             }
         }
-        stub[21 + i] = w;
+        stub[A5K_STUB_TABLE + i] = w;
     }
     for (size_t i = 0; i < ARRAY_SIZE(stub); i++) {
         stub[i] = cpu_to_le32(stub[i]);
     }
-    /* word 20 (the kernel entry literal) is left out of the ROM blobs:
-     * a5k_boot_reset() writes it on every reset (normally
+    /* the kernel entry literal (word A5K_STUB_ENTRY) is left out of the ROM
+     * blobs: a5k_boot_reset() writes it on every reset (normally
      * A5K_KERNEL_ADDR; the updater core enters elsewhere) */
-    rom_add_blob_fixed("a5k.stub", stub, 20 * 4, A5K_STUB_ADDR);
-    rom_add_blob_fixed("a5k.stub-gicd", &stub[21], 56 * 4,
-                       A5K_STUB_ADDR + 21 * 4);
+    rom_add_blob_fixed("a5k.stub", stub, A5K_STUB_ENTRY * 4, A5K_STUB_ADDR);
+    rom_add_blob_fixed("a5k.stub-gicd", &stub[A5K_STUB_TABLE], 56 * 4,
+                       A5K_STUB_ADDR + A5K_STUB_TABLE * 4);
 }
 
 /*
@@ -711,6 +725,10 @@ static void a5k_submicro_slot_b(A5KMachineState *s, uint8_t *tx, uint8_t *out)
 
     if (tx[0] == 0x31 && (t = a5k_submicro_tlv(tx, 0x0a, 2))) {
         s->lens_pwr_req = t[1] & 1;
+        if (s->lens_dev) {
+            /* the micro switches the lens supply with its ack */
+            qemu_set_irq(qdev_get_gpio_in(s->lens_dev, 2), s->lens_pwr_req);
+        }
         s->poff_req = t[1] & 0x42;
     }
     memcpy(out, s->submicro_frames + 128, 128);
@@ -760,26 +778,6 @@ static void a5k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
         a5k_submicro_slot_b(s, buf + 128, out + 128);
     }
     memcpy(buf, out, MIN(len, 256));
-}
-
-/*
- * Lens handshake (RE_LENS_EMOUNT.md 2.4 / 5.2): the lens echoes the body's
- * P5.4 on P0.5 and P2.11 on P2.10.  Echo delay 1 ms [hypothesis; the body
- * polls every 5 ms].  Once 43993910 muxes P2.10/P2.11 to UART1 the latch
- * no longer moves, so the echo simply stops changing [?].
- */
-static void a5k_lens_hs_cb(void *opaque)
-{
-    A5KMachineState *s = opaque;
-    qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 5), s->lens_hs[0]);
-    qemu_set_irq(qdev_get_gpio_in(s->gpio, 2 * 32 + 10), s->lens_hs[1]);
-}
-
-static void a5k_lens_hs_out(void *opaque, int n, int level)
-{
-    A5KMachineState *s = opaque;
-    s->lens_hs[n] = level;
-    timer_mod(s->lens_hs_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SCALE_MS);
 }
 
 static void a5k_submicro_tick(void *opaque)
@@ -996,7 +994,7 @@ static const QemuInputHandler a5k_key_handler = {
  * initrd at 0x80628000).  See docs/RE_UPDATER_BOOT.md.
  */
 #define A5K_DESC_XMAGIC     0x584b3541      /* "A5KX" */
-#define A5K_STUB_ENTRY_LIT  (A5K_STUB_ADDR + 20 * 4)  /* ldr pc literal */
+#define A5K_STUB_ENTRY_LIT  (A5K_STUB_ADDR + A5K_STUB_ENTRY * 4)
 #define A5K_SMP_MBOX        0xC0005010ULL
 
 /*
@@ -1296,6 +1294,86 @@ static bool a5k_ddr_range(uint32_t pa, uint32_t len)
            pa - A5K_DDR_BASE <= A5K_DDR_SIZE - len;
 }
 
+/*
+ * Bootloader load table preload (docs/RE_RAW_DEVELOP.md §3.2,
+ * RE_COLD_BOOT_MODE.md §3, §5.4).  Stage 1 copies the load-table rows of
+ * Backup prop 0xFA0080 that lie inside a wbimem= region (sa_dfdet.bin ->
+ * 0x9EC00000) and records them at A5K_PRELOAD_DESC {"A5KM", n, {start,
+ * end} x n}.  The kernel's wbi_cmdline_parse_mem (0x4033B56C) would clear
+ * every wbimem region above 0x80028000 while hand-off wbi_memclr
+ * (0x800210E8) == 1, wiping the preloaded file; so for this boot the board
+ * presents wbi_memclr = 0 and clears the other wbimem regions itself (their
+ * content must not depend on what stage-1 Linux left in DDR).
+ * hypothesis: what the real bootloader presents on a cold boot (no code).
+ */
+#define A5K_PRELOAD_DESC    0x80027040ULL
+#define A5K_PRELOAD_MAGIC   0x4d4b3541      /* "A5KM" */
+#define A5K_PRELOAD_MAX     8
+#define A5K_HANDOFF_MEMCLR  0x800210E8ULL
+
+static void a5k_wbimem_preload(A5KMachineState *s)
+{
+    AddressSpace *as = &address_space_memory;
+    uint32_t d[2 + 2 * A5K_PRELOAD_MAX], zero = 0;
+    const char *p = s->cmdline;
+    uint8_t *blob;
+    uint32_t n;
+
+    address_space_read(as, A5K_PRELOAD_DESC, MEMTXATTRS_UNSPECIFIED, d,
+                       sizeof(d));
+    for (int i = 0; i < ARRAY_SIZE(d); i++) {
+        d[i] = le32_to_cpu(d[i]);
+    }
+    n = d[1];
+    if (d[0] != A5K_PRELOAD_MAGIC || !n || n > A5K_PRELOAD_MAX) {
+        return;
+    }
+    address_space_write(as, A5K_PRELOAD_DESC, MEMTXATTRS_UNSPECIFIED, &zero,
+                        4);
+    while (p && (p = strstr(p, "wbimem=")) != NULL) {
+        char *end;
+        uint64_t size = strtoull(p + 7, &end, 0), addr;
+        bool keep = false;
+
+        p = end;
+        if (*end != '@') {
+            continue;
+        }
+        addr = strtoull(end + 1, &end, 0);
+        p = end;
+        if (addr <= 0x80028000 || !a5k_ddr_range(addr, size)) {
+            continue;               /* the kernel skips these as well */
+        }
+        for (uint32_t i = 0; i < n; i++) {
+            if (d[2 + 2 * i] <= addr + size - 1 && addr <= d[3 + 2 * i]) {
+                keep = true;
+            }
+        }
+        if (keep) {
+            info_report("sony-a5000: wbimem 0x%" PRIx64 "@0x%" PRIx64
+                        " preloaded by stage 1, kept", size, addr);
+        } else {
+            address_space_set(as, addr, 0, size, MEMTXATTRS_UNSPECIFIED);
+        }
+    }
+    /* the hand-off page is a ROM blob (rom_reset runs after this handler):
+     * patch the blob, a5k_handoff_restore puts the factory page back on
+     * the next reset */
+    blob = rom_ptr(A5K_HANDOFF_PAGE, A5K_HANDOFF_SIZE);
+    if (blob) {
+        if (!s->handoff_pristine) {
+            s->handoff_pristine = g_memdup2(blob, A5K_HANDOFF_SIZE);
+        }
+        stl_le_p(blob + (A5K_HANDOFF_MEMCLR - A5K_HANDOFF_PAGE), 0);
+        s->handoff_live = true;
+    } else {
+        address_space_write(as, A5K_HANDOFF_MEMCLR, MEMTXATTRS_UNSPECIFIED,
+                            &zero, 4);
+    }
+    info_report("sony-a5000: stage 2 — wbi_memclr = 0, other wbimem "
+                "regions cleared by the board");
+}
+
 static void a5k_boot_reset(void *opaque)
 {
     A5KMachineState *s = opaque;
@@ -1404,6 +1482,7 @@ static void a5k_boot_reset(void *opaque)
         }
         info_report("sony-a5000: stage 2 — kernel %u B, initrd %u B from NAND",
                     d[2], d[4]);
+        a5k_wbimem_preload(s);
     } else {
         address_space_write(as, A5K_KERNEL_ADDR, MEMTXATTRS_UNSPECIFIED,
                             s->kernel, s->kernel_len);
@@ -1431,11 +1510,7 @@ static void a5k_boot_reset(void *opaque)
     a5k_write_kemco(s->cmdline);
 out:
     s->lens_pwr_req = false;
-    s->lens_hs[0] = s->lens_hs[1] = 0;
     s->rtc_ack = 0;
-    if (s->lens_hs_t) {
-        timer_del(s->lens_hs_t);
-    }
     if (s->submicro_t && s->submicro) {
         s->submicro_step = 0;
         timer_mod(s->submicro_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
@@ -1501,6 +1576,40 @@ static const char *a5k_console_token(A5KMachineState *s)
                 "monitor on UART0; the stock UI will not start "
                 "(docs/RE_GUEST_SHELL.md section 2)");
     return "console=ttyAM0 amba2.console=1";
+}
+
+/*
+ * Wi-Fi (docs/RE_WIFI.md section 7.1): mmc1 = F_SDH30 #1 (SDHCI v3,
+ * vendor window 0x100+ in the io-f0 register file like mmc0) at 0xF0301000,
+ * GIC 221 (RE_STORAGE_USB section 3; mmcioWrapper channel = Backup
+ * 0x013E000C & 0xF = 1), with the soldered AR6003 SDIO module on its bus.
+ * Module power: p1.4 = CHIP_PWD_L, p6.2/p6.3 = supplies [?]
+ * (libWlanResource setPortToStartWlan_Stamina, RE_WIFI section 1.3).
+ */
+static void a5k_wifi_init(A5KMachineState *s, qemu_irq *pic)
+{
+    DeviceState *h = qdev_new("generic-sdhci");
+
+    qdev_prop_set_uint8(h, "sd-spec-version", 3);
+    qdev_prop_set_uint8(h, "uhs", 0);
+    qdev_prop_set_uint64(h, "capareg", 0x017834b4);   /* as mmc0 */
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(h), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(h), 0, 0xF0301000);
+    sysbus_connect_irq(SYS_BUS_DEVICE(h), 0, pic[GIC_ID(221)]);
+    if (s->wifi_off) {
+        return;
+    }
+    DeviceState *card = qdev_new("ar6003-sdio");
+    object_property_add_child(OBJECT(s), "ar6003", OBJECT(card));
+    qemu_configure_nic_device(card, false, NULL);
+    qdev_realize_and_unref(card, qdev_get_child_bus(h, "sd-bus"),
+                           &error_fatal);
+    qdev_connect_gpio_out_named(s->gpio, "out", 1 * 32 + 4,
+                                qdev_get_gpio_in_named(card, "pwd", 0));
+    qdev_connect_gpio_out_named(s->gpio, "out", 6 * 32 + 2,
+                                qdev_get_gpio_in_named(card, "vdd", 0));
+    qdev_connect_gpio_out_named(s->gpio, "out", 6 * 32 + 3,
+                                qdev_get_gpio_in_named(card, "vdd", 1));
 }
 
 static void a5k_init(MachineState *ms)
@@ -1712,13 +1821,6 @@ static void a5k_init(MachineState *ms)
     s->poff_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_poff_cycle, s);
     qdev_connect_gpio_out_named(dev, "out", 0 * 32 + A5K_POFF_PIN,
                                 qemu_allocate_irq(a5k_poff_line, s, 0));
-    if (s->lens_ekit) {
-        /* lens handshake echo: P5.4 -> P0.5, P2.11 -> P2.10 */
-        qemu_irq *hs = qemu_allocate_irqs(a5k_lens_hs_out, s, 2);
-        qdev_connect_gpio_out_named(dev, "out", 5 * 32 + 4, hs[0]);
-        qdev_connect_gpio_out_named(dev, "out", 2 * 32 + 11, hs[1]);
-        s->lens_hs_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_lens_hs_cb, s);
-    }
 
     /* ADC units 0/1 (resistor-ladder keys, zoom lever), GIC 215/216 */
     for (int u = 0; u < 2; u++) {
@@ -1757,8 +1859,24 @@ static void a5k_init(MachineState *ms)
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), c, pic[GIC_ID(201 + c)]);
     }
 
-    /* VPH display controller + SYSV frame timer: panel = console 0 */
+    /* NFC dynamic tag: SIO2, SW P7.10, SEL P7.14, RFDET P0.8, data-ready
+     * IRQ GIC 125 (docs/RE_NFC.md section 4); nfc=ID = virtual phone */
+    {
+        Chardev *nfc_chr = NULL;
+        if (s->nfc) {
+            nfc_chr = qemu_chr_find(s->nfc);
+            if (!nfc_chr) {
+                error_report("sony-a5000: nfc=%s: no such -chardev", s->nfc);
+                exit(1);
+            }
+        }
+        a5k_nfc_create(dev, s->gpio, pic[GIC_ID(125)], nfc_chr);
+    }
+
+    /* VPH display controller + SYSV frame timer: panel = console 0, HDMI
+     * line output = console 1 (HMP: screendump FILE vph 1) */
     dev = qdev_new("cxd90014-vph");
+    qdev_set_id(dev, g_strdup("vph"), &error_fatal);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3440000);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 1, 0xF3402000);
@@ -1829,6 +1947,22 @@ static void a5k_init(MachineState *ms)
             }
         }
 
+        /* IDT develop/FOPD control 0xF3020400 (IRQ 72), its frame ends on
+         * the completion of AIF group 0xF3020000 = aif[3]; OPD units
+         * 0xF3030000 (IRQs 67-70).  docs/RE_RAW_DEVELOP.md §7.2-§7.3 */
+        dev = qdev_new("cxd90014-idt");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3020400);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(72)]);
+        qdev_connect_gpio_out_named(aif[3], "done", 0,
+                                    qdev_get_gpio_in(dev, 0));
+        dev = qdev_new("cxd90014-opd");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3030000);
+        for (int k = 0; k < 4; k++) {
+            sysbus_connect_irq(SYS_BUS_DEVICE(dev), k, pic[GIC_ID(67 + k)]);
+        }
+
         /* CamCore "Pig" frame/IRQ blocks: unit 0 (IRQ 36), unit 1 (37),
          * input unit 0xF3120000 (35) */
         static const struct { hwaddr base; int irq; } pig[] = {
@@ -1896,6 +2030,25 @@ static void a5k_init(MachineState *ms)
             sysbus_connect_irq(SYS_BUS_DEVICE(dev), c,
                                pic[GIC_ID(173 + u * 8 + c)]);
         }
+        if (u == 0 && s->lens_ekit) {
+            /*
+             * E-mount lens HLE (docs/RE_LENS_EMOUNT.md 9.7): UART1 bytes
+             * through mdma ch0/ch1, handshake P5.4 -> P0.5, P2.11 -> P2.10
+             */
+            DeviceState *mdma = dev;
+            s->lens_dev = qdev_new("a5k-lens");
+            object_property_set_link(OBJECT(s->lens_dev), "mdma", OBJECT(mdma),
+                                     &error_fatal);
+            sysbus_realize_and_unref(SYS_BUS_DEVICE(s->lens_dev), &error_fatal);
+            qdev_connect_gpio_out_named(s->gpio, "out", 5 * 32 + 4,
+                                        qdev_get_gpio_in(s->lens_dev, 0));
+            qdev_connect_gpio_out_named(s->gpio, "out", 2 * 32 + 11,
+                                        qdev_get_gpio_in(s->lens_dev, 1));
+            qdev_connect_gpio_out(s->lens_dev, 0,
+                                  qdev_get_gpio_in(s->gpio, 0 * 32 + 5));
+            qdev_connect_gpio_out(s->lens_dev, 1,
+                                  qdev_get_gpio_in(s->gpio, 2 * 32 + 10));
+        }
     }
 
     /* DDR controller (IRAM sleep code, docs/RE_REBOOT.md 4.3) */
@@ -1959,12 +2112,28 @@ static void a5k_init(MachineState *ms)
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 3, pic[GIC_ID(232)]);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 4, pic[GIC_ID(233)]);
 
-    /* CEC (cec.ko, UDIF "cec", PA 0xF3C10000): +0x180 is the interrupt
-     * status, write-1-to-clear.  Nothing on the bus raises it, so the bits
-     * written there must not read back; otherwise cec.ko sees a phantom
-     * RX-ready, reads an RX count of 0, fails the receive and libObj's CEC
-     * Msg Thread power-cycles CEC forever (docs/RE_HDMI.md section 4a). */
-    a5k_regfile_ex("cec", 0xF3C10000, 0x1000, NULL, "0x180=0xf", -500);
+    /* HDMI TX core 0xF2A24000 (hdmi.ko, polled, no IRQ) and CEC
+     * 0xF3C10000 (cec.ko); -M hdmi=on plugs the cable (default off = no
+     * cable, stock).  TMDS active drives the VPH line output, shown on
+     * QEMU console 1 (docs/RE_HDMI.md section 4.2). */
+    dev = qdev_new("cxd90014-hdmi");
+    object_property_add_child(OBJECT(ms), "hdmi-tx", OBJECT(dev));
+    if (s->hdmi_edid) {
+        qdev_prop_set_string(dev, "edid", s->hdmi_edid);
+    }
+    object_property_set_bool(OBJECT(dev), "hpd", s->hdmi, &error_fatal);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2A24000);
+    qdev_connect_gpio_out(dev, 0, qdev_get_gpio_in_named(vph, "hdmi-tmds", 0));
+    s->hdmi_tx = dev;
+    dev = qdev_new("cxd90014-cec");
+    object_property_add_child(OBJECT(ms), "cec", OBJECT(dev));
+    object_property_set_bool(OBJECT(dev), "connected", s->hdmi, &error_fatal);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3C10000);
+    s->cec = dev;
+
+    a5k_wifi_init(s, pic);
 
     /* clock generators (PLL lock / self-clearing update request) */
     static const hwaddr clkgen[] = {
@@ -2118,6 +2287,16 @@ static void a5k_set_warmres(Object *o, bool v, Error **errp)
     A5K_MACHINE(o)->warm_resume = v;
 }
 
+static bool a5k_get_wifi(Object *o, Error **errp)
+{
+    return !A5K_MACHINE(o)->wifi_off;
+}
+
+static void a5k_set_wifi(Object *o, bool v, Error **errp)
+{
+    A5K_MACHINE(o)->wifi_off = !v;
+}
+
 static bool a5k_get_rtclost(Object *o, Error **errp)
 {
     return A5K_MACHINE(o)->rtc_lost;
@@ -2126,6 +2305,17 @@ static bool a5k_get_rtclost(Object *o, Error **errp)
 static void a5k_set_rtclost(Object *o, bool v, Error **errp)
 {
     A5K_MACHINE(o)->rtc_lost = v;
+}
+
+static char *a5k_get_nfc(Object *o, Error **errp)
+{
+    return g_strdup(A5K_MACHINE(o)->nfc);
+}
+
+static void a5k_set_nfc(Object *o, const char *v, Error **errp)
+{
+    g_free(A5K_MACHINE(o)->nfc);
+    A5K_MACHINE(o)->nfc = g_strdup(v);
 }
 
 static char *a5k_get_usbsock(Object *o, Error **errp)
@@ -2205,6 +2395,33 @@ static void a5k_set_smcf(Object *o, const char *v, Error **errp)
  * recomputed.  Used to locate which slot-A fields carry which inputs; never
  * set by default.
  */
+/* "hdmi" can be changed at run time (qom-set /machine hdmi on): hot-plug */
+static bool a5k_get_hdmi(Object *o, Error **errp)
+{
+    return A5K_MACHINE(o)->hdmi;
+}
+
+static void a5k_set_hdmi(Object *o, bool v, Error **errp)
+{
+    A5KMachineState *s = A5K_MACHINE(o);
+    s->hdmi = v;
+    if (s->hdmi_tx) {
+        object_property_set_bool(OBJECT(s->hdmi_tx), "hpd", v, errp);
+        object_property_set_bool(OBJECT(s->cec), "connected", v, errp);
+    }
+}
+
+static char *a5k_get_hdmiedid(Object *o, Error **errp)
+{
+    return g_strdup(A5K_MACHINE(o)->hdmi_edid);
+}
+
+static void a5k_set_hdmiedid(Object *o, const char *v, Error **errp)
+{
+    g_free(A5K_MACHINE(o)->hdmi_edid);
+    A5K_MACHINE(o)->hdmi_edid = g_strdup(v);
+}
+
 static char *a5k_get_smpoke(Object *o, Error **errp)
 {
     return g_strdup("");
@@ -2375,6 +2592,11 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
         "HOST:PORT TCP server on UART2 (when no third -serial is given); "
         "implies console=ttyAM1");
 
+    object_class_property_add_bool(oc, "wifi", a5k_get_wifi, a5k_set_wifi);
+    object_class_property_set_description(oc, "wifi",
+        "AR6003 SDIO Wi-Fi module on mmc1 (default on = stock hardware); "
+        "-nic/-netdev + -global ar6003-sdio.netdev=ID give it a network, "
+        "ar6003-sdio.aps= the virtual APs (docs/RE_WIFI.md)");
     object_class_property_add_bool(oc, "rtc-lost", a5k_get_rtclost,
                                    a5k_set_rtclost);
     object_class_property_set_description(oc, "rtc-lost",
@@ -2388,13 +2610,28 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
     object_class_property_add_str(oc, "lens", a5k_get_lens, a5k_set_lens);
     object_class_property_set_description(oc, "lens",
         "E-mount lens: none (empty mount, default) or ekit (detect low, "
-        "power ack + handshake echo; no lens serial protocol yet)");
+        "power ack, handshake and the a5k-lens serial HLE)");
+
+    object_class_property_add_bool(oc, "hdmi", a5k_get_hdmi, a5k_set_hdmi);
+    object_class_property_set_description(oc, "hdmi",
+        "HDMI cable plugged into a virtual 1080p TV (default off = no "
+        "cable); settable at run time for hot-plug. Picture on console 1");
+    object_class_property_add_str(oc, "hdmi-edid", a5k_get_hdmiedid,
+                                  a5k_set_hdmiedid);
+    object_class_property_set_description(oc, "hdmi-edid",
+        "128/256-byte EDID file of the virtual TV (default: built-in "
+        "generic 1080p60 EDID)");
 
     object_class_property_add_str(oc, "usb-socket", a5k_get_usbsock,
                                   a5k_set_usbsock);
     object_class_property_set_description(oc, "usb-socket",
         "HOST:PORT of the A5KU USB cable server (docs/RE_USB_HOST_PATH.md); "
         "a connected client = cable plugged");
+
+    object_class_property_add_str(oc, "nfc", a5k_get_nfc, a5k_set_nfc);
+    object_class_property_set_description(oc, "nfc",
+        "-chardev id of the NFC virtual phone (line protocol: field on|off, "
+        "cmd <hex>, read, tap [ms], status; docs/RE_NFC.md section 4.4)");
 
     mc->desc = "Sony ILCE-5000 (CXD90014, Cortex-A5 MPCore)";
     mc->init = a5k_init;

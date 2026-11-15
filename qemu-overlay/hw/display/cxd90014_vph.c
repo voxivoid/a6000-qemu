@@ -19,6 +19,13 @@
  * (live-view luma plane under the OSD) into QEMU graphic console 0.
  * OSD at 16 bpp = RGBA4444 (A low nibble); ch51 = 8-bit luma plane.
  *
+ * HDMI = the VPH line output (docs/RE_HDMI.md §2): while the HDMI TX model
+ * reports TMDS active (GPIO in "hdmi-tmds"), the line layers ch52 (YUV,
+ * enable +0x184 bit0) and ch54 (OSD, 4 B/px when +0x414 bit0) are composed
+ * into QEMU graphic console 1, sized from +0x454 ([11:0] width, [27:16]
+ * lines per field; doubled for the interlaced formats of +0x410 [18:16]).
+ * Without a signal console 1 shows a dark "no signal" surface.
+ *
  * Test images go through guest memory: -global cxd90014-aif.lv-source=...
  * fills the buffer at the resize output (hw/dma/cxd90014_aif.c).
  */
@@ -51,6 +58,8 @@ struct VphState {
     qemu_irq vd_out;                /* -> evsel engine frame (source 29) */
     QemuConsole *con;
     uint32_t w, h;
+    QemuConsole *hdmi_con;          /* line output (HDMI) */
+    bool hdmi_tmds;
 };
 
 #define R(o) (s->vph[(o) / 4])
@@ -110,20 +119,20 @@ static void vph_tick(void *opaque)
     timer_mod(s->tick, now + NANOSECONDS_PER_SECOND / 60);
 }
 
-static void vph_update(void *opaque)
+/*
+ * Compose one output: YUV layer from AIF channel ky (when yuv_on), OSD from
+ * channel ko at bpp bytes per pixel.  The panel OSD is drawn 1:1; the line
+ * OSD is scaled to the line size (osd_scale) [? the line resizer at +0x6500
+ * is not decoded, nearest-neighbour full-frame here].
+ */
+static void vph_compose(VphState *s, uint32_t *dst, uint32_t W, uint32_t H,
+                        bool yuv_on, int ky, int ko, unsigned bpp,
+                        bool osd_scale)
 {
-    VphState *s = opaque;
-    DisplaySurface *surf = qemu_console_surface(s->con);
-    uint32_t W = s->w, H = s->h;
-    if (!surf || surface_width(surf) != W || surface_height(surf) != H) {
-        qemu_console_resize(s->con, W, H);
-        surf = qemu_console_surface(s->con);
-    }
-    uint32_t *dst = surface_data(surf);
     memset(dst, 0, (size_t)W * H * 4);
 
-    /* YUV layer (ch51) */
-    if (R(0x144) & 1) {
+    /* YUV layer (ch51 panel / ch52 line) */
+    if (yuv_on) {
         /*
          * ch51 as programmed for live view: one 8-bit luma plane, +0x24
          * bytes per line, +0x28 bytes skipped after each line, +0x2C
@@ -132,9 +141,9 @@ static void vph_update(void *opaque)
          * +0x300 maps it to the panel size; here nearest-neighbour
          * (docs/RE_LIVEVIEW_IMAGE.md).  hypothesis: full-range luma.
          */
-        uint32_t base = R(AIF(0) + 0x20), lb = R(AIF(0) + 0x24);
-        uint32_t pitch = lb + R(AIF(0) + 0x28);
-        uint32_t lines = R(AIF(0) + 0x2C) + 1;
+        uint32_t base = R(AIF(ky) + 0x20), lb = R(AIF(ky) + 0x24);
+        uint32_t pitch = lb + R(AIF(ky) + 0x28);
+        uint32_t lines = R(AIF(ky) + 0x2C) + 1;
         if (base && lb && lb <= 8192 && lines < 4096) {
             g_autofree uint8_t *row = g_malloc(lb);
             for (uint32_t y = 0; y < H; y++) {
@@ -149,20 +158,29 @@ static void vph_update(void *opaque)
             }
         }
     }
-    /* OSD layer (ch53) */
-    uint32_t base = R(AIF(2) + 0x20), lb = R(AIF(2) + 0x24);
-    uint32_t lines = R(AIF(2) + 0x2C) + 1;
-    int32_t pitch = (int16_t)R(AIF(2) + 0x48);
-    unsigned bpp = (R(0x404) & 1) ? 4 : 2;
+    /* OSD layer (ch53 panel / ch54 line) */
+    uint32_t base = R(AIF(ko) + 0x20), lb = R(AIF(ko) + 0x24);
+    uint32_t lines = R(AIF(ko) + 0x2C) + 1;
+    int32_t pitch = (int16_t)R(AIF(ko) + 0x48);
     if (!pitch) {
         pitch = lb;
     }
-    if (base && lb && lines < 4096) {
+    if (base && lb && lb <= 16384 && lines < 4096) {
         g_autofree uint8_t *row = g_malloc(lb);
-        for (uint32_t y = 0; y < MIN(lines, H); y++) {
-            address_space_read(&address_space_memory, base + y * pitch,
-                               MEMTXATTRS_UNSPECIFIED, row, lb);
-            for (uint32_t x = 0; x < MIN(lb / bpp, W); x++) {
+        uint32_t ow = lb / bpp;
+        uint32_t oh = osd_scale ? H : MIN(lines, H);
+        uint32_t dw = osd_scale ? W : MIN(ow, W);
+        int64_t last = -1;
+        for (uint32_t y = 0; y < oh; y++) {
+            uint32_t sy = osd_scale ? (uint64_t)y * lines / H : y;
+            if (sy != last) {
+                address_space_read(&address_space_memory,
+                                   base + (int64_t)sy * pitch,
+                                   MEMTXATTRS_UNSPECIFIED, row, lb);
+                last = sy;
+            }
+            for (uint32_t dx = 0; dx < dw; dx++) {
+                uint32_t x = osd_scale ? (uint64_t)dx * ow / W : dx;
                 uint8_t r, g, b, a;
                 if (bpp == 4) {
                     r = row[4 * x]; g = row[4 * x + 1]; b = row[4 * x + 2];
@@ -175,7 +193,7 @@ static void vph_update(void *opaque)
                     r = (v >> 12) * 17; g = ((v >> 8) & 15) * 17;
                     b = ((v >> 4) & 15) * 17; a = (v & 15) * 17;
                 }
-                uint32_t *d = &dst[y * W + x];
+                uint32_t *d = &dst[y * W + dx];
                 uint8_t dr = *d >> 16, dg = *d >> 8, db = *d;
                 *d = 0xff000000u | ((r * a + dr * (255 - a)) / 255) << 16 |
                      ((g * a + dg * (255 - a)) / 255) << 8 |
@@ -183,7 +201,62 @@ static void vph_update(void *opaque)
             }
         }
     }
+}
+
+static void vph_update(void *opaque)
+{
+    VphState *s = opaque;
+    DisplaySurface *surf = qemu_console_surface(s->con);
+    uint32_t W = s->w, H = s->h;
+    if (!surf || surface_width(surf) != W || surface_height(surf) != H) {
+        qemu_console_resize(s->con, W, H);
+        surf = qemu_console_surface(s->con);
+    }
+    vph_compose(s, surface_data(surf), W, H, R(0x144) & 1, 0, 2,
+                (R(0x404) & 1) ? 4 : 2, false);
     dpy_gfx_update_full(s->con);
+}
+
+/* HDMI: line output, console 1 (docs/RE_HDMI.md §2, §4.2) */
+static void vph_hdmi_update(void *opaque)
+{
+    VphState *s = opaque;
+    uint32_t W = R(0x454) & 0xfff, H = (R(0x454) >> 16) & 0xfff;
+    unsigned fmt = (R(0x410) >> 16) & 7;
+    bool sig = s->hdmi_tmds && W >= 64 && H >= 64;
+
+    if (sig && (fmt == 0 || fmt == 2 || fmt == 3)) {
+        H *= 2;                         /* interlaced: two fields */
+    }
+    if (!sig) {
+        W = 640;
+        H = 480;
+    }
+    DisplaySurface *surf = qemu_console_surface(s->hdmi_con);
+    if (!surf || surface_width(surf) != W || surface_height(surf) != H) {
+        qemu_console_resize(s->hdmi_con, W, H);
+        surf = qemu_console_surface(s->hdmi_con);
+    }
+    uint32_t *dst = surface_data(surf);
+    if (!sig) {
+        /* no signal: dark blue with a grey frame, like a TV's idle screen */
+        for (uint32_t y = 0; y < H; y++) {
+            for (uint32_t x = 0; x < W; x++) {
+                bool edge = x < 8 || y < 8 || x >= W - 8 || y >= H - 8;
+                dst[y * W + x] = edge ? 0xff404040u : 0xff000020u;
+            }
+        }
+    } else {
+        vph_compose(s, dst, W, H, R(0x184) & 1, 1, 3,
+                    (R(0x414) & 1) ? 4 : 2, true);
+    }
+    dpy_gfx_update_full(s->hdmi_con);
+}
+
+static void vph_hdmi_tmds(void *opaque, int n, int level)
+{
+    VphState *s = opaque;
+    s->hdmi_tmds = level;
 }
 
 static void vph_invalidate(void *opaque)
@@ -193,6 +266,11 @@ static void vph_invalidate(void *opaque)
 static const GraphicHwOps vph_gfx_ops = {
     .invalidate = vph_invalidate,
     .gfx_update = vph_update,
+};
+
+static const GraphicHwOps vph_hdmi_ops = {
+    .invalidate = vph_invalidate,
+    .gfx_update = vph_hdmi_update,
 };
 
 static uint64_t vph_read(void *opaque, hwaddr off, unsigned size)
@@ -270,6 +348,8 @@ static void vph_realize(DeviceState *dev, Error **errp)
     s->h = 480;
     s->con = graphic_console_init(dev, 0, &vph_gfx_ops, s);
     qemu_console_resize(s->con, s->w, s->h);
+    s->hdmi_con = graphic_console_init(dev, 1, &vph_hdmi_ops, s);
+    qemu_console_resize(s->hdmi_con, 640, 480);
 }
 
 static void vph_init(Object *obj)
@@ -288,6 +368,7 @@ static void vph_init(Object *obj)
     s->vtick = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_vtick, s);
     s->vlower = timer_new_ns(QEMU_CLOCK_VIRTUAL, vph_vlower, s);
     qdev_init_gpio_out(DEVICE(obj), &s->vd_out, 1);
+    qdev_init_gpio_in_named(DEVICE(obj), vph_hdmi_tmds, "hdmi-tmds", 1);
 }
 
 static void vph_class_init(ObjectClass *klass, const void *data)

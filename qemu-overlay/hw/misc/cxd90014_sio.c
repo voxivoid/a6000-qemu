@@ -9,9 +9,11 @@
  *          av-cam 0x43918ea0 / 0x43918f5c)
  * Start = the driver sets +0x00 bit29 (0x43918df0); the hardware keeps it set
  * as "done" until the ISR clears it (status reader 0x43918e60).
- * Model: a start completes immediately (done + IRQ).  No slave device is
- * attached yet, so nothing is transferred (receive data stays as is); the
- * sub-micro on channel 0 is a separate, future model.
+ *   +0x04  transfer mode word; on ch2 bit29 = TX, bit28 = RX [H]
+ *          (docs/RE_NFC.md section 1.2)
+ * Model: a start completes immediately (done + IRQ).  Board-level slaves
+ * (sub-micro on ch0/ch3, NFC tag on ch2) exchange the FIFO bytes; a channel
+ * without a slave transfers nothing (receive data stays as is).
  */
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"
@@ -33,6 +35,7 @@ struct SioState {
     uint32_t reg[NCH][0x200 / 4];
     qemu_irq irq[NCH];
     CXDSioSlaveXfer slave[NCH];
+    CXDSioSlaveXferDir slave_dir[NCH];
     void *slave_opaque[NCH];
 };
 
@@ -41,6 +44,14 @@ void cxd90014_sio_attach(DeviceState *dev, int ch, CXDSioSlaveXfer fn,
 {
     SioState *s = CXD_SIO(dev);
     s->slave[ch] = fn;
+    s->slave_opaque[ch] = opaque;
+}
+
+void cxd90014_sio_attach_dir(DeviceState *dev, int ch, CXDSioSlaveXferDir fn,
+                             void *opaque)
+{
+    SioState *s = CXD_SIO(dev);
+    s->slave_dir[ch] = fn;
     s->slave_opaque[ch] = opaque;
 }
 
@@ -74,13 +85,18 @@ static void sio_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
             trace_cxd_sio_xfer(ch, r[0x0C / 4] >> 24);
             trace_cxd_sio_data(ch, r[0x100 / 4], r[0x104 / 4], r[0x108 / 4],
                                r[0x10C / 4]);
-            if (s->slave[ch]) {
+            if (s->slave[ch] || s->slave_dir[ch]) {
                 int len = (r[0x0C / 4] >> 24) + 1;
                 uint8_t buf[0x100];
                 for (int i = 0; i < 0x100; i++) {
                     buf[i] = r[0x100 / 4 + i / 4] >> (8 * (i % 4));
                 }
-                s->slave[ch](s->slave_opaque[ch], ch, buf, len);
+                if (s->slave_dir[ch]) {
+                    s->slave_dir[ch](s->slave_opaque[ch], ch, r[0x04 / 4],
+                                     buf, len);
+                } else {
+                    s->slave[ch](s->slave_opaque[ch], ch, buf, len);
+                }
                 for (int i = 0; i < 0x100; i += 4) {
                     r[(0x100 + i) / 4] = buf[i] | buf[i + 1] << 8 |
                                          buf[i + 2] << 16 | buf[i + 3] << 24;

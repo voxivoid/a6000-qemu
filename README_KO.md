@@ -54,21 +54,24 @@
 - ✅ 카메라 버튼(`docs/RE_ENGINE_TICK.md` §11): 휠·가운데 = ADC 래더 ch 0x0D, DELETE = ch 0x0C, MOVIE = GPIO P10.10, MENU/PLAY = 서브마이컴 slot A 바이트 28 (호스트: 방향키/Enter/M/P/R/Delete, HMP `sendkey`)
 - ✅ 서브마이컴 RTC (`docs/RE_RTC.md` §9): 카메라 시계 = 호스트 시간(`-rtc base=`), 메뉴에서 설정한 날짜는 응답(ack)되고 세션 동안 유지 → 일반 부팅은 바로 촬영 화면
 - ✅ 첫 부팅 설정(`rtc-lost=on`) 완주: 지역 설정(세계 지도) → 날짜/시간 → PlayMemories 안내 → 촬영 OSD
-- ⏳ 렌즈 (`docs/RE_LENS_EMOUNT.md` §8): `lens=none` = 펌웨어의 빈 마운트 대기 상태, `lens=ekit` = 렌즈 전원 응답 + 핸드셰이크 0–1단계 후 UART1 렌즈 프로토콜(미구현) 직전에서 정지
+- ✅ 렌즈 시리얼 HLE (`docs/RE_LENS_EMOUNT.md` §9, §10): `lens=none` = 펌웨어의 빈 마운트 대기 상태(BL 상태 0, "렌즈 없음"), `lens=ekit` = 킷 렌즈 MCU 모델(`a5k-lens`) — 렌즈 전원 응답 + 마운트 핸드셰이크 에코 후 **UART1**로 E마운트 시리얼 프로토콜 수행(`cxd90014-mdma`의 새 주변장치-페이스 모드, ch0 RX 링 / ch1 TX). 능력 비트맵(블록 1)·렌즈 정보(7)·시작 정보(9)와 블록 0x0b/0x08/0x0d/0x10/0x0a까지 시작 핸드셰이크 전체를 완료 → 펌웨어가 렌즈를 인식하고 SYNC-TIMEOUT/DETACH 없이 BL 상태 0x05로 안정. 아직 "F--"/초점거리 미표시인 라이브뷰 필드는 주기적 Info1/2 프레임과 렌즈 정보 조리개 바이트에서 오는데 이는 **미해독**(`docs/RE_LENS_EMOUNT.md` §9.8)
 - ✅ 셔터 대기 레벨 수정(카메라가 S1/S2를 누른 채로 부팅하고 있었음): 촬영 모드에서 MENU·휠 가운데 버튼 동작, 셔터·줌 레버 연결 (`docs/RE_ENGINE_TICK.md` §12)
 - ⏳ SD 있음: 이미지 DB 자동 복구 뷰(AUTOREPAIR)가 빈 화면, 메뉴의 포맷도 멈춤 — 둘 다 SD 명령을 내지 않음, 조사 중
 - ✅ 업데이터 모드: 에뮬레이션 NAND에 `/setting/updater/mode`가 있으면 1단계 로더가 부트로더처럼 업데이터 코어(nflasha1)로 부팅 → 루트 셸·UFP USB 대기까지 (`docs/RE_UPDATER_BOOT.md`)
 - ⏳ 카메라 프런트엔드: 센서 라이터(P2S, IRQ 38)·프런트엔드 프레임 IRQ·AIF 채널 그룹(IRQ 40–50) 모델 → 캡처 오류 해소, 라이브뷰는 아직 검정(YC 출력 요청 없음, `docs/RE_SENSOR_ISP.md` §7)
 - ✅ SA DSP 코어: null 모델(`cxd90014_sa.c`)로 센서 결함표 작업 완료 → 엔진이 모니터링 상태 도달, 촬영 화면에 노출 표시(셔터/조리개 눈금). 라이브뷰는 YC 상태 2 전에서 정지(`docs/RE_LIVEVIEW_REQUEST.md` §9), PLAY·SD 동작: 카드 없음 재생 화면, 카드가 있으면 이미지 DB 생성 대화상자 → 카드에 DB 생성(첫 SD 쓰기) (`docs/RE_PLAYBACK_SWITCH.md`)
 - ✅ 라이브뷰 경로: SYSV를 마스터 V 클럭으로 바꾼 뒤 펌웨어가 패널 YUV 레이어를 켜고 ch51을 매 프레임 설정 (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51은 8비트 휘도 평면(1024×516)을 패널로 스케일; 채우는 ISP 모델이 아직 없어 렌즈 캡을 닫은 것처럼 검정; `-global cxd90014-aif.lv-source=bars|ramp|file:PATH.pgm`이면 리사이즈 출력 시점에 그 버퍼로 테스트 휘도 프레임을 기록(디버그, `docs/RE_LIVEVIEW_IMAGE.md`)
+- ⏳ 스틸 촬영(레버 OFF RAW 패스, `docs/RE_RAW_DEVELOP.md`): 1단계 로더가 부트로더 로드 테이블(Backup 0xFA0080)의 `\sabin\` 항목(`idt_cam.bin`, `sa_dfdet.bin`)을 적재 → IDT 초기화 성공, 콜드 부트 ZIT 결함 작업 성공; IDT 현상 블록(IRQ 72)·OPD 유닛(IRQ 67–70) 모델 → 레버 OFF 캡처가 RAW 현상 패스(플래그 22 0x40/0x400)와 IRQ 69 OPD 패스를 통과, 이후 태스크 74의 의도적 트랩(`439B193C`, 결과 처리, 미해석)에서 정지
 - ✅ USB 디바이스 (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS 글루 모델과 TCP 가상 케이블("A5KU") → 카메라가 열거됨(MTP 054C:08D3), `pmca-console info -d socket`이 ILCE-5000 / 1.10 출력, `install -f <apk>`로 앱 설치 → 애플리케이션 목록에 표시되고 실행됨(`docs/RE_USB_APP_INSTALL.md`), 업데이터 코어가 054C:03E2로 열거되어 PMCA 업데이터 셸 실행. SWITCH_MODE 후 실기처럼 전원이 꺼지고(서브마이컴 전원 끄기 핸드셰이크, DDR 컨트롤러, p0.10 전원 끄기 라인) 서브마이컴이 전원을 다시 넣어 업데이터로 부팅 → `pmca-console updatershell -d socket`이 수동 리셋 없이 업데이터 셸까지 도달(두 번째 PMCA 실행은 `-m ILCE-5000`, `docs/RE_REBOOT.md`). 머신 옵션 `poff=auto|restart|off`(기본 `auto`)로 전원 끄기 라인의 동작을 선택: `auto`는 CPU가 slot-A TX 프레임에 보낸 끄기 데이터를 따름(+0x15 = 0x20 → 전원 재투입, 그 외에는 꺼진 상태 유지 = VM suspended, `info status` → `paused (suspended)`; 전원 레버 `O`, 자동 전원 끄기 후에는 `S`/`M`/`P`도, 또는 HMP `system_wakeup`으로 다시 켜짐, `docs/RE_REBOOT.md` B.7). 웜 오프(유휴 절전, 전원 레버)이고 `sus_error`가 0이면 DDR을 유지하고, 다음 전원 투입에서 실기의 HOT 부팅처럼 실행 중이던 시스템을 그대로 재개한다(같은 화면, uptime 계속, 1단계 없음; CPU 수정: MMU 켜기가 다음 분기부터 명령어 페치에 적용). `-M warm-resume=off`면 예전처럼 콜드 부팅(`docs/RE_WARM_RESUME.md` §7).
-- ⬜ 센서/ISP(라이브뷰), 렌즈 시리얼 프로토콜, 오디오
+- ✅ NFC (`docs/RE_NFC.md` §4): SIO2에 붙은 보드 수준 FeliCa Plug 계열 태그(`a5k-nfc`). RFDET 유휴 high(부팅 시 폰이 있다고 오인하지 않음), 리더 명령 1개당 IRQ 125 한 번(스텁이 125를 엣지 트리거로 설정, H), 호스트 "가상 폰"(`nfc=<chardev>`: `field`, `cmd`, `read`, `tap`, `status`). tap은 펌웨어가 만든 NDEF 태그(AIB + `application/x-sony-pmm` Wi-Fi Direct 레코드 + PlayMemories AAR)를 읽고, 쓰기는 거부(`01A5`), 핸드오버로 PlayMemories Camera Apps가 열린 뒤 Wi-Fi 시작에서 멈춘다(Wi-Fi 모델 없음)
+- ✅ HDMI (`docs/RE_HDMI.md` §6): SoC 내장 TX 코어(`cxd90014-hdmi`, 0xF2A24000) + CEC(`cxd90014-cec`, 0xF3C10000), IRQ 없이 폴링. `-M hdmi=on`(기본 off = 케이블 없음, 순정)으로 가상 1080p TV에 케이블을 연결하며, 런타임 핫플러그 가능(`qom-set /machine hdmi on`). 펌웨어가 HPD를 감지하고 TX의 DDC 마스터로 내장 범용 EDID를 읽어(`edid=<file>`로 교체) TX를 설정(PHY on, AVI VIC 16 = 1080p60)한 뒤 **라인** 출력으로 전환한다. 카메라 UI가 **QEMU 콘솔 1**(`screendump FILE vph 1`)에 1920×1080으로 표시되고, 패널은 그대로 콘솔 0. CEC는 논리 주소를 할당받고 가상 TV가 물리주소/전원상태 질의에 응답한다. 함께 확정: SYS_STAT +0x024 bit0은 OMAP4 P_STABLE이 아니라 0으로 읽히는 "busy" 플래그(전원 켜기 셀이 0이 될 때까지 대기). 케이블 없으면 동작 불변, CEC churn 없음
+- ⬜ 센서/ISP(라이브뷰), 렌즈 조리개/초점/줌 내용(주기적 Info 프레임, 미해독), 오디오
 
 ## 사용
 ```sh
 ./provision.sh            # 최초 1회: 빈 NAND 포맷 + NAND.BIN 기록 → state/a5000.nand
 ./run.sh -monitor stdio   # 실기 방식 부팅, QEMU 창 = 카메라 패널
-./run.sh -M rtc-lost=on   # 머신 옵션: rtc-lost=on = 시계 백업 소실(첫 부팅 지역/날짜/시간 설정), lens=none|ekit = 빈 마운트(기본)/킷 렌즈(전원+핸드셰이크만); 시계 = QEMU RTC(-rtc base=...)
+./run.sh -M rtc-lost=on   # 머신 옵션: rtc-lost=on = 시계 백업 소실(첫 부팅 지역/날짜/시간 설정), lens=none|ekit = 빈 마운트(기본)/킷 렌즈(전원+핸드셰이크+UART1 시리얼 HLE, `docs/RE_LENS_EMOUNT.md` §9); 시계 = QEMU RTC(-rtc base=...)
 ```
 
 ### 키 배정 (QEMU 창)
@@ -102,6 +105,61 @@ TCP에 내보낸다. TCP 클라이언트가 접속하면 케이블이 꽂힌 것
 ```sh
 python3 pmca-console.py info -d socket       # A5K_USB=host:port (기본 127.0.0.1:7643), A5K_USB_TIMEOUT=ms, A5K_USB_DEBUG=1
 ```
+
+### NFC (가상 스마트폰)
+보드의 NFC "One-touch" 칩(`a5k-nfc`, SIO2에 붙은 FeliCa Plug 계열 동적 Type 3 태그, `docs/RE_NFC.md` §4)은 항상
+존재하며, 안테나에 폰이 없으면(기본) 실기처럼 유휴 상태 태그로 보인다. 호스트의 "폰"은 chardev로 줄 단위 프로토콜을 쓴다:
+```sh
+./run.sh -chardev socket,id=nfc,host=127.0.0.1,port=7644,server=on,wait=off -M sony-a5000,nfc=nfc
+nc 127.0.0.1 7644
+tap            # 필드 on → 칩 전원 대기 → 태그 읽기 → 500 ms 유지 → 필드 off ("tap 2000"은 2초 유지)
+read           # AIB + NDEF 읽고 해석: aib ..., ndef ..., mime application/x-sony-pmm ssid=... pass=..., aar ..., done
+cmd 06 01 80 00   # 리더 명령 하나 [cmd][n][블록 목록] -> resp <hex> | timeout (2초 내 응답 없음)
+field on|off   # RF 필드 (RFDET P0.8 low / high)
+status         # 전원, SEL, 필드, 마지막 set-parameter 프레임, IRQ 횟수
+```
+- 태그는 펌웨어가 NFC를 켠 동안(촬영/재생 화면, N 마크 표시)만 응답한다. MENU 안이나 NFC off 상태에서는 칩 전원이
+  들어오지 않아 명령이 timeout된다. 응답 내용(Backup의 Wi-Fi Direct SSID/패스프레이즈, PlayMemories 앱 레코드)은
+  모델이 아니라 순정 펌웨어가 만든다.
+- 마지막 NDEF 블록을 읽으면 펌웨어가 핸드오버한다: UI가 촬영 화면에서 PlayMemories Camera Apps("액세스 지점 검색 중")로
+  넘어가고, 아직 Wi-Fi 모델이 없으므로 "연결 가능한 액세스 지점을 찾을 수 없습니다"로 끝난다.
+- 모델의 비동기 줄: `ev power on|off`, `ev setparam <hex>`. 트레이스: `-trace 'a5k_nfc_*'` (응답 트레이스에 태그 바이트,
+  즉 카메라 Wi-Fi 자격 증명이 들어 있으니 로그는 로컬에만 둘 것).
+
+### HDMI (가상 케이블)
+SoC 내장 HDMI 송신기(`cxd90014-hdmi`)와 CEC 컨트롤러(`cxd90014-cec`)는 순정 `hdmi.ko` / `cec.ko`가 IRQ 없이
+폴링한다(`docs/RE_HDMI.md`). 기본은 케이블 미연결이라 카메라는 이전과 동일하게 동작한다. `-M hdmi=on`으로 가상
+1080p TV에 케이블을 꽂으며, 런타임 핫플러그가 된다.
+```sh
+./run.sh -M hdmi=on                              # 케이블 꽂은 채 부팅
+# 또는 HMP 모니터에서 언제든지:
+#   qom-set /machine hdmi on     (뽑기: ... off)
+```
+- HDMI 화면은 **QEMU 콘솔 1**(`-display` 창: Ctrl+Opt+2; 헤드리스: `screendump FILE vph 1`). 패널은 콘솔 0
+  그대로. 케이블이 없으면 콘솔 1은 "신호 없음" 화면을 보여준다.
+- 펌웨어는 내장 범용 1920×1080p60 EDID를 TX의 DDC 마스터로 읽는다. `-M hdmi-edid=FILE`(128/256바이트)로 실제
+  모니터 EDID를 줄 수 있다. EDID에 CEC 물리주소가 들어 있어 카메라 CEC가 논리 주소를 할당받고 가상 TV가 기본
+  질의에 응답한다.
+
+### Wi-Fi (가상 무선 환경)
+mmc1의 AR6003 SDIO 모듈(`ar6003-sdio`, `docs/RE_WIFI.md`)은 기본으로 존재한다(`-M wifi=on`, 순정 하드웨어; `wifi=off`면 버스가
+비어 Wi-Fi 시작 시 메뉴가 "시스템 에러"를 표시). 순정 커널 드라이버와 유저스페이스는 수정 없이 돌고, 칩 펌웨어는 무선 구간과
+상대 장치까지 연기하는 HLE("virtual air")다. netdev가 없어도 카메라는 Wi-Fi를 켜고 스캔할 수 있지만 프레임은 어디로도 나가지
+않는다. 무선 환경 전체에 QEMU netdev 하나를 붙인다:
+```sh
+./run.sh -netdev user,id=w0,net=192.168.77.0/24,hostfwd=tcp:127.0.0.1:8080-:80 -global ar6003-sdio.netdev=w0 \
+  -global 'ar6003-sdio.aps=ssid=TestAP,psk=testpass123;ssid=OpenAP,ch=1'
+```
+- `aps=`는 카메라가 스캔·접속하는 가상 액세스 포인트 목록(`ssid=`, 선택 `psk=` = WPA2-PSK/CCMP 패스프레이즈, `ch=` 1–13,
+  `bssid=`; 항목 구분은 `;`, 기본값은 채널 6의 개방형 `QEMU-AP` 하나). 스테이션 모드에서 netdev는 AP 뒤의 네트워크다:
+  `-netdev user`면 카메라가 DHCP로 주소를 받고 slirp 게이트웨이(위 예에서 192.168.77.2)로 호스트에 닿는다.
+- `ar6003-sdio.mac=`로 모듈 MAC 지정(기본 `02:a5:4b:00:00:01`, 로컬 관리 주소; `-nic user,model=ar6003-sdio`도 되며 이때는
+  QEMU가 생성한 MAC).
+- AP / 스마트폰 모드(스마트폰으로 보내기): 카메라가 자기 네트워크를 열면 HMP `qom-set /machine/ar6003 client-join
+  "SSID,PASSWORD"`(카메라 화면의 SSID/비밀번호; SSID를 비우면 카메라가 연 네트워크에 접속)로, 또는 `-global
+  ar6003-sdio.client=auto -global ar6003-sdio.client-psk=PASSWORD`로 자동으로 가상 클라이언트가 접속한다. 이때 netdev 상대가
+  그 클라이언트 역할을 한다(MAC을 바꿔 씀). 예: `-netdev user,id=w0,net=10.0.0.0/16,host=10.0.1.200,hostfwd=tcp:127.0.0.1:8080-10.0.0.1:8080`.
+- 트레이스: `-trace 'ar6003_*'` (SDIO 명령, BMI, HTC, WMI, 무선 환경, EAPOL).
 
 ### 게스트 셸 (트랙 B)
 순정 UI가 도는 상태에서 게스트 안의 루트 셸(`docs/RE_GUEST_SHELL.md`). `A5K_SHELL=<port>`는 머신 옵션 `console=ttyAM1`을 켠다:

@@ -320,3 +320,47 @@ Optional HMP/QOM convenience: `qom-set /machine nfc-tap 1`. Trace events: `a5k_n
   https://trac.switch-science.com/wiki/FeliCaPlug-en
 * Sony FeliCa Plug Arduino sample (pins SW, SEL, DATA, SPICLK, IRQ, RFDET; `setParam(MODE_TYPE3, dfc, userParam)`):
   https://gist.github.com/mugifly/8689329
+
+---
+
+## Implementation notes (code agent, 2026-11-15)
+
+Model: `hw/misc/a5k_nfc.c` (`a5k-nfc`, sysbus device without MMIO, `include/hw/misc/a5k_nfc.h`), created by the board
+next to the SIO block; machine option `nfc=<chardev id>`.
+
+* **SIO**: `cxd90014_sio_attach_dir()` (new) hands the slave the channel's +0x04 word; bit29 = TX, bit28 = RX as in 1.2.
+  The ch0/ch3 sub-micro callback is unchanged.
+* **RFDET** idles 1 (set in the reset *exit* phase, after the GPIO model's own reset). The GPIO model's 1 ms pulse on
+  GIC 129 is kept: `nfc_rsrc_rfdet` disables 129 itself, so no storm.
+* **IRQ 125 (section 4.3)**: a direct raise+lower pulse alone is **not** enough — in QEMU's GIC a level-sensitive SPI is
+  pending only while its input is high, so the ISR never ran. Implemented the first option of 4.3: the board stub now
+  also writes **ICFGR7 = 0x08000000** (IRQ 125 edge-triggered; stub reassembled, entry literal moved to word 22, GICD
+  table to word 23). 129 stays level (works). Hypothesis as before: the real bootloader's ICFGR value is not
+  recoverable. The model drives GIC 125 directly (one rising edge per latched command) and leaves the P0.4 pin level
+  alone (the GPIO model would pulse 125 on both edges of the pin).
+* A command is latched only while SW = 1; otherwise the host gets `timeout` after the 2 s (virtual) reply deadline.
+  Reply completion = expected length (`2 + 16·n` for 0x06, 2 otherwise) or a 2-byte status-only segment.
+* `tap` waits for the set-parameter frame and SEL ← 1 (or 200 ms), runs `read`, holds, then drops the field. No QOM
+  `nfc-tap` convenience and no `tools/` helper (any `nc` works).
+
+Acceptance results (unmodified firmware, owner NAND copy):
+
+| # | result |
+|---|---|
+| 1 | shooting screen with N-mark; `nfc` loaded; `/proc/interrupts` 125 = 0, 129 = 0; no SIO2 traffic |
+| 2 | `field on` → 129 = 1; TX 9 B with SW = 0 ignored (first-comm), SW → 1, `setparam 1BFFFF000000000000`, SEL → 1 |
+| 3 | `read`: AIB `10 08 08 00 08 … 00 71 00 99` (ver 0x10, Nbr 8, Nmaxb 8, RW 0, Ln 113 = 92 + 21, checksum ok); NDEF = `application/x-sony-pmm` {SSID, 8-char passphrase} + AAR `com.sony.playmemories.mobile`; SSID/passphrase equal Backup 0x13E0006 +0/+97 (compared on the guest via `bk.elf`, not reproduced). 2 commands → IRQ 125 = 2, each one RX pair 128 + 102 and one TX reply (18 B; 128 + 2 B) |
+| 4 | `cmd 08 01 80 01 <16 B>` → `resp 01A5`; an unknown cmd 0x0C gets no reply → `timeout` |
+| 5 | after the last NDEF block: SW → 0 and the UI shows **PlayMemories Camera Apps — "searching for access point"**, then "no connectable access point found / Network settings" (no Wi-Fi model). MENU returns to the shooting screen; InfraNfc restarts the driver (field still on → software-pended 129, chip re-powered) |
+| 6 | `field off` → within the 60 s alarm SW → 0 and 129 re-enabled; the next `tap` powers the chip with only the post-power-on set-parameter frame (first-comm frame seen once per boot) and hands over again |
+| 7 | with the app screen or the MENU up, `tap` → no chip power, no command delivered, `error timeout`, no handover (in the MENU the RFDET IRQ is still counted once by the kernel). Airplane mode not tried |
+
+Regression (unmodified firmware, no `nfc=`): cold boot to the shooting screen, MENU and PLAY all fine. The idle
+power-save warm off + resume (`sendkey o` twice) takes the HOT-resume path cleanly (clean warm off, DDR kept) but then
+the camera engine panics (a `liro` task page-fault storm) and the screen stays black — **this reproduces identically on
+the baseline a44b7b9 without any NFC code**, so it is the pre-existing warm-resume/engine fragility (cf.
+`RE_ENGINE_OOPS.md`), aggravated by host load, not the NFC model.
+
+Open: Airplane-mode gating; view-side 0x3A4D2001 dispatch (the observed target is PlayMemories Camera Apps, which
+searches for an infrastructure AP rather than starting a Wi-Fi Direct GO [?: depends on the One-touch(NFC) setting]);
+IRQ trigger type (H).

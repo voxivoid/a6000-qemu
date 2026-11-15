@@ -35,7 +35,7 @@ The `qemu/` directory is **not published**. It is rebuilt from upstream QEMU `v1
 ```
 Developers working in `qemu/` (branch `sony-a5000`) run `tools/export-qemu.sh` after each QEMU commit to refresh `qemu-overlay/` and the patch.
 SD card: `-drive if=sd` / `A5K_SD`.
-Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M rtc-lost=on`): `rtc-lost=on` = clock backup lost (first-boot area/date/time setup); `lens=none|ekit` = empty E-mount (default) or kit lens (power + handshake only); camera clock = QEMU RTC (`-rtc base=...`).
+Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M rtc-lost=on`): `rtc-lost=on` = clock backup lost (first-boot area/date/time setup); `lens=none|ekit` = empty E-mount (default) or kit lens (power + handshake + the UART1 serial HLE, `docs/RE_LENS_EMOUNT.md` §9); camera clock = QEMU RTC (`-rtc base=...`).
 
 ### Keys (QEMU window)
 | Host key | Camera button | Emulated hardware path |
@@ -69,6 +69,66 @@ Host side: Sony-PMCA-RE with the `socket` backend from `tools/pmca-socket/` (see
 ```sh
 python3 pmca-console.py info -d socket       # A5K_USB=host:port (default 127.0.0.1:7643), A5K_USB_TIMEOUT=ms, A5K_USB_DEBUG=1
 ```
+
+### NFC (virtual phone)
+The board's NFC "One-touch" chip (`a5k-nfc`, a FeliCa Plug–class dynamic Type 3 tag on SIO2, `docs/RE_NFC.md` §4) is
+always present; with no phone on the antenna (default) the firmware sees an idle tag like on the real camera. A host
+"phone" talks to it over a chardev with a line protocol:
+```sh
+./run.sh -chardev socket,id=nfc,host=127.0.0.1,port=7644,server=on,wait=off -M sony-a5000,nfc=nfc
+nc 127.0.0.1 7644
+tap            # field on, wait for the chip power-on, read the tag, hold 500 ms, field off ("tap 2000" holds 2 s)
+read           # read AIB + NDEF and decode: aib ..., ndef ..., mime application/x-sony-pmm ssid=... pass=..., aar ..., done
+cmd 06 01 80 00   # one raw reader command [cmd][n][block list] -> resp <hex> | timeout (no reply in 2 s)
+field on|off   # RF field (RFDET P0.8 low / high)
+status         # power, SEL, field, last set-parameter frame, IRQ count
+```
+- The tag is live only while the firmware has NFC switched on (shooting/playback screen, N-mark shown); in the MENU or with
+  NFC off the chip stays unpowered and commands time out. The answers (the camera's Wi-Fi Direct SSID/passphrase from
+  Backup, PlayMemories app record) are built by the stock firmware, not by the model.
+- After the last NDEF block is read the firmware hands over: the UI leaves the shooting screen for PlayMemories Camera
+  Apps ("searching for access point"), which ends with "no access point found" because there is no Wi-Fi model yet.
+- Async lines from the model: `ev power on|off`, `ev setparam <hex>`. Trace: `-trace 'a5k_nfc_*'` (the reply trace
+  contains the tag bytes, i.e. the camera's Wi-Fi credentials: keep such logs local).
+
+### Wi-Fi (virtual air)
+The AR6003 SDIO module on mmc1 (`ar6003-sdio`, `docs/RE_WIFI.md`) is present by default (`-M wifi=on`, the stock
+hardware; `wifi=off` leaves the bus empty, the menu then shows "System Error" when Wi-Fi starts). The stock kernel driver
+and userspace run unmodified; the chip firmware is an HLE that also plays the radio and its peers ("virtual air"). Without
+a netdev the camera can still turn Wi-Fi on and scan, but frames leave nowhere. Attach one QEMU netdev for the whole air:
+```sh
+./run.sh -netdev user,id=w0,net=192.168.77.0/24,hostfwd=tcp:127.0.0.1:8080-:80 -global ar6003-sdio.netdev=w0 \
+  -global 'ar6003-sdio.aps=ssid=TestAP,psk=testpass123;ssid=OpenAP,ch=1'
+```
+- `aps=` lists the virtual access points the camera scans and joins (`ssid=`, optional `psk=` = WPA2-PSK/CCMP passphrase,
+  `ch=` 1–13, `bssid=`; entries separated by `;`, default one open `QEMU-AP` on channel 6). In station mode the netdev is
+  the network behind the AP: `-netdev user` gives the camera an address over DHCP and reaches the host at the slirp
+  gateway (192.168.77.2 above).
+- `ar6003-sdio.mac=` sets the module's MAC (default `02:a5:4b:00:00:01`, locally administered; `-nic user,model=ar6003-sdio`
+  works too and then uses QEMU's generated MAC).
+- AP / smartphone mode (Send to Smartphone): when the camera starts its own network a virtual client can join it with
+  `qom-set /machine/ar6003 client-join "SSID,PASSWORD"` (HMP; the SSID and password are the ones the camera shows; an
+  empty SSID joins whatever the camera started) or automatically with `-global ar6003-sdio.client=auto
+  -global ar6003-sdio.client-psk=PASSWORD`. The netdev peer then stands in for that client (its MAC is rewritten), e.g.
+  `-netdev user,id=w0,net=10.0.0.0/16,host=10.0.1.200,hostfwd=tcp:127.0.0.1:8080-10.0.0.1:8080`.
+- Trace: `-trace 'ar6003_*'` (SDIO commands, BMI, HTC, WMI, the air, EAPOL).
+
+### HDMI (virtual cable)
+The on-SoC HDMI transmitter (`cxd90014-hdmi`) and CEC controller (`cxd90014-cec`) are polled by the
+stock `hdmi.ko` / `cec.ko` with no IRQ (`docs/RE_HDMI.md`). By default no cable is plugged and the
+camera behaves exactly as before. `-M hdmi=on` plugs the cable into a virtual 1080p TV; it is
+hot-pluggable at run time.
+```sh
+./run.sh -M hdmi=on                              # boot with the cable in
+# or, from the HMP monitor, at any time:
+#   qom-set /machine hdmi on     (unplug: ... off)
+```
+- The HDMI picture is **QEMU console 1** (`-display` window: Ctrl+Opt+2 shows it; headless:
+  `screendump FILE vph 1`). The panel stays on console 0. With no cable console 1 shows a "no signal"
+  surface.
+- The firmware reads a built-in generic 1920×1080p60 EDID over the TX's DDC master; `-M hdmi-edid=FILE`
+  (128 or 256 bytes) supplies a real monitor's EDID instead. The EDID carries a CEC physical address so
+  the camera's CEC allocates a logical address and the virtual TV answers the basic queries.
 
 ### Guest shell (Track B)
 A root shell inside the running guest, next to the stock UI (`docs/RE_GUEST_SHELL.md`). `A5K_SHELL=<port>` sets the machine
@@ -119,7 +179,7 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
 - ✅ Camera buttons (`docs/RE_ENGINE_TICK.md` §11): wheel/centre = ADC ladder ch 0x0D, DELETE = ch 0x0C, MOVIE = GPIO P10.10, MENU/PLAY = sub-micro slot A byte 28
 - ✅ Sub-micro RTC (`docs/RE_RTC.md` §9): camera clock = host time (`-rtc base=`), a date set in the menu is acknowledged and kept for the session → a normal boot goes straight to the shooting screen
 - ✅ First-boot setup (`rtc-lost=on`) completes: area (world map) → date/time → PlayMemories notice → shooting-screen OSD
-- ⏳ Lens (`docs/RE_LENS_EMOUNT.md` §8): `lens=none` = the firmware's empty-mount idle state; `lens=ekit` = lens power acknowledged + handshake steps 0–1, then stops before the UART1 lens protocol (not modelled)
+- ✅ Lens serial HLE (`docs/RE_LENS_EMOUNT.md` §9, §10): `lens=none` = the firmware's empty-mount idle state (BL state 0, "no lens"); `lens=ekit` = a kit-lens MCU model (`a5k-lens`) that acknowledges lens power, echoes the mount handshake, then speaks the E-mount serial protocol over **UART1** (new peripheral-paced mode of `cxd90014-mdma`, ch0 RX ring / ch1 TX). It completes the whole startup handshake — capability bitmap (block 1), lens info (7), startup info (9) and blocks 0x0b/0x08/0x0d/0x10/0x0a — so the firmware recognises the lens and settles in BL state 0x05 with no SYNC-TIMEOUT/DETACH escalation. The live-view fields that still read "F--"/no focal length come from the periodic Info1/2 frames and lens-info aperture bytes, which are **not decoded** (undecoded content, `docs/RE_LENS_EMOUNT.md` §9.8)
 - ✅ Shutter idle level fixed (the camera had booted with S1/S2 held): MENU and the wheel centre button now work in shooting mode; shutter and zoom lever wired (`docs/RE_ENGINE_TICK.md` §12)
 - ⏳ With SD: the image-database repair view (AUTOREPAIR) stays blank, and Format from the menu hangs; neither issues an SD command — under investigation
 - ✅ GPU: all 779 draws from first boot to the shooting screen render (Rigel compositing included); depth/stencil, mipmaps, border wrap added and tested with synthetic lists (`tools/test_dmp_p3d.py`, `tools/test_dmp_shader.c`)
@@ -128,8 +188,11 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
 - ⏳ Camera front end: sensor writer (P2S, IRQ 38), front-end frame IRQs, AIF channel groups (IRQs 40–50) modelled; capture errors gone, live view still black (no YC-output request yet, `docs/RE_SENSOR_ISP.md` §7)
 - ✅ SA DSP cores: null model (`cxd90014_sa.c`) completes the imager's defect-table job → the engine reaches monitoring; the shooting screen now shows the exposure readout (shutter/aperture scales). Live view itself still stops before YC state 2 (`docs/RE_LIVEVIEW_REQUEST.md` §9); PLAY and SD work: no-card playback view; with a card the image-database dialog creates the database on the card (first SD writes) (`docs/RE_PLAYBACK_SWITCH.md`)
 - ✅ Live-view path: with SYSV as the master V clock the firmware enables the panel YUV layer and programs ch51 every frame (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51 is an 8-bit luma plane (1024×516) scaled to the panel; nothing fills it yet (no ISP model), so it is black like a capped lens; `-global cxd90014-aif.lv-source=bars|ramp|file:PATH.pgm` writes a test luma frame into that buffer at the resize output (debug, `docs/RE_LIVEVIEW_IMAGE.md`)
+- ⏳ Still capture (lever-off RAW pass, `docs/RE_RAW_DEVELOP.md`): the stage-1 loader now loads the bootloader load table's `\sabin\` rows (Backup 0xFA0080: `idt_cam.bin`, `sa_dfdet.bin`) → IDT init OK and the cold-boot ZIT defect job succeeds; IDT develop block (IRQ 72) and OPD units (IRQs 67–70) modelled → the lever-off capture passes the RAW development pass (flag 22 0x40/0x400) and the IRQ 69 OPD pass, then stops at a deliberate trap in task 74 (`439B193C`, result handling, not decoded)
 - ✅ USB device (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS glue model with a TCP virtual cable ("A5KU"); the camera enumerates (MTP 054C:08D3), `pmca-console info -d socket` prints ILCE-5000 / 1.10, `install -f <apk>` installs an app that then appears in the Application List and starts (`docs/RE_USB_APP_INSTALL.md`), and the updater core enumerates as 054C:03E2 and runs the PMCA updater shell. After SWITCH_MODE the camera powers off like the real one (sub-micro power-off handshake, DDR controller, p0.10 power-off line) and the sub-micro power-cycles it into the updater: `pmca-console updatershell -d socket` reaches the updater shell with no manual reset (second PMCA run with `-m ILCE-5000`, `docs/RE_REBOOT.md`). Machine option `poff=auto|restart|off` (default `auto`) decides what the power-off line does: `auto` follows the off data the CPU sent in the slot-A TX frame (+0x15 = 0x20 → power cycle, otherwise the camera stays off = VM suspended, `info status` → `paused (suspended)`; power lever `O`, after an idle power save also `S`/`M`/`P`, or HMP `system_wakeup` powers it on again, `docs/RE_REBOOT.md` B.7). A warm off (idle power save, power lever) with `sus_error` 0 keeps DDR and the next power-on resumes the running system in place like the real camera's HOT boot (same screen, uptime continues, no stage 1; CPU fix: MMU enable takes effect for instruction fetch at the next branch); `-M warm-resume=off` restores the cold power-on (`docs/RE_WARM_RESUME.md` §7).
-- ⬜ Sensor/ISP (live view), lens serial protocol, audio
+- ✅ NFC (`docs/RE_NFC.md` §4): board-level FeliCa Plug–class tag on SIO2 (`a5k-nfc`); RFDET idles high (the firmware no longer sees a phone at boot), one IRQ 125 per reader command (stub makes 125 edge-triggered, H), host "virtual phone" (`nfc=<chardev>`: `field`, `cmd`, `read`, `tap`, `status`). A tap reads the firmware-built NDEF tag (AIB + `application/x-sony-pmm` Wi-Fi Direct record + PlayMemories AAR), writes are rejected (`01A5`), and the handover opens PlayMemories Camera Apps, which stops at the Wi-Fi start (no Wi-Fi model yet)
+- ✅ HDMI (`docs/RE_HDMI.md` §6): on-SoC TX core (`cxd90014-hdmi`, 0xF2A24000) + CEC (`cxd90014-cec`, 0xF3C10000), polled with no IRQ. `-M hdmi=on` (default off = no cable, stock) plugs the cable into a virtual 1080p TV; it is hot-pluggable at run time (`qom-set /machine hdmi on`). The firmware detects HPD, reads the built-in generic EDID over the TX's DDC master (`edid=<file>` to override), programs the TX (PHY on, AVI VIC 16 = 1080p60) and switches the **line** output on; the camera UI then appears on **QEMU console 1** (`screendump FILE vph 1`), scaled to 1920×1080, with the panel on console 0 as before. CEC allocates a logical address and the virtual TV answers Give Physical Address / Power Status. Fix along the way: SYS_STAT +0x024 bit0 is a "busy" flag that reads 0, not OMAP4 P_STABLE (the power-on cell waits for it to clear). Cable out = unchanged, no CEC churn
+- ⬜ Sensor/ISP (live view), lens aperture/focus/zoom content (periodic Info frames, undecoded), audio
 
 ## Firmware and legal notice
 - This repository contains **no Sony firmware, binaries or device dumps.** To run it you need a NAND dump extracted from **a camera you own** and files from Sony's publicly distributed official updater (see `data/README.md`). Do not upload those files to this repository or its issues.

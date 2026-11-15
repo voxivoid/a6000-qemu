@@ -9,6 +9,8 @@
 #     exists, boot the updater core from nflasha1 (/boot/vmlinux.bin +
 #     /boot/initrd.img at the addresses in /boot/loadaddr.txt); otherwise
 #   - /system/av-cam.bin   -> PA 0x83541000 (liro.ko adr=)
+#   - the \sabin\ rows of the bootloader load table (Backup 0xFA0080):
+#     idt_cam.bin -> 0x83501000, sa_dfdet.bin -> 0x9EC00000
 #   - /system/vmlinux.bin, /system/initrd.img -> staging, then reset into
 #     stage 2 through the board's loader descriptor at PA 0x80027000
 export PATH=/bin
@@ -58,6 +60,14 @@ if [ -f /mnt/setting/updater/mode ]; then
 else
     mount -t vfat -o ro /dev/dnflasha3 /mnt/system || fail "system mount"
     a5kcopy -f2p /mnt/system/av-cam.bin 0x83541000 || fail av-cam
+    # bootloader load table, Backup prop 0xFA0080 (docs/RE_RAW_DEVELOP.md
+    # 3.2): its \sabin\ rows, i.e. idt_cam.bin -> 0x83501000 (IDT init
+    # 4397BB1C/4397BAF8 checks u16 0x3D there, prop 0xFA0074) and
+    # sa_dfdet.bin -> 0x9EC00000 (SA boot unit 0x0400, Backup 0x93000A).
+    # The windows are passed to the board, which keeps the wbimem regions
+    # they hit and presents hand-off wbi_memclr = 0 for stage 2
+    # (docs/RE_COLD_BOOT_MODE.md 5.4; hypothesis: the real cold-boot value).
+    a5kcopy -loadtable /mnt/system || fail "load table"
     a5kcopy -stage2 /mnt/system/vmlinux.bin /mnt/system/initrd.img || fail stage2
 fi
 # read-only mounts: no unmount needed (and umount of the LZPT device

@@ -213,3 +213,33 @@ Mark both as `hypothesis:` with this document as evidence.
 * Option-B diagnostic (m1q): copy of the hand-off blob with bytes +0xE8..+0xEB = 0 via `A5K_HANDOFF=<copy>`, plus
   `-device loader,file=<sa_dfdet.bin>,addr=0x9ec00000,force-raw=on`.
 * HMP file names containing `-` must be quoted (`pmemsave 0x91e00000 0x40000 "<file>"`).
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 10. Implementation notes (code agent, QEMU branch `idt` on `a44b7b9`)
+
+Option (B) of §4/§5.4 is now implemented, backed by the bootloader load table (`RE_RAW_DEVELOP.md` §3.2): on a cold
+(loader) boot the stage-1 loader copies the load table's `\sabin\` rows, which include **`sa_dfdet.bin` → PA
+0x9EC00000** (the SA boot unit 0x0400, Backup 0x93000A). So the cold-boot ZIT ConvZ1C start no longer fails with SA
+error 12; the SA `0x41` reply carries int_fact 1 and ZIT repeats as on a HOT start.
+
+The interaction with the hand-off `wbi_memclr` word (§3) is handled as §5.4 describes:
+
+* `provision/a5kcopy.c` `-loadtable` records every window it copied at **PA 0x80027040** as `{"A5KM", n, {start,
+  end} × n}` (next to the stage-2 descriptor `"A5KB"` at 0x80027000).
+* `hw/arm/sony_a5000.c` `a5k_wbimem_preload()` runs on the stage-2 reset after the kernel/initrd are placed: it walks
+  the cmdline's `wbimem=` tokens; a region above 0x80028000 that a load-table window hit is **kept**, every other such
+  region is **cleared by the board itself** (so its content does not depend on what stage-1 Linux left in DDR), and the
+  hand-off word `wbi_memclr` (PA 0x800210E8) is presented as **0** for this boot (patched in the ROM blob, so
+  `a5k_handoff_restore` puts the factory 1 back on the next reset). With `wbi_memclr = 0` the kernel
+  (`wbi_cmdline_parse_mem`) does not clear the `wbimem` regions, so the preloaded `sa_dfdet.bin` at 0x9EC00000
+  survives to av-cam.
+* A HOT resume keeps DDR and does not run stage 1 or this handler, so the kept image persists.
+
+This is the tested option (B); it is `hypothesis:` what the real bootloader presents on a cold boot (no bootloader
+code). Candidate (A) — `wbi_memclr = 1`, region zero, ZIT error 12 once — is what the firmware did before this change
+and is still what runs if the load table has no row inside a `wbimem` region.
+
+Boot log of a cold run (`qemu-idtc-1`): `wbimem 0x30000@0x9ec00000 preloaded by stage 1, kept` and `stage 2 —
+wbi_memclr = 0, other wbimem regions cleared by the board`. §5.1's `a5kcopy -bkset 0x0051000f 01` (boot mode 1) is
+unchanged and still in `loader.sh`.

@@ -334,3 +334,44 @@ Fresh NAND clone per run, `A5K_SHELL`, the cold-boot loader with §7.1. Probes a
 * Task stacks: `pmemsave` DDR, find `liro-kliro_<n>\0` (comm at task+0x1E8), thread_info = the 8 KiB-aligned
   0x4xxxxxxx word in the first three words of the task, `cpu_context.sp` at thread_info+0x3C, then scan for odd
   words in 0x43541000..0x44137000.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 10. Implementation notes (code agent, QEMU branch `idt` on `a44b7b9`)
+
+New files `hw/misc/cxd90014_idt.c` (0xF3020400, IRQ 72) and `hw/misc/cxd90014_opd.c` (0xF3030000, IRQs 67-70);
+`CONFIG_CXD90014_IDT` selected by `SONY_A5000`. `hw/dma/cxd90014_aif.c` gained a named GPIO out `"done"` (one pulse
+per group completion, after the status nibbles are set); the board wires AIF group 0xF3020000 (`aif[3]`) `"done"` to
+the IDT device's GPIO in. `provision/a5kcopy.c` gained `-loadtable` and `provision/loader.sh` the `a5kcopy -loadtable
+/mnt/system` line; `hw/arm/sony_a5000.c` gained `a5k_wbimem_preload()` (the `"A5KM"` descriptor at PA 0x80027040,
+see `RE_COLD_BOOT_MODE.md` §10).
+
+* **§7.1 loader.** The spec's single `-f2p idt_cam.bin` line was generalised to the whole load table (§3.2): `a5kcopy
+  -loadtable` reads Backup prop 0xFA0080 (oversize property: u16 length 0x2400, then 0x90-byte rows) from the RAM copy
+  `-backup` placed, and copies every type-3 row whose path starts with `\sabin\` from `/mnt/system` to its start PA,
+  refusing any file larger than its window. For fw 1.10 that is `idt_cam.bin` → 0x83501000 and `sa_dfdet.bin` →
+  0x9EC00000 (`RE_COLD_BOOT_MODE.md`). `IdtChkV` reads 0x3D, `43983668` installs the handlers (`IdtInit` r0 = 1).
+* **§7.2 IDT.** As specified: `+0x42C` W1C (event 1 → 0x01000001, event 2 → 0x02000100, low bits `hypothesis:`),
+  `+0x444` bit 0 / bit 1 enables, IRQ 72 = enabled status, `+0xC00` bit 0 0→1 starts a frame only when `+0x444 & 3`.
+  Event 1 after 100 µs (`event1-us`), event 2 at the AIF-group `"done"` pulse or a 5 ms fallback (`fallback-us`), never
+  before event 1. Live view (which writes `+0xC00` every frame with `+0x444 = 0`) stays silent — verified: 0 `Isr72`
+  hits over 300 s at the shooting screen.
+* **§7.3 OPD.** As specified: four units at `+0x100/+0x140/+0x200/+0x300`, `+0x04` W1C status / `+0x08` enable byte,
+  IRQ_k = status & enable; `+0x0C` bit 1 0→1 completes after 1 ms (`start-us`) by setting status bit 0 in every
+  enabled unit and clearing bit 1. All `hypothesis:` items (low status bits, `+0x444` bit meaning, event timing, OPD
+  unit selection, bit-1 self-clear) carried into the code comments.
+* **Device reset is safe on HOT resume.** Both models reset their registers to 0, so after a warm off the IRQ line is
+  `status(0) & enable(0) = 0`: no spurious interrupt while av-cam resumes from DDR without re-initialising the block.
+
+Results (fresh NAND clone, cold loader with §7.1, `A5K_SHELL`, probes of §9; build `qemu-idtc-1` on `a44b7b9`):
+
+| check | result |
+|---|---|
+| **1. IDT init OK** | `IdtInit` r0 = 1, `IdtChkV` r0 = 0x3D (r2 = 0xB039003D), `IdtReg 43983668` hit, **no `IdtNG`**. SA program 2 ZIT no longer fails (SA `0x41` reply `…00000201 00010000`, int_fact 1, repeats — the cold-boot ZIT now succeeds, `RE_COLD_BOOT_MODE.md`). |
+| **2. Lever off, bit 0x400 + IRQ 69, no gdb** | `sendkey o 300` → `Rdraw_After 437D45E0` → `KickFOPD 439739F0` → `F22_440wait` → `Isr72` twice: `IdtEv(1)` then `IdtEv(0x02000100)` → `IdtDone2` (r0 = 2) → `IdtCb` (r0 = `43A59E6B`) → `F22_400 43A59E6A` (bit 0x400). Then `IdtAcq 43973924` → `Isr69` → `IdtE750 43983750` → `IdtCbB 439773BC` (task 77) → `IdtReply 439738E0` → `T74ret 4385B988` → `IdtRel` → `IdtRelSig` (`sig_sem(21)`). All without gdb. |
+| **3. Next stop (as the doc predicts)** | task 74 → `T74res 4385B9CC` → `B9A6 43A7B9A6` → `C067A 4379067A` → **`Trap193C 439B193C`** (`movs r3,#0; strb r3,[r3]`), kernel oops `PC 0x439b193e`, `Oops: 817`, `Process liro-kliro_74`. Stop 3 of §6, not fixed (RE item). |
+| **Regression: live view** | shooting screen, MENU (`sendkey m 300` → 6-tile menu, closes), PLAY (`sendkey p 300` → "no memory card" view, closes) all unchanged; `Isr67/68/70` fire ~37/s (the periodic OPD/AIF housekeeping, as before this block existed — all four units' enables non-zero), `Isr72`/`Isr69` 0 hits until the lever. No new CamCore 0x208 (`CCerr 43858954`: 0 over the whole run). |
+
+Open items: stop 3 (§6) is unchanged RE; the HOT-resume regression (idle suspend + lever) is the known host-load
+engine race (`RE_ENGINE_OOPS.md`), seen on both this build and the stock binary under a loaded host — re-test on an
+idle host.

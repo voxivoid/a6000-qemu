@@ -369,3 +369,52 @@ latches AIF state at vsync.
    write them.
 8. The libInfraHdmi → VDF message for "connect HDMI" and the order of `set_reso` / `tmds_on` / VDF mode switch. This
    needs a run with HPD = 1.
+
+---------------------------------------------------------------------------------------------------
+## 6. Implementation notes (emulator, branch `hdmi`)
+
+The §4.2 plan is implemented as three models plus the §4.1 CEC fix (which stays — it is what keeps
+the churn down with the cable unplugged).
+
+* **`hw/display/cxd90014_hdmi.c`** (`cxd90014-hdmi`, 0xF2A24000/0x4000). 8-bit-on-32-bit register
+  file, RAM-backed, unknown offsets logged `LOG_UNIMP`. Property `hpd` (bool, run-time settable),
+  `edid=<file>` (128/256 bytes, default = built-in generic 1080p60 EDID generated in code). SYS_STAT
+  +0x024 RO, INTR1 +0x1C4 W1C, a DDC engine that serves EDID from `edid[segm·256 + offset]` through a
+  16-byte FIFO, and GPIO out 0 = TMDS active (`hpd && 0x2008 bit0 && 0x4F4 bit0`).
+* **`hw/misc/cxd90014_cec.c`** (`cxd90014-cec`, 0xF3C10000). 0x180 W1C status, TX at 0x000/len 0x040/
+  start 0x044, RX at 0x054/count 0x094, own LA 0x0A0. Property `connected` (follows `hpd`) and `tv`
+  (default on): with the cable in, a virtual TV at LA 0 ACKs directed frames (bit3), everything else
+  no-ACKs (bit1) so the camera adopts its logical address, and the TV answers Give Physical Address /
+  Power Status / CEC Version / OSD Name / Vendor ID / Menu Language by filling the RX buffer.
+* **HDMI as console 1** in `hw/display/cxd90014_vph.c`: the per-output compositor was factored into
+  `vph_compose(dst, W, H, yuv_on, ky, ko, bpp, osd_scale)`; the panel uses it with ch51/ch53 (1:1),
+  the HDMI console with the **line** channels ch52/ch54, sized from VPH+0x454 and doubled for the
+  interlaced +0x410 formats, OSD nearest-neighbour scaled to the line size. A GPIO in `hdmi-tmds`
+  (from the TX model) gates it; while inactive the console shows a dark "no signal" surface.
+* **Board** (`hw/arm/sony_a5000.c`): `-M hdmi=on|off` (default off) wires `hpd`/`connected`; it is
+  run-time settable (`qom-set /machine hdmi on`). The TX GPIO goes to the VPH `hdmi-tmds` input. The
+  VPH gets id `vph` so `screendump FILE vph 1` grabs the HDMI console.
+
+### Findings from the frozen-firmware runs (hdmi=on boot and run-time qom-set)
+* **SYS_STAT +0x024 bit0 is not OMAP4 P_STABLE.** `hdmi_core_check_p_stable` @0x9984 (power-on cell)
+  loops until the bit reads **0**: it returns 3 (retry, `sub_D0E4`, -EIO after 20 tries) while the bit
+  is set and 2 (continue) once clear. With bit0 driven from PD# (= 1 after power-on) the power-on cell
+  retried out and the TX never came up. The model now reads bit0 = 0 (comment in `hdmi_sys_stat`,
+  resolves doc §5 q2 for emulation: bit0 is a "not yet stable / busy" flag, active high).
+* With that fixed, the full path runs on a stock boot with `hdmi=on` **and** on a run-time
+  `qom-set /machine hdmi on` from the shooting screen: HPD notify → power-on cells (PHY 0x2008/0x2020/
+  bias/rise-fall, soft reset 3→0, InfoFrames) → DDC reads EDID block 0 and 1 (`nack 0`) →
+  `hdmi_core_edid_parser` returns 0 → `hdmi_state` reaches outputting → AVI VIC +0x51C = **0x10 = 16
+  (1080p60, = the EDID's native VIC)** → TMDS on.
+* **VPH line output** then programs format 5 (1080p) in +0x410, active **0x04380780** in +0x454
+  (0x780 = 1920 W, 0x438 = 1080 H), and the line OSD channel **ch54** (0xF3441380) with the same OSD
+  buffer the panel uses (0x8F758000) — so the HDMI console shows the live UI, scaled to 1920×1080, and
+  MENU/PLAY render on it. The av-cam line-output format comes from the OSAL idck service 0x66025A
+  (`sub_43AC0974` in av-cam, writes VPH+0x068/+0x06C = 0x1000000).
+* **CEC with the cable in:** the camera polls, adopts a logical address (polling frame no-ACKs), and
+  the virtual TV answers; a handful of TX frames, no `set_power` storm. With the cable out, the CEC
+  block (§4.1 W1C + `connected=off`) never raises RX-ready, so there is no churn — unchanged from
+  stock.
+* **Open:** bit0-stable semantics (now modelled as always-ready) and the sub-micro HDMIState queue
+  0x28017D path (doc §5 q3) are not needed for the TX register poll to detect the cable; the line
+  resizer at VPH+0x6500 is not decoded (OSD is full-frame nearest-neighbour).

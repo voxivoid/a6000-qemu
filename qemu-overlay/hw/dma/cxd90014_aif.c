@@ -38,6 +38,10 @@
  * may point at the IIB (+0x20 = 0x6xxxxxxx), and image data is not
  * modelled.
  *
+ * GPIO out "done" pulses once per completion (after the status nibbles
+ * are set): the IDT develop block (cxd90014-idt) ends its frame on the
+ * completion of group 0xF3020000 (docs/RE_RAW_DEVELOP.md §7.2).
+ *
  * Debug option (not hardware), docs/RE_LIVEVIEW_IMAGE.md §4 option (a):
  * lv-source=bars|ramp|file:PATH writes one 8-bit luma frame into guest
  * DRAM when channel lv-ch completes, just before its status nibble / IRQ
@@ -81,6 +85,7 @@ struct AifState {
     bool frame_sync;
     QEMUTimer *done;
     qemu_irq irq[AIF_MAXCH];
+    qemu_irq done_out;              /* "done": pulse per group completion */
     /* debug live-view source (see header) */
     char *lv_source;
     int32_t lv_ch;
@@ -204,6 +209,7 @@ static void aif_complete(AifState *s)
     }
     s->busy = 0;
     aif_update(s);
+    qemu_irq_pulse(s->done_out);
 }
 
 static void aif_timer(void *opaque)
@@ -405,6 +411,7 @@ static void aif_init(Object *obj)
 {
     AifState *s = CXD_AIF(obj);
     qdev_init_gpio_in(DEVICE(obj), aif_frame, 1);
+    qdev_init_gpio_out_named(DEVICE(obj), &s->done_out, "done", 1);
     s->done = timer_new_ns(QEMU_CLOCK_VIRTUAL, aif_timer, s);
 }
 

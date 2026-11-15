@@ -552,3 +552,55 @@ Value of b0: [?] (use 0).
    §9.1 and §9.4 implemented, capture each body request in turn (gdb on `43993bd4` dumping PA 0x83CC70B0) while
    replying minimally, and decode the consumers of lensInfo+68/+270/+313.
 6. Exact bit layout of DMA +0x10 (request lines, type) and of cfg bits[30:12].
+
+---
+
+## 10. Implementation notes (stage C, emulator)
+
+Implemented on branch `lensc`. The §9.7 checklist is done; the lens is recognised and the whole startup
+handshake runs. Files: `hw/misc/cxd90014_lens.c` (new, `a5k-lens`), `hw/dma/cxd90014_mdma.c` +
+`include/hw/dma/cxd90014_mdma.h` (peripheral-paced mode), `hw/arm/sony_a5000.c` (wiring, `lens=ekit`).
+
+### 10.1 What runs
+* **Timer fix (§9.1)** was already in the base (`cxd4115_timer.c`: a one-shot match clears CTRL START,
+  commit `9c364ce`); no change needed. The handshake completes and `436b7a44` opens UART1.
+* **mdma peripheral mode (§9.4).** `cxd90014_mdma_set_periph(dev, 0xF2001000, ns/byte, tx_cb, pull_cb, op)`.
+  A channel whose `+0x00` (src) or `+0x04` (dst) equals the UART1 DR is peripheral-paced:
+  * **TX** (dst = DR, ch1): the `count·width` bytes are read from the source and handed to the lens; a timer
+    raises the channel's done bit (GIC 173+ch) after the serial time. Width from cfg[17:15] (1→1, 2→2, 3→4 B).
+  * **RX** (src = DR, ch0): stays armed; the lens writes reply bytes at `+0x04` and advances it (what
+    `43993840` measures), done when the count is used up. The memory→memory path is unchanged.
+  * The driver read-modify-writes `+0x10`, so the model acts only on a bit0 edge.
+* **`a5k-lens` state machine.** OFF (no supply) → HS (echo P5.4→P0.5, P2.11→P2.10) → UART (when P5.4 falls
+  after P2.10 has been echoed high, §2.4 step 2→3). In UART mode it parses each body frame (§9.5 rules) and
+  answers every requested block in order with its block-table **B** length. Block 1 = capability bitmap (ids
+  1,5,6,7,8,9,0x0a,0x0b,0x0d,0x10); block 7 `[1]` = power class (`power-class` prop, default 1); blocks
+  9/10 carry the minimum (`[8]=[9]=0`, `[1]`bit0=0); all other blocks are zero-filled (presence only).
+* **Reply timing.** A reply is marked *due* `LENS_REPLY_NS` (0.6 ms, H) after the body's P5.4 falls, then
+  copied into the RX ring at the body's **next read of the RX channel `+0x04`** (a "pull" callback). This
+  keeps the delivery in the vCPU's own MMIO order: writing the ring from the reply timer thread raced the
+  body's `43993840` (read `+0x04` → stop ch0 → re-arm), and bytes written in that window were lost, which
+  showed up as `[BL]SYNC TIMEOUT` at random init steps. With the pull, every init block is taken first try.
+
+### 10.2 Observed (unmodified firmware, pristine NAND, no SD; BL Info PA 0x83D707C8)
+| run | BL state | init blocks answered | screen |
+|---|---|---|---|
+| `lens=none` | **0** (idle, no lens) | – | shooting OSD, "NO CARD" on shutter; unchanged from §8 |
+| `lens=ekit` | **0x05** (recognised, communicating) | 01, 07, 0b, 08, 09, 0d, 10, 0a (full §9.3 sequence) | shooting OSD; MENU and PLAY work |
+
+`[BL]` log on `lens=ekit`: one `SYNC TIMEOUT` / `DETACH RETRY count:1` on the very first power-up cycle (before
+the lens' first init completes), then it recovers and stays at state 0x05 — no `count:4` / `FORCE LENS DETACH`,
+no `LENS FIRMERR`, `LENS_TYPE_UNKNOWN` or `POWER SEQ TIME OUT`.
+
+### 10.3 Still "F--"
+The live-view F-number, focal length and AF/zoom status are **not produced**. Two reasons, both pre-existing and
+documented: (a) the aperture / focal / lens-id byte layout inside blocks 7/8/5/6 is undecoded (§9.5, §9.8 Q5);
+(b) the periodic type-1 Info1/Info2 frames that carry live aperture are VD-driven and were never seen after the
+startup sequence in the emulator (no live-view ISP path, so no VD-rate lens polling). Fabricating aperture bytes
+was deliberately avoided (wrong values risk `LENS FIRMERR` / `LENS_TYPE_UNKNOWN`). Decoding (a) and driving (b)
+are the remaining work for a real F-number display.
+
+### 10.4 Properties / options
+`-M lens=ekit` builds the `a5k-lens` wired to mdma unit 0 and the GPIO. `a5k-lens` props: `power-class` (block 7
+`[1]`, default 1), `drive-mode` (block 9 `[1]`, class-2 only). `-global a5k-lens.power-class=2` was exercised
+(class-2 path through `436B7E5C`): the init sequence is identical (the firmware still reaches state 0x05).

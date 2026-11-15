@@ -465,3 +465,48 @@ NFC is owned by `docs/RE_NFC.md`. Only incidental observations: `nfc.ko` is load
 Wi-Fi), the running system has threads `nfc_rsrc_event_` and IRQ threads `irq/125-nfc_rsr`, `irq/129-nfc_rsr` (GPIO pin
 interrupts, p0.4 / p0.8 by the gpiopin_to_irq mapping), the real-camera log has `UDIF: suspend skipped: nfc_rsrc`, and
 the Wireless menu's "One-touch (NFC)" item is selectable in the emulator. Not investigated further.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 11. Implementation notes (code agent, QEMU branch `wifi`)
+
+Option B of §6 as specified in §7, with these files:
+
+| File | Content |
+|---|---|
+| `hw/sd/ar6003_sdio.c` | `ar6003-sdio`: SD protocol (CMD0/3/5/7/52/53, silent for CMD8/55/41/1/2/9), CCCR, FBR1, common + function-1 CIS, function-1 HIF registers 0x400–0x47F, mailbox 0 TX/RX, card interrupt, power inputs `pwd` (p1.4) / `vdd[0..1]` (p6.2, p6.3) |
+| `hw/net/ar6003_fw.c` | firmware HLE: BMI (sparse target RAM), HTC (READY, CONN_SVC, SETUP_COMPLETE, credit trailers), WMI READY + the commands below, virtual APs, virtual client, WPA2-PSK 4-way (both roles), netdev bridge |
+| `include/hw/net/ar6003.h` | shared state |
+| `hw/sd/core.c`, `include/hw/sd/sd.h` | `SDBusClass.set_card_irq` + `sdbus_set_card_irq()`; the bus looks up `SDCardClass` with `object_get_class()` so a card need not be a `TYPE_SDMMC_COMMON` (SDState is private to `sd.c`) |
+| `hw/sd/sdhci.c`, `include/hw/sd/sdhci.h` | card interrupt: NORINTSTS bit 8 follows the card's line while NORINTSTSEN bit 8 is set (level, not W1C), re-evaluated in every `sdhci_update_irq` |
+| `hw/arm/sony_a5000.c` | `a5k_wifi_init()`: second `generic-sdhci` at 0xF0301000 / GIC 221, `ar6003-sdio` child `/machine/ar6003` on its bus, GPIO p1.4 / p6.2 / p6.3 wired; machine option `wifi=on|off` (default on). mmc2 is still not mapped |
+
+Values chosen where the spec left them open (all `[?]`, none read from a real module):
+CCCR 0x00 = 0x32, 0x08 = 0x12 (SMB, S4MI), 0x13 SHS = 1; FBR1 0x100 = 0x07; CIS MANFID 0x0271/0x0301, function-1 FUNCE
+42 bytes (max block 512, enable timeout 1 s); HTC READY 24 credits × 1664 B, max EP 8, HTC 2.1 without bundling;
+CONN_SVC_RESP max message 1664; WMI READY sw_version 0x030400BD, phy_cap 0x03; `hi_board_data` (0x540654) = 0x542400.
+
+Observed facts (stock driver, verified in the emulator):
+* The driver uses the counter 4 credit at 0x450 and RX_LOOKAHEAD_VALID bit 0 for BMI (§3.3 confirmed), the diag window as
+  §3.3 (address bytes 1–3 written with fixed-address byte writes, the 4-byte incrementing write at the base triggers).
+* Upload: `fw-4.bin` OTP and firmware go through LZ_STREAM_START/LZ_DATA (about 116 KB), board data and patches through
+  WRITE_MEMORY (about 2 KB); then DONE. `ath6kl: ar6003 hw 2.1.1 sdio fw 3.4.0.189.12.SMARTPHONE api 4` follows HTC READY,
+  five CONN_SVC (0x100..0x104) and SETUP_COMPLETE_EX.
+* Capability bit 2 in `fw-4.bin` → the host scans with BEGIN_SCAN (0xF08B; channel list at +53/+54), not START_SCAN.
+* BSSINFO (`ath6kl_wmi_control_rx`, 0x1004): `u16 freq, u8 frame type (1 beacon), u8 snr, bssid[6], u16 ie_mask`, then
+  the beacon body from the timestamp; RSSI = snr − 95 dBm; the body must be ≥ 12 bytes.
+* CONNECT (0x1002) station: union `u16 freq, bssid[6], u16 listen, u16 beacon interval, u32 nw_type` + 16-bit lengths;
+  assoc request = capability + listen interval + IEs, assoc response = capability + status + AID + IEs
+  (`ath6kl_cfg80211_connect_event` @0x7588 skips 4 and 6 bytes). AP own BSS: `u16 freq, bssid = the vif's netdev MAC`.
+  AP client (`ath6kl_connect_ap_mode_sta` @0xd028): `phymode, aid, mac[6], auth, keymgmt (WPA2_PSK = 0x10), u16 cipher
+  (AES = 8), apsd`; **the assoc request is the whole 802.11 management frame** (IEs taken at +28, +34 for a reassociation).
+* vif MACs (`ath6kl_interface_add` @0x9a34): vif n > 0 = `mac[0] ^ (1 << n) | 2`, and with fw capability bit 9
+  (set in `fw-4.bin`) `mac[4] ^= 0x80`.
+* RX data (`ath6kl_rx` @0x10278): `wmi_data_hdr` info3 bits 3:0 = vif, meta version in info2 bits 15:13 (1 = 6 bytes,
+  2 = 3 bytes, 0 = none); 802.3 + LLC/SNAP; total 28..3868 bytes. TX: meta version ≠ 0 adds 12 bytes after the header
+  (`ath6kl_wmi_data_hdr_add` @0x11674).
+* In AP mode the driver drops unicast frames whose source is not an associated station, so the bridge rewrites the netdev
+  peer's MAC to the virtual client's (Ethernet source / destination and ARP hardware addresses).
+* Station mode: Wireless → Access Point Settings scans (BEGIN_SCAN on ath0), lists the virtual APs with the lock icon
+  for WPA2, and "registering" an AP connects, runs DHCP through `pump`, then disconnects (WMI DISCONNECT by the host)
+  and shows "Registered".

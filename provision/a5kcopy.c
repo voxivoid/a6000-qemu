@@ -18,6 +18,9 @@
  *        -backup placed at the PA in the file's header word 0 (file default
  *        /mnt/setting/Backup.bin) and recompute the header checksum
  *        (docs/RE_STILL_CAPTURE.md section 6)
+ *   a5kcopy -loadtable <root> [Backup.bin]
+ *        bootloader load table (Backup prop 0xFA0080 in that RAM copy):
+ *        copy its \sabin\ rows from <root> to their PAs (see loadtable())
  *
  * Build (from the emulator repository root):
  *   arm-none-eabi-gcc -march=armv7-a -marm -O2 -nostdlib -static \
@@ -210,6 +213,47 @@ static u32 bk_sum(const unsigned char *p, ul len)
         if (i < 0x20 || i >= 0x24) s += p[i];
     return s;
 }
+/* map the RAM copy of Backup.bin (validated, checksum checked) */
+struct bk { unsigned char *p; ul total, ml, ptab, es; long b; u32 pa, ns, np, doff; };
+static void bk_map(struct bk *k, const char *file)
+{
+    long fd = sc(SYS_open, (long)file, 0, 0, 0, 0, 0);
+    u32 pa = 0;
+    if (fd < 0 || sc(SYS_read, fd, (long)&pa, 4, 0, 0, 0) != 4) die("bk: cannot read Backup header");
+    sc(SYS_close, fd, 0, 0, 0, 0, 0);
+    if (pa < 0x80000000 || pa >= 0xA0000000) die("bk: bad Backup phys address");
+
+    ul ml; long b;
+    unsigned char *h = pmap(pa, 0x100, &ml, &b);
+    u32 w0 = ld32(h), ns = ld32(h + 0x10), np = ld32(h + 0x14);
+    u32 doff = ld32(h + 0x18), dsz = ld32(h + 0x1c), ck = ld32(h + 0x20);
+    unsigned char m0 = h[0xc], m1 = h[0xd], rev = h[0xe], m3 = h[0xf];
+    punmap(b, ml);
+    if (w0 != pa) die("bk: RAM copy not found (header word 0 mismatch)");
+    if (m0 != 'B' || m1 != 'K' || m3 != 0) die("bk: bad Backup magic");
+    if (rev != '4' && rev != '2') die("bk: unknown Backup revision");
+    k->es = rev == '4' ? 6 : 5;
+    k->ptab = 0x100 + 6 * (ul)ns;
+    k->total = (ul)doff + dsz;
+    if (ns == 0 || np == 0 || k->ptab + k->es * np > doff || dsz == 0 || k->total > 0x1000000)
+        die("bk: bad Backup header");
+    k->p = pmap(pa, k->total, &k->ml, &k->b);
+    if (bk_sum(k->p, k->total) != ck) die("bk: header checksum mismatch");
+    k->pa = pa; k->ns = ns; k->np = np; k->doff = doff;
+}
+/* property table entry offset of id; *ptr = its {size << 24 | data offset} */
+static ul bk_find(struct bk *k, ul id, u32 *ptr)
+{
+    ul sub = id >> 16, idx = id & 0xffff;
+    if (sub >= k->ns) die("bk: subsystem outside the table");
+    unsigned char *se = k->p + 0x100 + 6 * sub;
+    ul cnt = se[0] | se[1] << 8, first = ld32(se + 2);
+    if (idx >= cnt || first + idx >= k->np) die("bk: property outside the table");
+    ul eoff = k->ptab + k->es * (first + idx);
+    *ptr = ld32(k->p + eoff + k->es - 4);
+    return eoff;
+}
+
 static void bkset(ul id, const char *val, const char *file)
 {
     unsigned char nv[64];
@@ -223,48 +267,100 @@ static void bkset(ul id, const char *val, const char *file)
     }
     if (n == 0) die("bkset: empty value");
 
-    long fd = sc(SYS_open, (long)file, 0, 0, 0, 0, 0);
-    u32 pa = 0;
-    if (fd < 0 || sc(SYS_read, fd, (long)&pa, 4, 0, 0, 0) != 4) die("bkset: cannot read Backup header");
-    sc(SYS_close, fd, 0, 0, 0, 0, 0);
-    if (pa < 0x80000000 || pa >= 0xA0000000) die("bkset: bad Backup phys address");
-
-    ul ml; long b;
-    unsigned char *h = pmap(pa, 0x100, &ml, &b);
-    u32 w0 = ld32(h), ns = ld32(h + 0x10), np = ld32(h + 0x14);
-    u32 doff = ld32(h + 0x18), dsz = ld32(h + 0x1c), ck = ld32(h + 0x20);
-    unsigned char m0 = h[0xc], m1 = h[0xd], rev = h[0xe], m3 = h[0xf];
-    punmap(b, ml);
-    if (w0 != pa) die("bkset: RAM copy not found (header word 0 mismatch)");
-    if (m0 != 'B' || m1 != 'K' || m3 != 0) die("bkset: bad Backup magic");
-    if (rev != '4' && rev != '2') die("bkset: unknown Backup revision");
-    ul es = rev == '4' ? 6 : 5;
-    ul ptab = 0x100 + 6 * (ul)ns, total = (ul)doff + dsz;
-    if (ns == 0 || np == 0 || ptab + es * np > doff || dsz == 0 || total > 0x1000000)
-        die("bkset: bad Backup header");
-
-    unsigned char *p = pmap(pa, total, &ml, &b);
-    if (bk_sum(p, total) != ck) die("bkset: header checksum mismatch before write");
-    ul sub = id >> 16, idx = id & 0xffff;
-    if (sub >= ns) die("bkset: subsystem outside the table");
-    unsigned char *se = p + 0x100 + 6 * sub;
-    ul cnt = se[0] | se[1] << 8, first = ld32(se + 2);
-    if (idx >= cnt || first + idx >= np) die("bkset: property outside the table");
-    ul eoff = ptab + es * (first + idx);
-    u32 ptr = ld32(p + eoff + es - 4);
+    struct bk k;
+    bk_map(&k, file);
+    unsigned char *p = k.p;
+    u32 ptr;
+    ul eoff = bk_find(&k, id, &ptr);
     ul doffp = ptr & 0xffffff, sz = ptr >> 24;
     if (sz == 0 || sz == 0xff) die("bkset: variable-size property not supported");
     if (sz != n) die("bkset: size mismatch");
-    if (doffp < doff || doffp + sz > total) die("bkset: property data outside the data area");
+    if (doffp < k.doff || doffp + sz > k.total) die("bkset: property data outside the data area");
 
     puts1("a5kcopy: bkset "); puthex(id); puts1(" entry "); puthex(eoff);
-    puts1(" ptr "); puthex(ptr); puts1(" PA "); puthex(pa + doffp);
+    puts1(" ptr "); puthex(ptr); puts1(" PA "); puthex(k.pa + doffp);
     puts1(" old "); putbytes(p + doffp, sz);
+    u32 ck = ld32(p + 0x20);
     for (ul i = 0; i < sz; i++) p[doffp + i] = nv[i];
-    u32 nck = bk_sum(p, total);
+    u32 nck = bk_sum(p, k.total);
     p[0x20] = nck; p[0x21] = nck >> 8; p[0x22] = nck >> 16; p[0x23] = nck >> 24;
     puts1(" new "); putbytes(p + doffp, sz);
     puts1(" checksum "); puthex(ck); puts1(" -> "); puthex(ld32(p + 0x20)); puts1("\n");
+    punmap(k.b, k.ml);
+}
+
+/*
+ * Bootloader load table, Backup prop 0x00FA0080 (docs/RE_RAW_DEVELOP.md
+ * 3.2).  Oversize property (size code 0xFF): u16 length at the data offset,
+ * then the data (in the unit's file 0x2400 bytes, and data offset + 2 +
+ * length is exactly the next property's offset).  The data is an array of
+ * 0x90-byte rows {u32 type, u32 start, u32 end, u32 flags, char path[0x80]};
+ * fw 1.10 rows:
+ *   3 0x83501000-0x83540FFF 0x05000000 \sabin\idt_cam.bin
+ *   3 0x9EC00000-0x9EC2FFFF 0x01000000 \sabin\sa_dfdet.bin
+ *   3 0x83541000-0x84136FFF 0x05000000 \av-cam.bin
+ *   2 0x80033000-0x80033FFF 0x01000000 \kemco.txt
+ *   3 0x80428000-0x80C27FFF 0x01000000 \initrd.img
+ *   3 0x80038000-0x80427FFF 0x81000000 \vmlinux.bin
+ * -loadtable copies every type-3 row whose path starts with "\sabin\"
+ * from <root> (the system partition, which holds av-cam.bin) to its start
+ * PA, refusing files larger than the window.  The other rows are the
+ * loader's own lines (av-cam -f2p, kernel/initrd through the stage-2
+ * descriptor, kemco by the board).  [? meaning of type and flags]
+ * The copied windows are recorded at PA 0x80027040 {"A5KM", n, {start,
+ * end} x n} for the board, which then keeps the wbimem regions they hit
+ * and presents hand-off wbi_memclr = 0 (docs/RE_COLD_BOOT_MODE.md 5.4).
+ */
+#define LT_ROW 0x90
+#define LT_MAX 8
+static void loadtable(const char *root, const char *file)
+{
+    struct bk k;
+    bk_map(&k, file);
+    u32 ptr;
+    bk_find(&k, 0x00fa0080, &ptr);
+    ul off = ptr & 0xffffff;
+    if (ptr >> 24 != 0xff) die("loadtable: 0xFA0080 is not an oversize property");
+    if (off < k.doff || off + 2 > k.total) die("loadtable: property outside the data area");
+    ul len = k.p[off] | k.p[off + 1] << 8;
+    if (len % LT_ROW || off + 2 + len > k.total) die("loadtable: bad table length");
+    u32 rec[2 + 2 * LT_MAX];
+    ul nrec = 0;
+    for (ul r = 0; r < len / LT_ROW; r++) {
+        const unsigned char *e = k.p + off + 2 + r * LT_ROW;
+        u32 type = ld32(e), start = ld32(e + 4), end = ld32(e + 8), flags = ld32(e + 12);
+        const char *path = (const char *)e + 16;
+        ul pl = 0;
+        while (pl < 0x80 && path[pl]) pl++;
+        if (type != 3 || pl == 0x80 || pl < 8) continue;
+        const char *pre = "\\sabin\\";
+        ul i = 0;
+        while (pre[i] && path[i] == pre[i]) i++;
+        if (pre[i]) continue;
+        char fn[256];
+        ul rl = slen(root);
+        if (rl + pl + 1 > sizeof(fn)) die("loadtable: path too long");
+        for (i = 0; i < rl; i++) fn[i] = root[i];
+        for (i = 0; i < pl; i++) fn[rl + i] = path[i] == '\\' ? '/' : path[i];
+        fn[rl + pl] = 0;
+        if (end < start || start < 0x80000000 || end >= 0xA0000000) die("loadtable: bad window");
+        long fd = sc(SYS_open, (long)fn, 0, 0, 0, 0, 0);
+        if (fd < 0) { puts1("a5kcopy: loadtable: "); puts1(fn); die(": cannot open"); }
+        long size = sc(SYS_lseek, fd, 0, 2, 0, 0, 0);
+        sc(SYS_close, fd, 0, 0, 0, 0, 0);
+        if (size <= 0 || (ul)size > (ul)end - start + 1) { puts1("a5kcopy: loadtable: "); puts1(fn); die(": larger than its window"); }
+        if (nrec == LT_MAX) die("loadtable: too many rows");
+        ul n = file_to_phys(fn, start);
+        rec[2 + 2 * nrec] = start; rec[3 + 2 * nrec] = end; nrec++;
+        puts1("a5kcopy: loadtable "); puts1(fn); puts1(" "); puthex(n); puts1(" bytes at ");
+        puthex(start); puts1(" (window end "); puthex(end); puts1(", flags "); puthex(flags); puts1(")\n");
+    }
+    punmap(k.b, k.ml);
+    if (!nrec) die("loadtable: no \\sabin\\ rows");
+    ul ml; long b;
+    u32 *d = (u32 *)pmap(0x80027040, 4 * (2 + 2 * nrec), &ml, &b);
+    for (ul i = 1; i < 2 + 2 * nrec; i++) d[i] = i == 1 ? nrec : rec[i];
+    d[0] = 0x4d4b3541;      /* "A5KM" written last */
     punmap(b, ml);
 }
 
@@ -283,6 +379,8 @@ void cmain(int argc, char **argv)
         puts1("a5kcopy: Backup "); puthex(n); puts1(" bytes at "); puthex(pa); puts1("\n");
     } else if (argc >= 4 && streq(argv[1], "-bkset")) {
         bkset(hex(argv[2]), argv[3], argc > 4 ? argv[4] : "/mnt/setting/Backup.bin");
+    } else if (argc >= 3 && streq(argv[1], "-loadtable")) {
+        loadtable(argv[2], argc > 3 ? argv[3] : "/mnt/setting/Backup.bin");
     } else if (argc >= 3 && streq(argv[1], "-mumin")) {
         mumin_handoff(hex(argv[2]));
     } else if (argc >= 4 && streq(argv[1], "-w32")) {
