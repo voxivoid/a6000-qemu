@@ -208,8 +208,9 @@ Notes:
   ~36 s of emulated time from reset to the `sauu` wait, so the first attempt will likely time out. Sony-PMCA-RE then says
   "run this command again". The second run finds the `SonyMscUpdaterDevice` directly. This is acceptable, but slow
   emulation shows up here.
-* `install` additionally needs the camera's Android side (`ScalarAUsbDlApp.apk`, opened in RE_USB §4.2) and HTTPS, which
-  means a sane RTC/date for certificate checks **[?]**. It belongs in a later milestone.
+* `install -f <apk>` works end to end with no extra model work: the camera's Android side tunnels TLS to PMCA over USB,
+  installs the package and lists it in the Application List; the unset guest date does not break the TLS handshake
+  (`docs/RE_USB_APP_INSTALL.md`).
 * `serviceshell` (not one of the four tools): MSC device → vendor control request `bmRequestType 0x43, bRequest 1, wValue
   0x37FF, wIndex 0xD7AA` → SENSER 054C:0336, 4 bulk EPs, authentication with fixed keys. It needs the libusb-style backend
   (`isinstance(driver, GenericUsbDriver)`), which the socket backend provides.
