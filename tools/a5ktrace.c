@@ -14,6 +14,8 @@
  * "str=N" also prints the C string at r1+N (e.g. osal text messages) for the
  * probes that follow; "s=N" after a "pc=" sets it for that probe only.
  * "r0=" after a "pc=" filters that address on r0 (repeatable per pc: any match).
+ * "ts=1" puts the host wall clock (g_get_real_time(), us) right after the
+ * "A5KT" / "A5KF" tag of every hit line (latency analysis, RE_ENGINE_OOPS).
  * "user=0x<base>" is not supported: user-space addresses must be passed resolved.
  * Output goes to the QEMU log (-D file).
  */
@@ -56,6 +58,14 @@ static int fnstr = -1;        /* "fnstr=K": print the string *(r0 + 4K) */
 static int fnr1s;             /* "fnr1s=1": print the string at r1 */
 static int fnr1w;             /* "fnr1w=N": print N words at r1 */
 static int fnr2w;             /* "fnr2w=N": print N words at r2 */
+static bool tstamp;           /* "ts=1": host wall clock (us) on hit lines */
+
+/* "" or "<host us> " after the A5KT / A5KF tag */
+static char *ts_str(void)
+{
+    return tstamp ? g_strdup_printf("%" PRId64 " ", g_get_real_time())
+                  : g_strdup("");
+}
 static GHashTable *fnset;          /* pc -> FnProbe */
 static gint64 fn_mtime, fn_checked;
 static qemu_plugin_id_t self_id;
@@ -276,9 +286,10 @@ static void hit(unsigned int cpu, void *udata)
             m[k] = rd32(r[1] + 4 * k);
         }
     }
+    g_autofree char *tsv = ts_str();
     g_autofree char *s = g_strdup_printf(
-        "A5KT cpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
-        "[%s] t=%08x m=", cpu, probes[i].pc, r[0], r[1], r[2], r[3], lr, comm,
+        "A5KT %scpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
+        "[%s] t=%08x m=", tsv, cpu, probes[i].pc, r[0], r[1], r[2], r[3], lr, comm,
         task);
     GString *g = g_string_new(s);
     for (int k = 0; k < nwords; k++) {
@@ -308,9 +319,10 @@ static void fn_hit(unsigned int cpu, void *udata)
     f->hits++;
     uint32_t r0 = rd_reg(cpu, 0);
     GString *g = g_string_new(NULL);
+    g_autofree char *tsv = ts_str();
     g_string_printf(g,
-        "A5KF cpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
-        "n=%d %s", cpu, f->pc, r0, rd_reg(cpu, 1),
+        "A5KF %scpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
+        "n=%d %s", tsv, cpu, f->pc, r0, rd_reg(cpu, 1),
         rd_reg(cpu, 2), rd_reg(cpu, 3), rd_reg(cpu, 14), f->hits, f->label);
     if (r0 >= 0x1000) {
         if (fnwords) {
@@ -516,6 +528,8 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
             fnr1w = atoi(argv[i] + 6);
         } else if (!strncmp(argv[i], "fnr2w=", 6)) {
             fnr2w = atoi(argv[i] + 6);
+        } else if (!strncmp(argv[i], "ts=", 3)) {
+            tstamp = atoi(argv[i] + 3) != 0;
         } else if (!strncmp(argv[i], "fnr1s=", 6)) {
             fnr1s = atoi(argv[i] + 6);
         } else if (!strncmp(argv[i], "fnstr=", 6)) {

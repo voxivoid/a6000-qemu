@@ -88,10 +88,16 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
 ```
 - Transfers use stock busybox only (`stty raw` + `cat`, ~50 KB/s) and are checked with md5. Push targets outside `/android`
   are refused (needs `--force`); `/android` is a tmpfs, so pushed files are lost at power-off.
+- Keep the shell socket drained: UART output is written with `qemu_chr_fe_write_all()`, so a client that stays connected
+  but stops reading blocks the vCPU that prints (with the BQL held) and with it the whole machine. Leave `a5kshell.py`
+  running (it keeps reading) or disconnect.
 - Other machine options: `console=ttynull|ttyAM1|ttyAM0`, `debug-console=on` (= `console=ttyAM1`; with `run.sh`:
   `A5K_DEBUG_CONSOLE=1` puts it on stdio). Without `shell-socket=` UART2 is the third `-serial`
   (`-serial null -serial null -serial tcp:...`). `console=ttyAM0` (`A5K_DEBUG_CONSOLE=ttyAM0`) is for early-boot logs only:
   UART0 belongs to av-cam's monitor and the UI does not start.
+- Host load: do not run the emulator at background priority (e.g. `taskpolicy -b`) or many instances on one busy host.
+  A starved guest CPU0 exposes a firmware race that real hardware never hits (kernel oops `PC is at 0x4394aa4c`, task
+  `liro-kliro_113`; open, `docs/RE_ENGINE_OOPS.md`).
 - The firmware's idle power save turns the camera off after about 5 minutes without key input (VM suspended until the
   power lever `O`, `S`/`M`/`P` or HMP `system_wakeup` powers it on again); the shell session and `/android/a5k` are
   lost. `a5kshell.py` reports this (exit status 3). Send a harmless key over HMP now and then, or work

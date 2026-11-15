@@ -311,3 +311,53 @@ by UI work.
 * [?] Whether the GLES driver tolerates an asynchronous GPU completion (§5.2).
 * Not related but seen: in steady shooting mode the Sync sequences run 2–4 times per second, every frame only during
   start-up and after mode changes. Whether the real camera runs them every frame was not checked.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 7. Implementation notes (code agent, QEMU branch `cpusync`)
+
+> **Status:** the `cpusync` branch was **not merged**: it did not prevent the oops (premise below does not hold), so the
+> emulator has no `cpu-sync` option. Only the `tools/a5ktrace.c` `ts=1` option and the README host-load caution were kept.
+> The branch is archived as `cpusync` in the local qemu tree for reference.
+
+Implemented: §5.1 as specified (`hw/misc/cxd90014_cpusync.c`, gates in `cxd90014_vph.c` SYSV V and
+`cxd90014_evsel.c` comparators / free-running frame, machine property `cpu-sync`, default on), §5.3 README notes,
+§5.4 `tools/a5ktrace.c` option `ts=1`. Not done: §5.2 (the precondition "the driver never polls status right after
+the kick" is not established; RE_DISPLAY_GPU §2 shows IRQ waits through ioctl 3, but whether `rm_*` polls `+0x34` or
+PSC `+0x1C` bit1 directly was not checked).
+
+Mechanism: per event one `async_run_on_cpu()` item on every vCPU; the last acknowledgement (vCPU thread, BQL)
+delivers. Halted vCPUs are woken by the kick and acknowledge; paused vCPUs (suspended "off" state, reset) still run
+queued work (`cpu_thread_is_idle()` is false while work is queued), so the gate never deadlocks. Generation numbers
+drop stale acknowledgements on device reset and on comparator re-arm. Trace events `cxd90014_cpusync_fire`
+(request → delivery delay) and `cxd90014_cpusync_ack` (per vCPU: halted, thread CPU time, pass).
+Optional V pacing `-global cxd90014-vph.cpu-sync-pace=N` (default 0): a busy vCPU must also have had N % of the frame
+as host CPU time of its thread since the previous V.
+
+**Acceptance result: the oops is not fixed.** Host load average 20–31 (other agents), 3–4 instances in parallel,
+`taskpolicy -b` after the shooting screen, §2 cycles × 20, probe file of §2 plus `438949aa job_st` / `438949ae job_end`:
+
+| build / setting | runs | oops (`PC is at 0x4394aa4c`, `LR 0x437dee4d`, task 113) | runs with stale kicks |
+|---|---|---|---|
+| plain barrier (`cpu-sync=on`) | t1–t3, d1–d3 | 1 (t2, kernel 116.9 s, r4 = `43dcbb54`) | 3 of 6 (up to 3 per run) |
+| `cpu-sync=off` (same binary) | toff1 | 0 | 1 |
+| barrier + pacing 50 % | e1–e3 | 2 (e2, e3) | 2 of 3 (up to 10 per run) |
+
+Why the barrier does not help here (d3, `cxd90014_cpusync_ack` statistics over the throttled phase): vCPU0
+acknowledges every event at once and is **never halted** (0 of 689–2046 acknowledgements per 10–30 s window; 36 %
+halted before throttling), its thread gets 23–33 % of a host core, the other vCPUs are halted about half the time.
+So vCPU0 is not descheduled; guest CPU0 is saturated. Task 113 ran its last jobs at 54.156 s and none until 75.5 s
+while four kicks stayed queued; three objects were reused meanwhile. A `sample` profile (named threads) shows vCPU0
+in translated code and GIC CPU-interface accesses, not in `smaph_write`. With 50 % pacing the V rate dropped to
+~5/s and vCPU0 got ~1.9 s of host CPU per second of engine time (0.5 s unthrottled), and CPU0 still never went idle,
+so its load is not driven by the engine events alone [? probably the OS/ITRON timers on QEMU_CLOCK_VIRTUAL; HMP PC
+samples of CPU0 after the cycles: `hwtimer_read_clock_cpu`, `sched_clock`, `__irq_svc`, `cpu_v7_do_idle`]. The §5.1
+premise ("a starved vCPU0 thread") does not hold for the background-QoS reproducer; a fix has to keep guest time
+from outrunning a saturated vCPU in general (e.g. pace QEMU_CLOCK_VIRTUAL itself), which needs new RE/design.
+
+Regression with the barrier on (pacing 0): cold boot to the shooting screen, MENU, PLAY ("no memory card"), shutter
+half press back to shooting all work; idle power save suspended the VM ~5 min after the last key and `sendkey o` twice
+powered it on to the shooting screen. Time to the shooting screen equal to `cpu-sync=off` in paired runs (18.6 s /
+18.6 s, 2 s polling resolution). Request → delivery delay unthrottled: median ≈ 0.1–2 ms. One boot of the paced build
+(not repeated) hit `kernel BUG at .../grm_ma/dmm_if.c:281` at kernel 3.56 s [? unrelated flake or timing; not seen in
+the ~14 other boots].

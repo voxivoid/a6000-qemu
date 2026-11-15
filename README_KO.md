@@ -119,9 +119,14 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
 ```
 - 전송은 순정 busybox만 쓴다(`stty raw` + `cat`, 약 50 KB/s). md5로 확인한다. `/android` 밖으로의 push는 거부한다(`--force`
   필요). `/android`는 tmpfs라서 push한 파일은 전원이 꺼지면 사라진다.
+- 셸 소켓은 계속 읽어 줘야 한다: UART 출력은 `qemu_chr_fe_write_all()`로 쓰므로, 연결만 해 두고 읽지 않는 클라이언트가 있으면
+  출력하는 vCPU가 (BQL을 쥔 채) 막히고 머신 전체가 멈춘다. `a5kshell.py`를 계속 띄워 두거나(계속 읽음) 연결을 끊는다.
 - 기타 머신 옵션: `console=ttynull|ttyAM1|ttyAM0`, `debug-console=on`(= `console=ttyAM1`; `run.sh`에서는 `A5K_DEBUG_CONSOLE=1`
   이면 stdio로). `shell-socket=` 없이 쓰면 UART2는 세 번째 `-serial`이다(`-serial null -serial null -serial tcp:...`).
   `console=ttyAM0`(`A5K_DEBUG_CONSOLE=ttyAM0`)은 초기 부팅 로그 전용: UART0는 av-cam 모니터 포트라서 UI가 뜨지 않는다.
+- 호스트 부하: 에뮬레이터를 백그라운드 우선순위(`taskpolicy -b` 등)로 돌리거나 바쁜 호스트에서 여러 개 띄우지 않는다. 게스트
+  CPU0이 굶으면 실기에서는 드러나지 않는 펌웨어 경합이 드러난다(커널 oops `PC is at 0x4394aa4c`, 태스크 `liro-kliro_113`;
+  미해결, `docs/RE_ENGINE_OOPS.md`).
 - 키 입력 없이 약 5분이 지나면 펌웨어의 유휴 절전이 카메라를 끈다(전원 레버 `O`, `S`/`M`/`P` 또는 HMP
   `system_wakeup`으로 다시 켤 때까지 VM suspended). 셸 세션과 `/android/a5k`는 사라진다.
   `a5kshell.py`는 이를 알려준다(종료 코드 3). HMP로 가끔 무해한 키를 보내거나, 그 시간 안에 작업한다.
