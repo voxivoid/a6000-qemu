@@ -588,3 +588,246 @@ Observed order (probes, ~20 s wall clock in total):
   -ex 'set *(unsigned char*)0x43E62C16=1' -ex 'set *(unsigned char*)0x43E62C73=1' -ex detach`.
 * Pitfall: a gdb **watchpoint** session on this machine (two watchpoints, plugin loaded) hung QEMU's main loop
   (monitor and gdb stub dead, SIGKILL needed). Use plugin probes and plain memory reads/writes instead.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## Off kinds, restart decision and the power lever
+
+Closes open question 2 of §6 ("SIO frame offsets"), the restart part of §4.4, A.8 question 5, and the RE_GUEST_SHELL §9
+"off kind" question. Static RE: upm.ko (`re/ida/kmod_i2cgrp/upm.c`), libObj (`re/ida/libObj.so.c`), av-cam (IDA 9.4 +
+Hex-Rays on a private copy of `poff\po.i64`, disassembly where Hex-Rays lost globals). Dynamic RE: binary `aaef48c`,
+pristine NAND clone per run, no SD, `-M poff=off`, `a5ktrace` `fn=` probes, HMP `xp`, gdb memory writes only:
+* **k2, k4**: boot to the shooting screen, then the power lever is moved to OFF by a diagnostic gdb write to av-cam's
+  CAkey1 parser (`43AC73B2`: `LDRB R3,[R1,#0x1C]` (0x7F0B) → `MOVS R3,#0` (0x2300), i.e. slot-A RX byte 28 reads 0;
+  diagnostic only, the board has no lever binding yet).
+* **k3**: boot to the shooting screen, no input, idle power save at ~316 s uptime.
+* Factor-13 frames: the `code-poff` runs of the §4.4 correction (USB `updatershell`).
+
+`[?]` = not proven.
+
+### B.0 Result
+
+| Question | Answer |
+|---|---|
+| Restart vs stay off | **Slot-A TX byte +0x15** = the upm next-boot code as av-cam re-encodes it: **0x20 (32) = power the SoC up again, 0x21 (33) = stay off** (0x1F = 31 also possible, see B.1). Valid when **+0x13 bit 0 = 1**. +0x20 bit 0 is not a restart flag: +0x1F..+0x21 are the **wake-source masks** the micro must keep armed while off. |
+| APO (factor 8) | warm (type 27) off, next boot 33 → +0x15 = **0x21 stay off**, wake mask **81 FF FE** (many keys). |
+| SWITCH_MODE (factor 13) | cold off, next boot 32 → +0x15 = **0x20 restart**, mask 00 01 81. |
+| Power lever OFF (factor 7) | upm end data factor **7 (OFF_BY_KEY)**, **warm**, restart 0 → +0x15 = 0x21 (static), wake mask **81 81 81** (k2/k4, probed). In the emulator the off then **stalls in av-cam** (B.5); not a board issue. |
+| Power lever input | **Slot-A RX byte 28 bit 0** (CAkey1 bit 0), **1 = lever ON, 0 = lever OFF** (input.ko keycode 0x0002 POWER is "pressed" while the bit is 0). It is a two-position slide switch (`BF_KEY_POWER_SLIDE`), not a push button. |
+| Power-on reason | Hand-off **+0x4C = 7** (the snapshot value) means "reason = bit mask in Backup **0x510013**"; bit 0 = POWER_SLIDE. The NAND Backup.bin already holds 0x510013 = 1, so the existing cold boot already looks like "power-on by the lever". |
+| Other wake sources | After APO the micro also wakes on other keys (BF keys RELEASE/MENU/PLAY/LENS/MEDIA/USB "…_APO"); USB VBUS can power on into the USB-charge boot mode [?]. No RTC alarm wake found. |
+
+### B.1 From upm to the frame
+
+1. **upm.ko `k_upm_snd_hcrn_ura`** (0x10348), on I_INV_CMP, from the strongest pending off factor
+   (`dword_14D60` factor, `dword_14D64` type, `dword_14D68` next boot):
+   * `apo` = 1 if `is_APO_off_factor` (factor 8 or 9) or factor ∈ {7, 35, 36, 37, 38}, else 0;
+   * `warm` = 0 for type 28 (and `"dpd,dpd"` to `ddr_ctrl` unless factor 39), 1 for type 27;
+   * next boot 32 → restart 1 kind 0; 34 → restart 1 kind 1; 35/36/37/38 → restart 1 kind 2/3/4/5; **anything else
+     (31, 33, …) → restart 0** kind 0.
+2. **`k_upm_snd_front_enddata(apo, warm, restart, kind, factor)`** (0x10224), sync message to av-cam queue 0x28023B:
+   `[0] = 1, [1] = 0 (flags), [3] bits 0-1 = apo, [4] bit 0 = warm, [6] bit 0 = restart, [7] = kind, [8] = factor`.
+   Probed at the av-cam handler **`43AC7002`** (r0 = message):
+   ```
+   k2 lever:  01 00 00 01 | 01 00 00 00 | 07 ..    apo 1, warm 1, restart 0, kind 0, factor 7
+   k3 APO:    01 00 00 01 | 01 00 12 00 | 08 ..    apo 1, warm 1, restart 0 (0x12 & 1), kind 0, factor 8
+   ```
+3. av-cam copies it into the task-48 state block (`439157B0` → `dword_43ED44B4`): `43AC675C` +139 = apo, +140 |= 0xC0;
+   `43AC6784` +136 bits 0-1 = 1 cold / 2 warm, +137 |= 1, +138 = msg[5]; `43912560` +135 bit 0 = restart,
+   bits 1-3 = kind, +162 = factor; then marks state item 22.
+4. State item 22 serializer **`4391238C`** (table `0x43ED4858`, run by `43915510`) fills the TX packet
+   (`439157C8` → `dword_43ED42B0`): +203 bit 0 = restart, bits 1-3 = kind (bit 7 is another flag, 1 in every probe);
+   +204 = cold/warm; +205..206 = +137..138; +210 = +169; **+277 = factor**; if +139 == 1 (apo) or factor == 23 it also
+   sets +207 bits 4/5 from packet +16 [? meaning]. It marks **TX item 38**.
+5. The slot-A TX frame (`43915590`): memset 128 bytes, `frame[0] = 0x21`, then for every pending TX item 1..50 the
+   writer at `0x43ED46C0 + 8·item` (frame = `*(0x43E0C9A4)`, PA 0x8338201C), then the CRC at +0x7E. With the slot
+   config mode `byte_43E78A2F & 3` ≤ 1 (live value 1):
+   * **item 38 `439126DC`**: +0x1B |= 0x80, +0x1B bit 0 = 1 warm / 0 cold (packet +204); +0x1C..+0x1D =
+     **`439121A8`(packet +203)**: restart → +0x1D bit 7 = 1 and a 15-bit value {kind 2: 1, 3: 10, 4: 30, 5: 5, else 0}
+     [? delay, unit unknown], returns **32**; no restart → +0x1D bit 7 = 0, value 0, returns **33** (31 when bit 7 of the
+     argument is set and the caller asks, used by item 18 `439124CC`); **+0x1E = factor**; +0x1F..+0x21 = wake mask
+     (B.2); packet +276 = 1, **packet +278 = the return value**; marks TX item 42.
+   * **item 42 `43915AC0`**: **+0x13 bit 0 = packet +276 (off info valid)**, **+0x14 = factor**, **+0x15 = packet +278
+     (32 restart / 33 stay off)**, +0x16..+0x1A = packet +279..+283.
+
+Frame at the p0.10 drop (board dump, slot-A TX "at off"):
+
+| off | +0x13 | +0x14 | +0x15 | +0x1B | +0x1C +0x1D | +0x1E | +0x1F +0x20 +0x21 |
+|---|---|---|---|---|---|---|---|
+| SWITCH_MODE (factor 13, cold) | 01 | 0d | **20** | 80 (cold) | 00 80 (restart, value 0) | 0d | 00 01 81 |
+| APO (factor 8, warm), k3 and RE_GUEST_SHELL r4 | 01 | 08 | **21** | 81 (warm) | 40 8b [?] | 08 | 81 ff fe |
+| lever (factor 7, warm), k2 | (static: 01) | (07) | (**21**) | (81) | 00 00 (probed at `439121A8`) | 07 (probed) | 81 81 81 (probed) |
+
+The APO frame's +0x1C/+0x1D = 40 8B do not come from item 38: the `439121A8` probe in k3 shows argument 0x80
+(restart 0) and +0x1C/+0x1D = 00 00 right after it; the later writer was not found [?]. So **+0x1D bit 7 is not a
+reliable restart flag either; use +0x15.**
+
+### B.2 Wake masks (+0x1F..+0x21)
+
+`439126DC` takes the three bytes from av-cam's slot config, loaded at boot by `439108C4` from Backup subsystem 0x28
+(values from the user's Backup.bin, confirmed live with HMP `xp 0x83E78A9B` in k2):
+
+| factor | source | +0x1F +0x20 +0x21 |
+|---|---|---|
+| 7 (OFF_BY_KEY) | Backup **0x28000D** (`byte_43E78AA3`) | **81 81 81** |
+| in the list Backup **0x28000F** = {8 APO1, 9 APO2, 10 CEC_STB, 11 LANC, 0x28} | Backup **0x28000A** (`byte_43E78A9F`) | **81 FF FE** |
+| any other (13, 15, 16, 23, 31, …) | 0x00, 0x28000D[1] & 0x7F, 0x28000D[2] | **00 01 81** |
+
+Packet +28 bit 3 clears +0x1F bit 7. The bit-to-input mapping inside the masks is not decoded [?]. What is clear: an APO
+off arms far more wake inputs than a lever off, which matches upm's boot-factor names `BF_KEY_RELEASE_APO`,
+`MENU_APO`, `PLAY_APO`, `LENS_APO`, `MEDIA_INOUT_APO`, `USB_APO`, `AFMFSW_APO`, `MOVREC_APO` (`bfkey2str` 0xBA94):
+**after the idle power save the real camera is off but wakes on the shutter button and other keys, not only on the
+lever** [? manual wording not checked; the code supports it].
+
+### B.3 Off causes
+
+| off cause | sender | factor | type (upm) | next boot | +0x15 | +0x1B bit 0 | wake mask | seen |
+|---|---|---|---|---|---|---|---|---|
+| idle power save (APO) | upm `k_upm_mss_apo_cb` (0xA798) `{8, 26, 33}` | 8 | 26 → 27 warm | 33 | 0x21 off | 1 | 81 FF FE | k3, RE_GUEST_SHELL r4/r5 |
+| power lever OFF | libObj (key 0x0002); `ActionReqPowerOff` `56527C` [? caller not probed] | 7 | warm (k2: msg[4] = 1) | not 32..38 (k2: restart 0) | 0x21 off | 1 | 81 81 81 | k2, k4 (stalls later) |
+| SWITCH_MODE (USB updater) | libupdaterufp `{13, 28, 32}` | 13 | 28 cold | 32 | 0x20 restart | 0 | 00 01 81 | code-poff runs |
+| UI "Reset:1" (`ActionRecoveryComplete`) | libObj `sub_319B14(20, 28, 32)` (`307920`) | 20 | 28 cold | 32 | 0x20 restart | 0 | 00 01 81 | static |
+| caution off (`sub_566FF0`) | libObj `(f, 26, 31)` | f | 27 warm | 31 | 0x21 off | 1 | by f | static |
+| battery end / dead | upm `upm_calc_battery_unreg_end` / `_ib_end` `{23 or 31, 28, 33}` | 23 / 31 | 28 cold | 33 | 0x21 off | 0 | 00 01 81 | static |
+| battery invalid / type | upm `upm_seq_battery_type`, `_authentication` `{16, 28, 33}` | 16 | 28 cold | 33 | 0x21 off | 0 | 00 01 81 | static |
+| heat | upm `k_upm_apicb_heat_alert_self_get` `{15, 28, 33}` | 15 | 28 cold | 33 | 0x21 off | 0 | 00 01 81 | static |
+
+Notes: libObj `ActionReqPowerOff` maps app parameters: off type 2 → 27, 3 → 28, absent → 26 (upm `add_off_factor`
+turns anything but 27/28 into 27, and forces 28 when `dword_14D8C` is set); reboot type 1 → 32, 2 → 33, absent → 31
+(`sub_567B14`, `sub_567BAC`). `RebootCold`/`RebootHot`/`ExeColdOff` as in §1.1. Factor names: libObj
+`testSetCautionOffFactor` (7 KEY, 8/9 APO1/2, 13 UPDATE, 15 BATT_THERMAL, 16 BATT_INVALID, 20 SALVAGE, 23 BATT_END,
+31 BATT_DEAD, …).
+
+### B.4 The p0.10 decision rule
+
+On the p0.10 1 → 0 edge the micro acts on the last off data the CPU sent:
+
+```
+latch L = the last slot-A TX frame with frame[0] == 0x21 and (frame[0x13] & 1)   (sticky until power-on)
+if no L:                  stay off                                  [? micro default; never observed]
+elif L[0x15] == 0x20:     power cycle (restart), factor = L[0x14]
+else (0x21, 0x1F, other): stay off, factor = L[0x14], warm = L[0x1B] & 1, wake = L[0x1F..0x21]
+```
+
+Evidence: B.1 (writer chain) and the three frames in B.1. The kind delay in +0x1C..+0x1D (non-zero only for next boot
+35..38) is not used by any off seen; the board may ignore it [?].
+
+### B.5 The power lever
+
+* **Input:** slot-A RX byte 28 bit 0 (av-cam `43AC73AE` copies bytes 28/29 into the task-48 state +24; input.ko
+  front-key entry CAkey1 bit 0, keycode **0x0002 POWER**, condition "bit == 0", debounce 1; RE_INPUT_I2C_POWER §7).
+  Snapshot value 1 = lever ON. The boot-factor table (below) calls the same input `POWER_SLIDE`, so it is a
+  two-position switch: the model must hold the bit, not pulse it.
+* **While on (k2, k4):** with the bit forced to 0 the firmware starts a normal off within a few seconds: upm end data
+  factor 7, warm, restart 0 (B.1), TX item 38 writes wake mask 81 81 81. libObj sends capture-control 0x301C, then
+  CameraBackground's 0x300E; the path from av-cam state 6 runs through state 0x21 (steps `0x43B701C4`, used by 6 → 0x21
+  and 7 → 0x21) and **stalls at step 18 (`0x8201` = wait for module 1)**: module 1 requested 0x0104, response 0x0000;
+  upm stays in state 18 (inacting_im), no TLV 0x0A request, no p0.10 drop. Reproduced in k2 and k4. The idle power
+  save does not take this path and completes (k3). This is an av-cam camera-module gap (module 1 = camera state,
+  RE_LIVEVIEW_REQUEST), a separate RE task [?]; it blocks the "lever off while on" acceptance test, not the board
+  model.
+* **From off:** the real micro powers the SoC up when the lever goes OFF → ON (lever bit set in all three masks; the
+  exact bit is not decoded [?]). With the lever at OFF nothing should wake the camera [? not decoded; a lever-off arms
+  only 81 81 81].
+* **Power-on reason seen by the firmware** (`k_upm_setup_boot_factor` 0xBF88): hand-off +0x4C (via Backup 0xFA0029)
+  selects the format. **+0x4C = 7** (snapshot, and the emulator's ROM blob): Backup **0x510013** is a reason bit mask
+  whose first set bit indexes the table in Backup **0x920046** = `03 14 12 15 11 1A 00 00 10 10 10 13 …`:
+
+  | 0x510013 bit | BF key | | bit | BF key |
+  |---|---|---|---|---|
+  | 0 | 3 POWER_SLIDE | | 4 | 17 RELEASE_APO |
+  | 1 | 20 PLAY_APO | | 5 | 26 POWER_UM_APO |
+  | 2 | 18 MENU_APO | | 8, 9, 10 | 16 MEDIA_INOUT_APO |
+  | 3 | 21 LENS_APO | | 11 | 19 USB_APO |
+
+  Backup 0x920044 = 0x739 marks the "fast EE" bits, 0x920045 = 2 the "boot to playback" bit (PLAY). Other +0x4C values
+  (1, 4, 5, 6) select other formats (4 = wake code from the micro data at hand-off +0x64, 6 = USB) [? which bootloader
+  path writes which]. Backup 0x51000F is the loader boot mode (1 COLD, 2 HOT, … 6 USB_CHARGE, 10 WARM).
+  0x510013/0x51000F are loader-owned props (attr 0x02) that the real bootloader rewrites in the RAM copy of
+  Backup.bin on each boot; the emulator loads Backup.bin from NAND unchanged (`a5kcopy -backup`), which holds
+  **0x510013 = 1 (POWER_SLIDE)** and **0x51000F = 2 (HOT)**.
+* **Warm vs cold:** lever and APO offs are warm (type 27): no `dpd`, DDR stays in self-refresh, and the real camera
+  most likely resumes from the warm-boot image on the next power-on (loader mode HOT/WARM, upm "ON:fast EE(Hot)") [?].
+  The board stands in for the bootloader with a cold boot from NAND (DDR cleared), which the firmware accepts today.
+  A warm resume model is a separate topic.
+
+### B.6 Other wake sources (cheap findings only)
+
+* After APO: the keys behind the `…_APO` boot factors (shutter release, MENU, PLAY, lens, AF/MF switch, movie, media
+  in/out, USB) [? exact mask bits].
+* **USB VBUS:** loader boot mode 6 `USB_CHARGE` (upm "ON:USBJ", RE_USB §2.4: bootin target `usbj`) and
+  `BF_KEY_USB_CONNECT` / `USB_APO` exist, so plugging USB into an off camera powers it up into a charge/USB mode [? not
+  traced].
+* No RTC-alarm or timer wake was found in the off data (the only timer-like field is the kind delay of a restart).
+
+### B.7 Spec for the code agent (`hw/arm/sony_a5000.c`)
+
+1. **Latch the off data.** In the slot-A TX path, when `tx[0] == 0x21 && (tx[0x13] & 1)`, copy `tx[0x13..0x21]` into
+   `s->off_info` (valid flag; reset on power-on). Log once per change:
+   `sony-a5000: sub-micro off data: factor %d, next 0x%02x (%s), %s, wake %02x %02x %02x`.
+2. **Decision on the p0.10 falling edge** (`a5k_poff_line`): machine option `poff=auto|restart|off`, **default
+   `auto`** (`restart`/`off` stay as overrides). `auto`: `off_info[0x15] == 0x20` → power cycle as today
+   (`a5k_poff_cycle`, `A5K_RESET_POWER`); otherwise → **power off**. Replace the old "restart byte 0x20" log.
+3. **Power off = suspended VM.** `info_report("sony-a5000: sub-micro power off (factor %d, %s, wake %02x %02x
+   %02x)")`, then `qemu_system_suspend_request()`. In `RUN_STATE_SUSPENDED` the vCPUs are paused but `ui/input.c`
+   still delivers key events (it accepts RUNNING and SUSPENDED), and HMP stays usable. Keep `s->powered_off = true`.
+   Register a wakeup notifier (`qemu_register_wakeup_notifier`) that, if `powered_off`, clears it, sets
+   `reset_kind = A5K_RESET_POWER` and calls `qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET)` (DDR/IRAM cleared
+   as today). Power-on is triggered with `qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER, NULL)`; HMP
+   `system_wakeup` then also acts as "power on". Do not use `qemu_system_shutdown_request` (the process would exit).
+4. **Power lever = host key `O`** (unused; free keys checked: Enter/KP-Enter, arrows, Delete, Backspace, R, M, P, S,
+   Shift, Space, T, W are taken). Physical state `s->lever_on`, initial **true**, kept across resets (it is a switch).
+   On key-down only, toggle it and set/clear slot-A RX **byte 28 bit 0** (1 = ON) in `s->submicro_frames`, then
+   recompute the CRC (as `a5k_submicro_front_key`). Ignore key-up. Log `sony-a5000: power lever ON|OFF`.
+   * on, lever ON → OFF: nothing else; the firmware powers off by itself (factor 7, B.5);
+   * off, lever OFF → ON: power on (step 3);
+   * off, lever ON → OFF: nothing.
+5. **APO wake keys:** while off with `off_info[0x14]` in {8, 9} (the 0x28000F list; or simply wake mask 81 FF FE) and
+   the lever ON, key-down of **S** (shutter), **M** (MENU) or **P** (PLAY) also powers on [? exact set; minimal
+   choice backed by the RELEASE/MENU/PLAY `_APO` boot factors]. Do not forward that key press to the firmware.
+6. **Hand-off / boot factor:** keep the ROM blob (+0x4C = 7) and the NAND Backup values (0x510013 = 1 POWER_SLIDE,
+   0x51000F = 2): correct for a lever power-on. A shutter/MENU/PLAY wake would set 0x510013 bit 4/2/1 on the real
+   camera; patching the RAM Backup image (stage-1 `a5kcopy`) is optional and not needed for the tests [?].
+7. Comments: cite `439126DC`, `43915AC0`, `439121A8`, upm `k_upm_snd_hcrn_ura`, Backup 0x28000A/0D/0F; mark the
+   mask-bit meaning and the APO wake key set as hypothesis.
+
+### B.8 Acceptance tests
+
+Fresh NAND clone each, binary copied, monitor on TCP, no `poff=` option unless stated.
+
+1. **Idle APO stays off.** Boot to the shooting screen, no input. At ~316 s guest uptime the board logs `sub-micro
+   off data: factor 8, next 0x21 (off), warm, wake 81 ff fe`, `power-off line p0.10 low`, `sub-micro power off
+   (factor 8, …)`. HMP `info status` → `VM status: paused (suspended)`; after 3 more minutes still suspended, no
+   `stage 1 (loader)`.
+2. **Power key boots.** After test 1: `sendkey o` (lever OFF, nothing happens), `sendkey o` (lever ON) → `power lever
+   ON`, `power-on (DDR and IRAM cleared)`, `stage 1 (loader)`, and ~3 min later a `screendump` of the shooting screen.
+   Variant: after test 1, `sendkey s` alone → same power-on (APO wake).
+3. **Power key while on → off.** At the shooting screen `sendkey o` → `power lever OFF`, then `sub-micro off data:
+   factor 7, next 0x21 (off), warm, wake 81 81 81`. **Expected to stop there until the av-cam module-1 stall (B.5) is
+   fixed**; afterwards: p0.10 low → `sub-micro power off (factor 7, …)` → suspended; `sendkey s` does **not** wake it;
+   `sendkey o` (lever ON) does.
+4. **Updater shell still restarts.** `pmca-console updatershell -d socket`, OK with `sendkey ret 600` → `off data:
+   factor 13, next 0x20 (restart), cold` → `sub-micro power cycle (factor 13)` → updater core, as in §5 test 2.
+5. **Overrides.** `-M poff=restart` power-cycles test 1; `-M poff=off` suspends test 4.
+
+### B.9 Open questions
+
+1. Bit meaning of the wake masks +0x1F..+0x21 and the exact APO wake key set.
+2. The writer of +0x1C/+0x1D = 40 8B in the APO frame (not item 38).
+3. av-cam stall on lever off from live view: path 6 → 0x21 step 18, module 1 request 0x0104 never answered.
+4. Who in libObj turns key 0x0002 into the off request (probe `+56527C` / `+319B14` with a libObj base found earlier;
+   the k-runs never resolved the base before the off).
+5. Warm resume after a warm (type 27) off: real power-on is probably HOT/WARM from DDR; the emulator cold-boots.
+6. USB VBUS as a wake source while off (boot mode 6).
+
+### B.10 Reproduce
+
+* Probes (`fn=` file, reload after boot so the caps start fresh): `43ac7002 enddata` (fnwords=4: message bytes),
+  `43912560 set_restart`, `439121a8 restart_enc` (r1 = packet +203, words at r0 = frame +0x1C..), `439126dc tx38`,
+  `43915ac0 tx42`, `43ac73ae cakey1` (r1 = RX frame, words at r0 = CAkey1), `437d9e68 CapconExec`,
+  `43a70f76 PATH_setup` (r1 = from state).
+* Live config: `xp /32xb 0x83E78A9B` (masks and factor list), `xp /8xb 0x83E78A2F` (slot config mode, 0x01).
+* Lever OFF without a board binding (diagnostic): `arm-none-eabi-gdb -batch -ex 'target remote :PORT'
+  -ex 'set *(unsigned short*)0x43ac73b2 = 0x2300' -ex detach` (restore with 0x7f0b).
+* Stall check: `xp /8wx 0x83DC7104` (steps 0x43B701C4, index 0x12), `xp /16xh 0x83DC7120` / `0x83DC7160`, upm state
+  `x/wx 0x3F32E5CC` = 0x12.
