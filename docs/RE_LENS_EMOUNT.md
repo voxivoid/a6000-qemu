@@ -604,3 +604,126 @@ are the remaining work for a real F-number display.
 `-M lens=ekit` builds the `a5k-lens` wired to mdma unit 0 and the GPIO. `a5k-lens` props: `power-class` (block 7
 `[1]`, default 1), `drive-mode` (block 9 `[1]`, class-2 only). `-global a5k-lens.power-class=2` was exercised
 (class-2 path through `436B7E5C`): the init sequence is identical (the firmware still reaches state 0x05).
+
+---
+
+## 11. Aperture (F-number) source + encoding (2026-11-16)
+
+Goal: let Track B read the **live lens aperture** so the native shooting OSD
+(`app/native/uicore/src/ui/screens/shooting_osd.cpp`, the `if (s.apertureX100 > 0)` branch)
+shows a real "F2.8" instead of the "F--" placeholder (§10.3). Method: static RE of the repo's
+device-RE ledger plus one **device-verified** SDCom capture (no new device or QEMU runs). Facts
+carry evidence; `[?]` = unproven.
+
+### 11.0 Answer in one line
+The live F-number for the OSD is **candidate (a): an SDCom camera parameter** — **param id 267**,
+returned by message **0x1002 (CameraGetParameters)** as an **Int**, encoded as **F × 100**
+(e.g. 180 → F1.8). This is already device-measured. The emulator path is **candidate (c)** (the
+lens-serial frame), and is still the undecoded piece (§11.5).
+
+### 11.1 Source (a) — SDCom param 267, device-verified
+* **Evidence (real a5000, fw 1.10):** `re/NOTES.md` §10.8 "카메라 설정 조회 (CameraGetParameters
+  0x1002) — 실기 성공". With the body set to M / AF-S / 1/640 / **f/1.8** / EV0 / ISO200, the 0x1002
+  reply (116 params) contained **`267 = 180` (= f/1.8)** and `268 = [1,640]` (= 1/640). Logged in
+  `re/scalar/camera_params.tsv:12` (`267  <no name>  180`) and `268  <no name>  [1,640]`.
+* **Message:** `0x1002 CameraGetParameters` (`re/scalar/message_ids.tsv`; 146-id table, NOTES §9/§10).
+  Queue/component = the standard SDCom path `connect(0x1540432, 2)` (TRACKB_RUNTIME; NOTES §10.7).
+* **Param type:** Int (SDCom getType == 1). Read with `getFirstParam/getNextParam(msg, true)` then
+  `SDComMsgIntParam::getData()` = the int at object `+0x0c` (object size 0x10; NOTES §10.9 rule 1,
+  `camera_sdcom.cpp:47`). 267 is a scalar Int, not an array (contrast 268 = IntArray type 5).
+* **Name table:** `CommandProcessorCameraSetParameters::s_ADParamKeyConvTable` (20-byte rows:
+  {id, internal-key, type, idx, value-table symbol}; NOTES §10.8). 267 has **no internal key / no
+  value table** in that table (hence it is a raw engine-reported value, not a menu enum). That is why
+  a grep for "aperture" misses it — it is id-only.
+* **Ownership:** NOTES §10.8 — **no ownership check**. If the camera is open (global ParameterEntry
+  state 1 or 2, which the stock shooting screen holds), any SDCom client may query 0x1002. A second
+  client (our UI) can read it with ILCE Remote / the stock app still running.
+* **Already wired into the UI model:** `app/native/uicore/src/model/catalog_gen.cpp:123`
+  `{ SET_APERTURE, "aperture-x100", 267, SK_RO_INT, 0,0,0,0 }` and `:124` `{ SET_SHUTTER,
+  "shutter-speed", 268, SK_RO_ARR2, … }`. The model already expects param 267 as a read-only int and
+  routes it to `CameraState::apertureX100`. The piece that is **missing** is the adapter read (§11.3).
+
+### 11.2 Encoding — raw int = F × 100 (no APEX)
+* **Formula:** displayed `F = apertureX100 / 100.0`. The engine returns the human F-number ×100
+  directly; there is **no** `2^(av/2)` APEX conversion to do on our side.
+* **Evidence:** measured `267 = 180` at a known **f/1.8** (NOTES §10.8). 180 / 100 = 1.8. The OSD
+  already decodes exactly this (`shooting_osd.cpp:347`): `a%100==0 → "F%d"` else `"F%d.%d", a/100,
+  (a%100)/10`. So 280 → "F2.8", 400 → "F4", 320 → "F3.2". No sign, always > 0 when valid; 0 = unknown
+  (hide F), which matches `camera_state.h:40` `apertureX100  // 0 unknown (e.g. 180 = F1.8)`.
+* Any APEX→F conversion happens **inside av-cam** before it populates param 267 (the lens reports in
+  its own units over the serial link; av-cam converts). Our adapter consumes the already-converted
+  F×100, so it needs no table. `[?]` The exact av-cam conversion is not needed for the device adapter;
+  it only matters for the emulator (§11.5).
+
+### 11.3 Read recipe for the native Track-B adapter
+Target: `app/native/platform/a5000/camera_sdcom.cpp`. Today `SdcomCamera::readInfo` only fetches the
+two side-effect-free M0 values (0x000d firmware ver, 0x0009 system state); `readState()` falls through
+to the base default (`platform.h:68`, returns false), so `apertureX100` stays 0 and the OSD shows
+"F--". Implement `readState()` as a 0x1002 query that reuses the existing `getInts`-style loop:
+
+1. Precondition: `connected_` and the camera is open (ParameterEntry 1/2). On the stock shooting
+   screen it is already open; our own `0x1000 OpenCamera` is the M1 step and is **not** needed just to
+   read. Do **not** send OpenCamera from the read path (it changes engine state; keep M0 read-only).
+2. Build `SDComMsgUtil::createNewMessage(0x1540432, SDCOM_MSG_REQUEST, tx)`,
+   `setMessageId(msg, 0x1002)`, `sendSync(msg, &rep, 5)` (same shape as `getInts`, `camera_sdcom.cpp:88`).
+3. Iterate params (`getFirstParam/getNextParam(rep, true)`, delete each copy). For the Int params
+   (`getType()==1`): **id 267 → `apertureX100 = getData()`** (already F×100, store verbatim).
+   Also id 266 → EV, 269 → ISO, 263 → exposure-mode, etc. (catalog_gen ids).
+4. For **id 268** (shutter): it is an **IntArray (getType()==5)**, a `[num, den]` pair, not an Int —
+   the current `getInts` loop drops type!=1, so shutter needs the array accessor (out of scope here,
+   but note it so aperture and shutter land together).
+5. Brick-safety (CLAUDE.md §1, NOTES §10.9): object sizes statically checked (`SDComMsgIntParam`
+   0x10), disconnect in the crash handler, `SD_DRYRUN=1` dry pass first. 0x1002 is a pure read, so it
+   is runtime-only / reboot-safe; no Backup.bin, no flash.
+* **Latency note:** values settle asynchronously after a *shift* (0x1019/0x101a) — ~2 s, poll 0x1002
+  (NOTES §10.10). For passive live-view display there is nothing to wait for: just poll 0x1002 at the
+  OSD refresh rate and show the latest 267.
+
+### 11.4 Alternatives (b)/(c) and why (a) wins for the device
+* **(b) im.elf engine memory offset** (the [[mf-focus-distance]] +148 precedent). The 0x1002 reply is
+  av-cam reading its own `ParameterEntry` store; the F×100 lives in that engine object too, so a
+  focusmem-style read-only peek is *possible*. But it needs an object-resolution + offset that is **not
+  decoded**, carries pointer-chase risk, and is strictly worse than (a), which is device-verified and
+  already modelled in the catalog. Use (a); keep (b) only as a fallback if an SDCom client cannot
+  connect. `[?]` offset unknown.
+* **(c) E-mount lens-serial byte.** The lens reports aperture over UART1 in the §3/§9 frame
+  (blocks 7 "lens info" and periodic 5/6). This is the **ultimate** source, but the aperture byte
+  layout is undecoded (§9.5, §9.8 Q5) and on a real body the adapter should never parse the raw lens
+  link — av-cam already does that and exposes the cooked value as param 267. (c) matters only for the
+  **emulator** (§11.5), where av-cam itself runs and needs the lens to feed it bytes.
+
+### 11.5 Emulator lens-model spec (for a follow-up code agent — do NOT implement here)
+Why the emulator can't reuse (a) directly: in QEMU the **real av-cam runs**, so param 267 is only
+populated if the emulated lens feeds av-cam the aperture over the serial link. `cxd90014_lens.c`
+currently zero-fills blocks 7/8/5/6 (deliberately, to avoid `LENS FIRMERR`; §10.3), so av-cam has no
+aperture and 0x1002 returns 267 = 0 / "F--". To make a mounted virtual lens report a plausible F:
+
+1. **Decode the aperture field first (open RE, §9.8 Q5).** With the §9.1 timer fix + §9.4 mdma
+   peripheral mode already in place, capture each body request (gdb on `43993bd4`, dump PA
+   0x83CC70B0) while replying minimally, and trace which bytes of **block 7** (lensInfo+33, 35 B) and
+   the **periodic type-1 blocks 5/6** (focus/zoom/aperture status) av-cam reads when it computes
+   param 267. Expected: a fixed min/max-F in block 7 (lens capability) and the **current av** in the
+   periodic 5/6 frames. The lens most likely reports **APEX av** (av-cam converts av→F×100); confirm
+   the unit by setting one known byte and reading back 267 over SDCom in the emulator.
+2. **Populate it in `cxd90014_lens.c`.** Add an `aperture` (and `focal-length`) property to
+   `a5k-lens` (alongside `power-class`/`drive-mode`, `lens_props`), fill the decoded offset in
+   `lens_put_block` for block 7, and — the harder half — start emitting the **periodic type-1
+   Info1/Info2 frames** (blocks 5/6) that §10.3(b) says were never seen after startup. Those are
+   VD-driven; the emulator has no live-view ISP VD, so the lens model must synthesize them on a timer
+   (or on each 0x1002) so av-cam keeps a current aperture.
+3. **Fidelity guard:** a wrong value risks `LENS_TYPE_UNKNOWN` / `LENS FIRMERR` (§9.5) — only set
+   bytes whose consumer is confirmed; keep block 7 [1]=power-class, [2]bit1=0, [5]=0 as they are.
+4. Then host/emulator OSD testing can verify the full chain lens-frame → av-cam → 0x1002 param 267 →
+   `apertureX100` → "F2.8". (On the host-only build, `fake_camera.cpp` already fakes 267 via
+   `A5K_FAKE_APERTURE`, so the UI path is testable without any lens model.)
+
+### 11.6 Confidence
+* 267 = aperture, 0x1002, Int, F×100, device-measured 180=f/1.8: **high** (NOTES §10.8 실기 성공,
+  `camera_params.tsv`, catalog_gen).
+* "no ownership check, read while stock app open": **high** (NOTES §10.8).
+* OSD decode `F = x100/100`: **high** (shooting_osd.cpp source).
+* Adapter recipe (readState via 0x1002): **high** for aperture Int; **medium** for shutter 268
+  (needs IntArray accessor, not yet in `getInts`).
+* (b) engine-memory offset exists but offset unknown: **low**.
+* (c) emulator: lens frame carries aperture — **high** that it does; the **byte offset/unit is
+  undecoded** — **low/`[?]`**. Periodic 5/6 emission in the emulator is unbuilt.
