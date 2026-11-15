@@ -53,7 +53,7 @@ Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M
 | `Shift+T` / `Shift+W` | zoom lever tele / wide (fast) | same channel, level 162 / 301 (value 2 / 0x8002) |
 | — | control wheel rotation | not wired yet (av-cam JogTpu counter) |
 
-Keys are also accepted from the HMP monitor: `sendkey ret`, `sendkey down`, `sendkey m`, ...
+Keys are also accepted from the HMP monitor: `sendkey ret 300`, `sendkey down 300`, `sendkey m 300`, ... Hold keys for about 300 ms: av-cam samples the buttons only every ~43 ms of guest time, and the default 100 ms press is often missed.
 QEMU's own hot keys: Ctrl+Opt+G releases the mouse, Ctrl+Opt+1 / 2 switch between the panel (console 0) and the debug frame-buffer view.
 Keys pressed in the first ~20 s after the first-boot dialog appears are ignored by the firmware (input service not active yet).
 

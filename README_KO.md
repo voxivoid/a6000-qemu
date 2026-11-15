@@ -87,7 +87,7 @@
 | `Shift+T` / `Shift+W` | 줌 레버 망원 / 광각 (고속) | 같은 채널, 레벨 162 / 301 (값 2 / 0x8002) |
 | — | 컨트롤 휠 회전 | 아직 미연결 (av-cam JogTpu 카운터) |
 
-HMP 모니터에서도 입력 가능: `sendkey ret`, `sendkey down`, `sendkey m`, …
+HMP 모니터에서도 입력 가능: `sendkey ret 300`, `sendkey down 300`, `sendkey m 300`, … 키는 약 300 ms 눌러야 한다: av-cam은 게스트 시간으로 약 43 ms마다만 버튼을 읽어서, 기본 100 ms 입력은 자주 놓친다.
 QEMU 자체 단축키: Ctrl+Opt+G = 마우스 해제, Ctrl+Opt+1 / 2 = 패널(console 0) / 디버그 프레임버퍼 화면 전환.
 첫 부팅 대화상자가 뜬 뒤 약 20초 동안 누른 키는 펌웨어가 무시합니다(입력 서비스가 아직 비활성).
 
