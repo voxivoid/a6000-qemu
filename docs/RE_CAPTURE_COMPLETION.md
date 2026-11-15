@@ -467,3 +467,78 @@ Provenance: `sub_4355C3A8`/`0x439B1946` (udiv + div0), `sub_437904F8`/`sub_43790
 `sub_4385B90C`/`sub_43A7B9A6` (Stage_OPD consumer), `sub_4377DEB4`/`sub_43785F24` (producer pipeline + 1188-byte
 memcpy), `cxd90014_opd.c`/`cxd90014_idt.c` headers ("no data is moved"). Hypotheses marked `[?]`/`H`: the exact
 `rec+0x3844` store, the on-chip-table-vs-DRAM sink, and the result magnitudes.
+
+### 5. Sink confirmation (watchpoint, 2026-11-16)
+
+Runtime follow-up to pin where `opd_done()` must deposit the per-zone data. Method: fresh NAND COW clone, `run.sh`
+with `-monitor`/`-gdb`/`A5K_SHELL`, boot to the shooting screen (~160 s), `arm-none-eabi-gdb` on the stub +
+HMP `xp`. No flash writes; emulator only. Two boots (b1, b2). `[?]` = not proven.
+
+**What was confirmed**
+
+1. **The consumer reads the divisor from DRAM, not from MMIO.** The trapping divide `0x4379067a` loads the divisor
+   with `0x43790674 LDRH R1,[R7]`; at the capture, `R7 = rec+0x3844` (= FOPDctx `rec+0x3658` + 0x1EC), a DRAM
+   **capture-record** address. The still-capture record is a heap object at `0x9cab….` (the oops `rec = 0x9caafe00`),
+   **distinct** from the live-view/default engine record (b1: `sub_43A59C60` → `rec = 0x43dcbb54`, in the av-cam
+   image region; note `0x43dcbb54` is the same record as the `RE_ENGINE_OOPS.md` task-113 engine context). So
+   `opd_done()` **cannot** write where the consumer reads — the data must flow HW → harvest → develop context →
+   global → capture record.
+2. **The 99-zone grid is zero everywhere, because no OPD per-zone results exist.** b1, shooting screen, idle record
+   grid `rec+0x3844`: `div=0x0000 dvd=0x00000000`. Global grid source `unk_43D995B4+0x820` (fixed VA **0x43D99DD4**):
+   `0`. b2, live view, break at the producer first stage `sub_43780DD8` (`a1=ctx 0x43d94d84`, `a2..` = the static
+   param tables `0x43d98cd4`, `0x43d11200`, `0x43d979fc`): `unk_43D995B4+0x820` is `0` **before and after** the call
+   — the pipeline leaves the grid source zero in live view (the 99-zone metering only fills it during a still
+   capture [?]).
+3. **The OPD result area is empty.** b1/b2 HMP `xp`: `0xF3031000..0x100C = 0`; `0xF3031090 = 0`, `0xF3031094 = 0`
+   (per-zone count / validity, the gate of the area path — see §2 static note below); `0xF3031098 = 0x11d49f00`,
+   `0xF303109C = 0x11d4a000` (OPD working-buffer **bus** addresses, IIB bus `0x11xxxxxx`, config not results);
+   `0x9EC00000 = 0x91130aaa "ZITTOOLS…"` = the static `sa_dfdet.bin` loaded by `loader.sh -loadtable`, **not**
+   runtime detection output. So every per-zone `count` the develop stage divides by is 0.
+4. **`sendkey o` is power-OFF, not a capture.** The lever-off key powers the guest down (`info`: sub-micro
+   `next 0x1f (off)`, shell dies); the producer pipeline `sub_4377DEB4` is seen running (it also runs every live
+   frame, ctx `0x43d94d84`) but no `EnterCap`. The **gate-3 divide is only reached by a real shutter capture** (SD +
+   *Release w/o Lens*, `RE_LENS_EMOUNT §6`), which was **not** driven to the trap in this budget — so the final
+   harvest step was not observed live (see the open experiment below).
+
+**Static note on the per-zone count.** In the OPD read family, `sub_4396C18C` computes a per-window count as
+`((x1+1-x0)*(y1+1-y0)) >> 2` (detection-window **area / 4**) from window coordinates in `&unk_43E1C46C`, taken
+**only when `MEMORY[0xF3031090] == 0`** (else the hardware-reported value is used). So `count` is a
+detection-window pixel count: it is 0 when the window geometry is degenerate **or** when the hardware path is
+selected and the hardware reports 0. The 99-zone grid producer `sub_43780DD8` does not compute area itself — it
+**copies** the per-zone fields from a source buffer (`v333[…]`, a develop context), so the count originates one
+level further up, in the OPD result harvest.
+
+**Conclusion / remaining ambiguity.** The grid is zero because the OPD block produces no per-zone detection data
+(the model `cxd90014_opd.c` moves none). The firmware harvests those results from the OPD result area — the on-chip
+register/table region **0xF3031000..0xF30317FF** (cleared pre-pass by `436ADB78`, read by `sub_4396BA6C` /
+`sub_4396C18C` `0xF3031090/94`, `sub_439AE6FC` `0xF3031168`, `0xF30313F0..3FC`, …) and/or an OPD DMA output buffer
+on the IIB bus (the `0x11d4….` pointers in `0xF3031098/9C`, and the develop output at bus `0x1EC00000` = CPU
+`0x9EC00000`). **Which of the two the 99-zone {count,sum} harvest reads is not pinned** (the shutter capture was not
+reached), so the exact sink is still `[?]` between:
+* **(a) on-chip OPD result table 0xF3031000..0xF30317FF** — the per-zone count/validity at `0xF3031090/94` and the
+  result registers; this is the `opd_done()` sink if the harvest reads MMIO.
+* **(b) an OPD DMA output buffer in DRAM** at the bus address `0xF3031098/9C` program (`0x11d4…`, CPU address to be
+  resolved) — this is the sink if the harvest reads a DMA'd buffer.
+
+**Open experiment for the follow-up RE/code agent (the one step left).** Drive a real shutter capture to the divide
+(SD image via `tools/mksd.py`; enable *Release w/o Lens* with `sendkey m 300` menu navigation, `RE_LENS_EMOUNT §6`;
+`sendkey shift-s 500`). At the shooting screen set, in order: a breakpoint at `sub_4396C18C`/the OPD harvest family
+and at `sub_43780DD8`; when the capture runs, record the **source operand** of the loads that fill the per-zone
+`count` — its address resolves (a) vs (b). Also HMP `xp 0xf3031000`/`0x11d49f00`/the F30317C0 output during the pass
+to see which region the model would need to fill. gdb hardware watchpoints on `rec+0x3844` are usable once `rec` is
+read at the divide (`R4`), but the record is a per-capture heap object, so set it only after the capture's `rec` is
+known. (Note: `commands … continue` auto-continue blocks combined with a hardware watchpoint desynced this gdb/stub
+— use plain breakpoints or the `a5ktrace` plugin for ordering.)
+
+**Refined fix spec (for the code agent).** When an OPD detection pass completes (`cxd90014_opd.c` `opd_done`,
+`OPD_CTRL +0x0C` bit 1 0→1), deposit **non-zero per-zone results** into the sink confirmed by the experiment:
+* per-zone `count > 0` (the firmware divides `sum / count`; the window-area path alone gives `count = area/4`, so a
+  faithful value is the programmed detection-window area / 4, but any positive value clears the trap — magnitude `H`);
+* set `0xF3031090` (per-zone count / validity) non-zero so the firmware's count comes out > 0, whichever path it
+  takes;
+* if the harvest reads a DMA buffer (sink b), write the per-zone `{u16 count, u32 sum}` records there instead, at the
+  CPU address behind the `0xF3031098/9C` bus pointer / the `F30317C0` output.
+
+Confidence: consumer-reads-DRAM-record, grid-all-zero, OPD-area-empty, lever-off-is-power-off — **V** (runtime).
+count = window-area/4 and the 0xF3031090 gate — **H** (static, `sub_4396C18C`). The exact harvest sink
+(0xF3031000 table vs DMA buffer) and the result magnitudes — **[?]**, pending the shutter-capture experiment above.
