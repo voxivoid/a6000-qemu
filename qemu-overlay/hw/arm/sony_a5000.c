@@ -62,6 +62,12 @@
 #define A5K_ATAG_ADDR       0x80024000ULL
 #define A5K_STUB_ADDR       0x80025000ULL
 #define A5K_HANDOFF_RTC_LOST 0x800210E4ULL  /* docs/RE_RTC.md section 2 */
+/* hand-off page (wbimem=0x1000@0x80021000), docs/RE_WARM_RESUME.md 1.2 */
+#define A5K_HANDOFF_PAGE    0x80021000ULL
+#define A5K_HANDOFF_SIZE    0x1000
+#define A5K_HANDOFF_RESUME  0x80021054ULL   /* pm.resume= (resume vector) */
+#define A5K_HANDOFF_SUS_ERR 0x80021060ULL   /* pm.sus_error= */
+#define A5K_HOT_SP          0xC0020000u     /* HOT entry sp, see a5k_boot_reset */
 #define A5K_MACH_ID         0xDA8
 #define A5K_PERIPH_BASE     0xF8000000ULL
 #define A5K_L2C_BASE        0xF8002000ULL
@@ -163,6 +169,12 @@ struct A5KMachineState {
     Notifier wakeup;
     Notifier suspend;
     int reset_kind;                 /* A5K_RESET_* consumed on reset */
+    /* warm off -> HOT resume (docs/RE_WARM_RESUME.md section 3) */
+    bool warm_resume;               /* -M warm-resume=on|off */
+    bool dram_retained;             /* last off kept DDR in self-refresh */
+    uint32_t hot_entry;             /* resume vector for the HOT reset */
+    uint8_t *handoff_pristine;      /* factory hand-off ROM blob copy */
+    bool handoff_live;              /* blob holds a live page copy */
     char *cmdline;
     uint8_t *kernel, *initrd;
     size_t kernel_len, initrd_len;
@@ -988,16 +1000,18 @@ static const QemuInputHandler a5k_key_handler = {
 #define A5K_SMP_MBOX        0xC0005010ULL
 
 /*
- * Reset kinds (docs/RE_REBOOT.md section 4.1).  A SoC reset (SYSCTL +0x44,
- * WDT, HMP system_reset) keeps the DDR contents.  A power cycle by the
- * sub-micro loses them: the IRAM sleep code puts DDR in deep power-down
- * ("ddr_ctrl=dpd") and the SoC loses power, so a5k_boot_reset clears all
- * of DDR and IRAM before rom_reset restores the ROM blobs (zero stands in
- * for the undefined content after power loss).
+ * Reset kinds (docs/RE_REBOOT.md section 4.1, docs/RE_WARM_RESUME.md 3).
+ * A SoC reset (SYSCTL +0x44, WDT, HMP system_reset) keeps the DDR contents.
+ * A cold power-on by the sub-micro (power cycle, or power-on after a cold
+ * off) loses them, so a5k_boot_reset clears all of DDR and IRAM before
+ * rom_reset restores the ROM blobs (zero stands in for the undefined
+ * content after power loss).  A HOT power-on after a warm off keeps DDR
+ * (self-refresh) and only loses IRAM.
  */
 enum {
     A5K_RESET_SOC = 0,
     A5K_RESET_POWER,
+    A5K_RESET_HOT,      /* power-on after a warm off: DDR kept (RE_WARM_RESUME) */
 };
 
 #define A5K_IRAM_BASE       0xC0000000ULL
@@ -1052,9 +1066,10 @@ static void a5k_poff_cycle(void *opaque)
  * input layer still delivers key events (ui/input.c accepts RUNNING and
  * SUSPENDED), so the micro model below can watch its wake sources.  A
  * wakeup (power lever, APO wake key, HMP system_wakeup) runs
- * a5k_power_wakeup, which powers the SoC up like the power cycle: DDR and
- * IRAM cleared, cold boot.  The real camera most likely resumes warm offs
- * (type 27) from DDR [? RE_REBOOT.md B.5, B.9 question 5].
+ * a5k_power_wakeup, which powers the SoC up: after a warm off (type 27,
+ * sus_error 0) with warm-resume=on a HOT resume from the kept DDR image
+ * (docs/RE_WARM_RESUME.md 3.1, 3.2), otherwise like the power cycle: DDR and
+ * IRAM cleared, cold boot.
  */
 static void a5k_power_off(A5KMachineState *s)
 {
@@ -1068,6 +1083,20 @@ static void a5k_power_off(A5KMachineState *s)
     } else {
         info_report("sony-a5000: sub-micro power off (factor -1, no off "
                     "data)");
+    }
+    /*
+     * Warm off (+0x1B bit 0) with pm.sus_error == 0: the micro keeps DDR
+     * powered (the IRAM code left it in self-refresh) and the bootloader
+     * will resume from it (docs/RE_WARM_RESUME.md 1.3, 3.1).  sus_error is
+     * the bootloader's check; it is read here and again at power-on.
+     */
+    s->dram_retained = false;
+    if (s->warm_resume && s->off_info_valid && (o[A5K_OFF_WARM] & 1)) {
+        uint32_t sus_error = ldl_le_phys(&address_space_memory,
+                                         A5K_HANDOFF_SUS_ERR);
+        s->dram_retained = sus_error == 0;
+        info_report("sony-a5000: warm off, sus_error %u: DDR %s", sus_error,
+                    s->dram_retained ? "kept (self-refresh)" : "dropped");
     }
     s->powered_off = true;
     qemu_system_suspend_request();
@@ -1100,6 +1129,60 @@ static void a5k_power_suspended(Notifier *n, void *data)
     }
 }
 
+static bool a5k_ddr_range(uint32_t pa, uint32_t len);
+
+/*
+ * The hand-off page is the preload= ROM blob, and rom_reset runs after
+ * a5k_boot_reset, so a reset would put the factory page back over the live
+ * one (resume vector, sus_error, RTC word).  For a HOT power-on the live page
+ * goes into the blob; the factory copy is put back before any other reset
+ * (docs/RE_WARM_RESUME.md 3.2 step 3).
+ */
+static void a5k_handoff_keep_live(A5KMachineState *s)
+{
+    uint8_t *blob = rom_ptr(A5K_HANDOFF_PAGE, A5K_HANDOFF_SIZE);
+
+    if (!blob) {
+        return;                 /* no preloaded page: nothing overwrites it */
+    }
+    if (!s->handoff_pristine) {
+        s->handoff_pristine = g_memdup2(blob, A5K_HANDOFF_SIZE);
+    }
+    address_space_read(&address_space_memory, A5K_HANDOFF_PAGE,
+                       MEMTXATTRS_UNSPECIFIED, blob, A5K_HANDOFF_SIZE);
+    s->handoff_live = true;
+}
+
+static void a5k_handoff_restore(A5KMachineState *s)
+{
+    uint8_t *blob = rom_ptr(A5K_HANDOFF_PAGE, A5K_HANDOFF_SIZE);
+
+    if (s->handoff_live && blob && s->handoff_pristine) {
+        memcpy(blob, s->handoff_pristine, A5K_HANDOFF_SIZE);
+    }
+    s->handoff_live = false;
+}
+
+/*
+ * Bootloader stand-in for the HOT decision [? the bootloader is not in the
+ * update package; RE_WARM_RESUME.md 2.1, 2.2]: resume only with sus_error 0
+ * and a resume vector inside DDR, else boot cold.
+ */
+static bool a5k_hot_resume_ok(A5KMachineState *s)
+{
+    uint32_t entry = ldl_le_phys(&address_space_memory, A5K_HANDOFF_RESUME);
+    uint32_t sus_error = ldl_le_phys(&address_space_memory,
+                                     A5K_HANDOFF_SUS_ERR);
+
+    if (sus_error || !a5k_ddr_range(entry, 4) || (entry & 3)) {
+        info_report("sony-a5000: HOT resume refused (resume vector 0x%08x, "
+                    "sus_error %u), cold boot", entry, sus_error);
+        return false;
+    }
+    s->hot_entry = entry;
+    return true;
+}
+
 static void a5k_power_wakeup(Notifier *n, void *data)
 {
     A5KMachineState *s = container_of(n, A5KMachineState, wakeup);
@@ -1108,7 +1191,13 @@ static void a5k_power_wakeup(Notifier *n, void *data)
         return;
     }
     s->powered_off = false;
-    s->reset_kind = A5K_RESET_POWER;
+    if (s->dram_retained && a5k_hot_resume_ok(s)) {
+        a5k_handoff_keep_live(s);
+        s->reset_kind = A5K_RESET_HOT;
+    } else {
+        s->reset_kind = A5K_RESET_POWER;
+    }
+    s->dram_retained = false;
     qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
 }
 
@@ -1152,11 +1241,13 @@ static void a5k_poff_line(void *opaque, int n, int level)
         break;
     }
     info_report("sony-a5000: sub-micro off decision: %s (poff=%s, off data "
-                "%s, next 0x%02x)", restart ? "power cycle" : "stay off",
+                "%s, next 0x%02x, sus_error %u)",
+                restart ? "power cycle" : "stay off",
                 s->poff_mode == A5K_POFF_RESTART ? "restart" :
                 s->poff_mode == A5K_POFF_OFF ? "off" : "auto",
                 s->off_info_valid ? "latched" : "none",
-                s->off_info_valid ? s->off_info[A5K_OFF_NEXT] : 0);
+                s->off_info_valid ? s->off_info[A5K_OFF_NEXT] : 0,
+                ldl_le_phys(&address_space_memory, A5K_HANDOFF_SUS_ERR));
     if (restart) {
         timer_mod(s->poff_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                   A5K_POFF_DELAY_MS * SCALE_MS);
@@ -1212,6 +1303,24 @@ static void a5k_boot_reset(void *opaque)
     uint32_t d[8];
     bool ext;
 
+    bool hot = s->reset_kind == A5K_RESET_HOT;
+
+    if (hot) {
+        /*
+         * HOT power-on (docs/RE_WARM_RESUME.md 3.2): DDR stayed in
+         * self-refresh, only the SoC lost power.  IRAM is gone (rom_reset
+         * then restores the bootloader's IRAM/SRAM data as on every
+         * power-on); kernel, initrd, kemco and the loader descriptor are
+         * not touched (the live kernel owns that memory).
+         */
+        address_space_set(as, A5K_IRAM_BASE, 0, A5K_IRAM_SIZE,
+                          MEMTXATTRS_UNSPECIFIED);
+        info_report("sony-a5000: power-on, HOT resume (DDR kept) -> "
+                    "0x%08x", s->hot_entry);
+        s->off_info_valid = false;          /* micro: off data consumed */
+    } else {
+        a5k_handoff_restore(s);             /* factory page for this boot */
+    }
     if (s->reset_kind == A5K_RESET_POWER) {
         /* power loss: DDR and IRAM content gone, ROM blobs come back next */
         address_space_set(as, A5K_DDR_BASE, 0, A5K_DDR_SIZE,
@@ -1244,9 +1353,24 @@ static void a5k_boot_reset(void *opaque)
     address_space_write(as, A5K_SMP_MBOX, MEMTXATTRS_UNSPECIFIED, mbox,
                         sizeof(mbox));
 
-    uint32_t entry = cpu_to_le32(A5K_KERNEL_ADDR);
+    uint32_t entry = cpu_to_le32(hot ? s->hot_entry : A5K_KERNEL_ADDR);
     address_space_write(as, A5K_STUB_ENTRY_LIT, MEMTXATTRS_UNSPECIFIED,
                         &entry, 4);
+    if (hot) {
+        /*
+         * The stub still programs the GIC (ITARGETSR, ICFGR) and enters
+         * the resume vector with the MMU off; r0..r2 are not used.
+         * cxd90014_cpu_resume calls pl310_init and cxd90014_smp_init before
+         * it restores the saved sp, so it runs on the bootloader's stack:
+         * without one (sp = 0 after the CPU reset) the first push faults
+         * (DFAR 0xffffffe4).  hypothesis: IRAM top of the sleep-code area,
+         * 0xC0020000 (the sp the IRAM sleep code itself ran on at the off,
+         * RE_WARM_RESUME.md 1.2); the a5k_cpu_reset handlers ran before
+         * this one, so the value sticks.
+         */
+        s->cpu[0]->env.regs[13] = A5K_HOT_SP;
+        goto out;
+    }
 
     ext = d[0] == A5K_DESC_MAGIC && d[5] == A5K_DESC_XMAGIC &&
           a5k_ddr_range(d[6], d[2]) && a5k_ddr_range(d[7], d[4]) &&
@@ -1395,6 +1519,10 @@ static void a5k_init(MachineState *ms)
         Object *o = object_new(ms->cpu_type);
         object_property_set_int(o, "reset-cbar", A5K_PERIPH_BASE,
                                 &error_abort);
+        /* cxd90014_cpu_resume runs two instructions after its MMU enable
+         * from an XN identity section (docs/RE_WARM_RESUME.md 3.3) */
+        object_property_set_bool(o, "sctlr-fetch-delay", true,
+                                 &error_abort);
         /* The kernel enters in SVC mode from a non-secure-agnostic
          * bootloader; keep EL3 so secure CP15 accesses behave. */
         qdev_realize(DEVICE(o), NULL, &error_fatal);
@@ -1970,6 +2098,16 @@ static void a5k_init(MachineState *ms)
     a5k_write_smp_stub();
 }
 
+static bool a5k_get_warmres(Object *o, Error **errp)
+{
+    return A5K_MACHINE(o)->warm_resume;
+}
+
+static void a5k_set_warmres(Object *o, bool v, Error **errp)
+{
+    A5K_MACHINE(o)->warm_resume = v;
+}
+
 static bool a5k_get_rtclost(Object *o, Error **errp)
 {
     return A5K_MACHINE(o)->rtc_lost;
@@ -2232,6 +2370,11 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
     object_class_property_set_description(oc, "rtc-lost",
         "Clock backup lost: hand-off word 0x800210E4 = 1 (first-boot "
         "area/date/time setup)");
+    object_class_property_add_bool(oc, "warm-resume", a5k_get_warmres,
+                                   a5k_set_warmres);
+    object_class_property_set_description(oc, "warm-resume",
+        "Resume a warm off (idle power save, power lever) from the kept DDR "
+        "image like the real camera (HOT boot); off = always cold power-on");
     object_class_property_add_str(oc, "lens", a5k_get_lens, a5k_set_lens);
     object_class_property_set_description(oc, "lens",
         "E-mount lens: none (empty mount, default) or ekit (detect low, "
@@ -2253,10 +2396,16 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
     mc->ignore_memory_transaction_failures = false;
 }
 
+static void a5k_instance_init(Object *o)
+{
+    A5K_MACHINE(o)->warm_resume = true;     /* stock: HOT resume */
+}
+
 static const TypeInfo a5k_info = {
     .name = TYPE_A5K_MACHINE,
     .parent = TYPE_MACHINE,
     .instance_size = sizeof(A5KMachineState),
+    .instance_init = a5k_instance_init,
     .class_init = a5k_class_init,
 };
 

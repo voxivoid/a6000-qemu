@@ -353,6 +353,47 @@ index dd04f14..4351fd0 100644
 +cxd_usbhdc_au_rx(uint8_t type, uint8_t ep, uint32_t id, uint32_t arg, uint32_t len) "A5KU rx type 0x%x ep 0x%x id %u arg 0x%x len %u"
 +cxd_usbhdc_au_tx(uint8_t type, uint8_t ep, uint32_t id, uint32_t arg, uint32_t len) "A5KU tx type 0x%x ep 0x%x id %u arg 0x%x len %u"
 +cxd_usbhdc_req_done(uint8_t type, uint8_t ep, uint32_t id, uint32_t status) "request type 0x%x ep 0x%x id %u status %u"
+diff --git a/target/arm/cpu.c b/target/arm/cpu.c
+index e2b2337..87ca75e 100644
+--- a/target/arm/cpu.c
++++ b/target/arm/cpu.c
+@@ -1516,6 +1516,10 @@ static const Property arm_cpu_reset_cbar_property =
+ static const Property arm_cpu_reset_hivecs_property =
+             DEFINE_PROP_BOOL("reset-hivecs", ARMCPU, reset_hivecs, false);
+ 
++static const Property arm_cpu_sctlr_fetch_delay_property =
++            DEFINE_PROP_BOOL("sctlr-fetch-delay", ARMCPU, sctlr_fetch_delay,
++                             false);
++
+ static const Property arm_cpu_has_el2_property =
+             DEFINE_PROP_BOOL("has_el2", ARMCPU, has_el2, true);
+ 
+@@ -1747,6 +1751,8 @@ static void arm_cpu_post_init(Object *obj)
+ 
+     if (!arm_feature(&cpu->env, ARM_FEATURE_M)) {
+         qdev_property_add_static(DEVICE(obj), &arm_cpu_reset_hivecs_property);
++        qdev_property_add_static(DEVICE(obj),
++                                 &arm_cpu_sctlr_fetch_delay_property);
+     }
+ 
+     if (arm_feature(&cpu->env, ARM_FEATURE_V8)) {
+diff --git a/target/arm/cpu.h b/target/arm/cpu.h
+index dc9b6dc..92689be 100644
+--- a/target/arm/cpu.h
++++ b/target/arm/cpu.h
+@@ -1090,6 +1090,12 @@ struct ArchCPU {
+     uint64_t reset_cbar;
+     uint32_t reset_auxcr;
+     bool reset_hivecs;
++    /*
++     * An AArch32 SCTLR write that sets M (0 -> 1) does not end the TB: the
++     * MMU takes effect for instruction fetch at the next branch (see
++     * do_coproc_insn).  Board opt-in only (sony-a5000).
++     */
++    bool sctlr_fetch_delay;
+     uint8_t reset_l0gptsz;
+ 
+     /*
 diff --git a/target/arm/tcg/cpu32.c b/target/arm/tcg/cpu32.c
 index a2a23ea..6736165 100644
 --- a/target/arm/tcg/cpu32.c
@@ -419,6 +460,87 @@ index a2a23ea..6736165 100644
      { .name = "cortex-a9",   .initfn = cortex_a9_initfn },
      { .name = "cortex-a15",  .initfn = cortex_a15_initfn },
      { .name = "cortex-r5",   .initfn = cortex_r5_initfn },
+diff --git a/target/arm/tcg/translate.c b/target/arm/tcg/translate.c
+index f7d6d8c..e878498 100644
+--- a/target/arm/tcg/translate.c
++++ b/target/arm/tcg/translate.c
+@@ -2928,6 +2928,7 @@ static void do_coproc_insn(DisasContext *s, int cpnum, int is64,
+     TCGv_ptr tcg_ri = NULL;
+     bool need_exit_tb = false;
+     uint32_t syndrome;
++    TCGv_i64 sctlr_old = NULL;
+ 
+     /*
+      * Note that since we are an implementation which takes an
+@@ -3147,6 +3148,14 @@ static void do_coproc_insn(DisasContext *s, int cpnum, int is64,
+             return;
+         }
+ 
++        if (s->sctlr_fetch_delay && cpnum == 15 && !is64 && opc1 == 0 &&
++            crn == 1 && crm == 0 && opc2 == 0 && ri->fieldoffset &&
++            !s->condjmp && !s->condexec_mask) {
++            /* SCTLR: keep the old value for the MMU-enable check below */
++            sctlr_old = tcg_temp_new_i64();
++            tcg_gen_ld_i64(sctlr_old, tcg_env, ri->fieldoffset);
++        }
++
+         if (is64) {
+             TCGv_i32 tmplo, tmphi;
+             TCGv_i64 tmp64 = tcg_temp_new_i64();
+@@ -3187,6 +3196,32 @@ static void do_coproc_insn(DisasContext *s, int cpnum, int is64,
+          */
+         need_exit_tb = true;
+     }
++    if (need_exit_tb && sctlr_old && !(tb_cflags(s->base.tb) & CF_USE_ICOUNT)) {
++        /*
++         * Board opt-in (sony-a5000): an SCTLR write that turns the MMU on
++         * (M 0 -> 1) does not end the TB, so the straight-line instructions
++         * after it are still fetched with the MMU off until the next branch
++         * ends the TB; hflags were rebuilt above, and data accesses see the
++         * new state at once (the TLB is flushed by sctlr_write).  Cortex-A5
++         * does this from its prefetch: the CXD90014 kernel's resume path
++         * (cxd90014_cpu_resume -> resume_turn_on_mmu, PA 0x80052480) runs
++         * "mcr SCTLR; nop; mov pc, r1" from an XN identity section with no
++         * ISB (sony-a5000 docs/RE_WARM_RESUME.md section 3.3).  Same idea
++         * as the XScale ARM_CP_SUPPRESS_TB_END case in helper.c, but only
++         * for this transition; every other SCTLR write ends the TB.
++         */
++        TCGv_i64 t = tcg_temp_new_i64();
++        TCGLabel *cont = gen_new_label();
++
++        tcg_gen_ld_i64(t, tcg_env, ri->fieldoffset);
++        tcg_gen_andc_i64(t, t, sctlr_old);
++        tcg_gen_andi_i64(t, t, SCTLR_M);
++        tcg_gen_brcondi_i64(TCG_COND_NE, t, 0, cont);
++        gen_pc_plus_diff(s, cpu_R[15], curr_insn_len(s));
++        tcg_gen_exit_tb(NULL, 0);
++        gen_set_label(cont);
++        need_exit_tb = false;
++    }
+     if (need_exit_tb) {
+         gen_lookup_tb(s);
+     }
+@@ -7553,6 +7588,7 @@ static void arm_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
+     dc->condjmp = 0;
+     dc->pc_save = dc->base.pc_first;
+     dc->aarch64 = false;
++    dc->sctlr_fetch_delay = cpu->sctlr_fetch_delay;
+     dc->thumb = EX_TBFLAG_AM32(tb_flags, THUMB);
+     dc->be_data = EX_TBFLAG_ANY(tb_flags, BE_DATA) ? MO_BE : MO_LE;
+     condexec = EX_TBFLAG_AM32(tb_flags, CONDEXEC);
+diff --git a/target/arm/tcg/translate.h b/target/arm/tcg/translate.h
+index f974996..d49abb0 100644
+--- a/target/arm/tcg/translate.h
++++ b/target/arm/tcg/translate.h
+@@ -128,6 +128,8 @@ typedef struct DisasContext {
+     bool bt;
+     /* True if any CP15 access is trapped by HSTR_EL2 */
+     bool hstr_active;
++    /* ARMCPU::sctlr_fetch_delay (AArch32 SCTLR.M 0->1, see translate.c) */
++    bool sctlr_fetch_delay;
+     /* True if memory operations require alignment */
+     bool align_mem;
+     /* True if PSTATE.IL is set */
 diff --git a/ui/cocoa.m b/ui/cocoa.m
 index 23b7a73..aa8ef70 100644
 --- a/ui/cocoa.m

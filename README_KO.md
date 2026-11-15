@@ -61,7 +61,7 @@
 - ⏳ 카메라 프런트엔드: 센서 라이터(P2S, IRQ 38)·프런트엔드 프레임 IRQ·AIF 채널 그룹(IRQ 40–50) 모델 → 캡처 오류 해소, 라이브뷰는 아직 검정(YC 출력 요청 없음, `docs/RE_SENSOR_ISP.md` §7)
 - ✅ SA DSP 코어: null 모델(`cxd90014_sa.c`)로 센서 결함표 작업 완료 → 엔진이 모니터링 상태 도달, 촬영 화면에 노출 표시(셔터/조리개 눈금). 라이브뷰는 YC 상태 2 전에서 정지(`docs/RE_LIVEVIEW_REQUEST.md` §9), PLAY·SD 동작: 카드 없음 재생 화면, 카드가 있으면 이미지 DB 생성 대화상자 → 카드에 DB 생성(첫 SD 쓰기) (`docs/RE_PLAYBACK_SWITCH.md`)
 - ✅ 라이브뷰 경로: SYSV를 마스터 V 클럭으로 바꾼 뒤 펌웨어가 패널 YUV 레이어를 켜고 ch51을 매 프레임 설정 (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51은 8비트 휘도 평면(1024×516)을 패널로 스케일; 채우는 ISP 모델이 아직 없어 렌즈 캡을 닫은 것처럼 검정; `-global cxd90014-aif.lv-source=bars|ramp|file:PATH.pgm`이면 리사이즈 출력 시점에 그 버퍼로 테스트 휘도 프레임을 기록(디버그, `docs/RE_LIVEVIEW_IMAGE.md`)
-- ✅ USB 디바이스 (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS 글루 모델과 TCP 가상 케이블("A5KU") → 카메라가 열거됨(MTP 054C:08D3), `pmca-console info -d socket`이 ILCE-5000 / 1.10 출력, `install -f <apk>`로 앱 설치 → 애플리케이션 목록에 표시되고 실행됨(`docs/RE_USB_APP_INSTALL.md`), 업데이터 코어가 054C:03E2로 열거되어 PMCA 업데이터 셸 실행. SWITCH_MODE 후 실기처럼 전원이 꺼지고(서브마이컴 전원 끄기 핸드셰이크, DDR 컨트롤러, p0.10 전원 끄기 라인) 서브마이컴이 전원을 다시 넣어 업데이터로 부팅 → `pmca-console updatershell -d socket`이 수동 리셋 없이 업데이터 셸까지 도달(두 번째 PMCA 실행은 `-m ILCE-5000`, `docs/RE_REBOOT.md`). 머신 옵션 `poff=auto|restart|off`(기본 `auto`)로 전원 끄기 라인의 동작을 선택: `auto`는 CPU가 slot-A TX 프레임에 보낸 끄기 데이터를 따름(+0x15 = 0x20 → 전원 재투입, 그 외에는 꺼진 상태 유지 = VM suspended, `info status` → `paused (suspended)`; 전원 레버 `O`, 자동 전원 끄기 후에는 `S`/`M`/`P`도, 또는 HMP `system_wakeup`으로 콜드 부팅하여 다시 켜짐, `docs/RE_REBOOT.md` B.7).
+- ✅ USB 디바이스 (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS 글루 모델과 TCP 가상 케이블("A5KU") → 카메라가 열거됨(MTP 054C:08D3), `pmca-console info -d socket`이 ILCE-5000 / 1.10 출력, `install -f <apk>`로 앱 설치 → 애플리케이션 목록에 표시되고 실행됨(`docs/RE_USB_APP_INSTALL.md`), 업데이터 코어가 054C:03E2로 열거되어 PMCA 업데이터 셸 실행. SWITCH_MODE 후 실기처럼 전원이 꺼지고(서브마이컴 전원 끄기 핸드셰이크, DDR 컨트롤러, p0.10 전원 끄기 라인) 서브마이컴이 전원을 다시 넣어 업데이터로 부팅 → `pmca-console updatershell -d socket`이 수동 리셋 없이 업데이터 셸까지 도달(두 번째 PMCA 실행은 `-m ILCE-5000`, `docs/RE_REBOOT.md`). 머신 옵션 `poff=auto|restart|off`(기본 `auto`)로 전원 끄기 라인의 동작을 선택: `auto`는 CPU가 slot-A TX 프레임에 보낸 끄기 데이터를 따름(+0x15 = 0x20 → 전원 재투입, 그 외에는 꺼진 상태 유지 = VM suspended, `info status` → `paused (suspended)`; 전원 레버 `O`, 자동 전원 끄기 후에는 `S`/`M`/`P`도, 또는 HMP `system_wakeup`으로 다시 켜짐, `docs/RE_REBOOT.md` B.7). 웜 오프(유휴 절전, 전원 레버)이고 `sus_error`가 0이면 DDR을 유지하고, 다음 전원 투입에서 실기의 HOT 부팅처럼 실행 중이던 시스템을 그대로 재개한다(같은 화면, uptime 계속, 1단계 없음; CPU 수정: MMU 켜기가 다음 분기부터 명령어 페치에 적용). `-M warm-resume=off`면 예전처럼 콜드 부팅(`docs/RE_WARM_RESUME.md` §7).
 - ⬜ 센서/ISP(라이브뷰), 렌즈 시리얼 프로토콜, 오디오
 
 ## 사용
@@ -128,8 +128,10 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
   CPU0이 굶으면 실기에서는 드러나지 않는 펌웨어 경합이 드러난다(커널 oops `PC is at 0x4394aa4c`, 태스크 `liro-kliro_113`;
   미해결, `docs/RE_ENGINE_OOPS.md`).
 - 키 입력 없이 약 5분이 지나면 펌웨어의 유휴 절전이 카메라를 끈다(전원 레버 `O`, `S`/`M`/`P` 또는 HMP
-  `system_wakeup`으로 다시 켤 때까지 VM suspended). 셸 세션과 `/android/a5k`는 사라진다.
-  `a5kshell.py`는 이를 알려준다(종료 코드 3). HMP로 가끔 무해한 키를 보내거나, 그 시간 안에 작업한다.
+  `system_wakeup`으로 다시 켤 때까지 VM suspended). 실기처럼 웜 오프라서 다음 전원 투입은 남아 있는 RAM 이미지에서
+  재개한다(HOT 재개, `warm-resume=on`). 단 디버그 셸 콘솔(`console=ttyAM1`)을 쓰면 재개 직후 CPU0이 UART2 드라이버에서
+  교착되어 셸이 사라진다(`docs/RE_WARM_RESUME.md` §7). `-M warm-resume=off`면 콜드 부팅하고 `/android/a5k`는 사라진다.
+  HMP로 가끔 무해한 키를 보내거나, 그 시간 안에 작업한다.
 
 ## 펌웨어 · 법적 고지
 - 이 저장소에는 **Sony 펌웨어·바이너리·기기 덤프가 들어 있지 않습니다.** 실행하려면 **본인 소유 기기**에서 직접 추출한 NAND 덤프와 Sony가 공개 배포한 공식 업데이터에서 얻은 파일이 필요합니다(`data/README.md`). 이 파일들을 저장소나 이슈에 올리지 마세요.

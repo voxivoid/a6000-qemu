@@ -343,3 +343,38 @@ Common: fresh NAND clone, copied binary, `A5K_SHELL=<port>`, monitor on TCP.
   DACR_S, TTBR0_EL1_S, SCTLR_S).
 * WBI header: first 0x30 bytes of `nflasha5`; identity entry: `tools/wbi.py` `walk(0x80052484)`.
 * im.elf: objdump `-M force-thumb`, `0x9F44..0xA06C` (`sub_9F44`, `sub_9F68`, `sub_9FB4`), `0xA258..0xA286`.
+
+## 7. Implementation notes (board + CPU, 2026-11-15)
+
+* **Board** (`hw/arm/sony_a5000.c`): at the p0.10 drop with "stay off", `a5k_power_off` sets `dram_retained` when the
+  latched off data is warm (+0x1B bit 0) and `sus_error` (PA 0x80021060) is 0 (`warm off, sus_error 0: DDR kept`). On
+  power-on `a5k_power_wakeup` re-checks the hand-off page (resume vector inside DDR and word-aligned, `sus_error` 0;
+  else `HOT resume refused (...), cold boot`), copies the live 4 KiB hand-off page into the `preload=` ROM blob
+  (keeping the factory copy) and requests reset kind `A5K_RESET_HOT`. `a5k_boot_reset` then clears IRAM only, writes
+  the resume vector into the stub's entry literal and skips kernel, initrd, kemco and the loader descriptor; the SMP
+  mailbox is cleared as on every reset. Every other reset puts the factory page back into the blob first. The machine
+  option `warm-resume=on|off` (default `on`) selects this; `off` keeps the old cold power-on.
+* **Boot stack (H)**: `cxd90014_cpu_resume` calls `pl310_init` and `cxd90014_smp_init` (which push) before it restores
+  the saved `sp`, so it needs a stack from the bootloader. With `sp = 0` after the CPU reset the first push faulted
+  (data abort, DFAR 0xFFFFFFE4) and CPU0 ended in the zero-filled low vectors. The board sets CPU0's `sp` to 0xC0020000
+  for the HOT entry (the IRAM stack the sleep code itself used at the off, §1.2) [? real bootloader value unknown].
+* **CPU** (`target/arm`, upstream files): ARM CPU property `sctlr-fetch-delay` (default off, set by the board). With it,
+  an AArch32 SCTLR write that turns M on (0 → 1 at run time) does not end the TB, so the instructions after the `mcr`
+  up to the next branch are fetched as translated with the MMU off; hflags are rebuilt and data accesses see the MMU at
+  once (TLB flush in `sctlr_write`). Every other SCTLR write still ends the TB. A first attempt that reused the XScale
+  mechanism (`ARM_CP_SUPPRESS_TB_END` on every SCTLR write) made the normal cold boot fail at ~3.5 s (`kernel BUG at
+  .../grm_ma/dmm_if.c:281`) in two of two runs, so the runtime M 0 → 1 check is required, not just tidier.
+* **Result** (stock console, binary built from branch `warm`): idle power save at ~317 s → `warm off, sus_error 0` →
+  lever OFF/ON → `power-on, HOT resume (DDR kept) -> 0x800523cc`, no `stage 1 (loader)`; klog: `Enabling non-boot
+  CPUs` … `CPU1..3 is up`, `[LIRO]: liro resume complete`, `PM: resume of devices complete`, `Restarting tasks ...
+  done.`, no `Linux version`. The shooting screen is back within seconds and MENU opens (screendump identical to the
+  menu of a cold-booted run). A second APO in the same run resumed the same way with the APO wake key `S`. **No av-cam
+  fatal** (the w3 fatal of §3.3 was an artefact of resuming without a device/CPU reset). `jiffies_64` (PA 0x80360240)
+  continues across both resumes (0xFFFFEB23 at the off → 0xFFFFF0F3 15 s after the resume → 0x1_00006769 at the second
+  off). printk timestamps restart at 0 (sched_clock follows the reset timer) [? same on the real camera].
+* **Known issue, debug shell only**: with `A5K_SHELL` (`console=ttyAM1 amba2.console=1`) the resume deadlocks CPU0 in
+  the UART2 driver: the Sony PL011 interrupt thread prints `amba2:%d:TXRIS` (`pl011_int+0x98`) while it holds the port
+  lock, the console write on the same port takes that lock again (`rt_spin_lock_slowlock` → `__bug`), the exception
+  monitor then spins in `em_dump_write` → `pl011_console_write`. The UI keeps running on CPU1..3, but IRQs routed to
+  CPU0 (UART2 152, so the shell) are dead. The stock console (`ttynull`) is not affected. Not investigated further
+  (QEMU PL011 TX raw interrupt state after reset vs the real UART [?]).
