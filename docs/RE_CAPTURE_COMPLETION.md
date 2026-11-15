@@ -294,3 +294,63 @@ diagnostic (0x51000F := 1) at boot.
   (0xF8000000..) — it crashed QEMU.
 * av-cam data: PA = VA + 0x40000000 held for `0x43D10388` but **not** for `0x43D6A190` (`xp` returned other
   data); read objects with gdb at a breakpoint in av-cam (e.g. `hbreak *0x43a40058`, `x/32wx $r0`).
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 9. Implementation notes (code agent, QEMU branch `sgc1`, commit `427b591` on `18850ab`)
+
+`hw/misc/cxd90014_campig.c`, new property `input-unit` (set by the board for 0xF3120000 only; that instance maps
+0x500 bytes, units 0/1 keep 0x400). New trace events `cxd_campig_sg_start/sg_event/sg_stop/iif_end`.
+
+* **5.1** as specified for all instances: `IRQ = (st48 & +0x50) | (st4c & +0x54)`, both status words full-width W1C.
+* **5.2** as specified (27 MHz, `+0x220`/`+0x224` latched at each frame start, clamp [1 ms, 2 s], 33 367 µs fallback,
+  write bit 0 = 1 while stopped starts, bit 0 = 0 stops, bit 8 continuous, one-shot clears bit 0 after B). The
+  `+0x214`/`+0x218` latch is unchanged (optional item not done).
+* **One deviation needed: B is held until A is acked.** First run with the plain spec: the first lever one-shot
+  (`+0x224` = V−1, A only 202 clocks = 7.5 µs before B) had both bits pending when the ISR ran; `436A6904` dispatches B
+  before A, so `43A46E62` found `+0x78` empty, then A moved callback 2 there and nothing ever called it → task 107
+  waited for bit 2 (`4385960F`) forever. Now, if an enabled `+0x48` bit 0 is still pending at the frame end, the
+  frame end (Iif clear, B, next frame / one-shot stop) waits until the guest's W1C of `+0x48` bit 0. hypothesis:
+  on the real camera the ISR finishes within that line; the hold only keeps the A → B order (§5.2 "Timing").
+  A continuous frame then restarts at `max(nominal end, now)`.
+* **5.3** as specified: `+0x410` bit 0 cleared at the next SG frame end before B, or at the next campig frame tick
+  while the SG is stopped (both hypothesis); `+0x410` bit 16 reads 0; `+0x47C` reads back; other 0x400..0x4FF offsets
+  read back with `LOG_UNIMP`.
+
+Results (fresh NAND clones, Backup 0x51000F = 1 via a loader cpio with `a5kcopy -bkset 0x0051000f 01`, `A5K_SHELL`,
+probe `43894784 LOG` with `fnr1s=1`):
+
+| check | `18850ab` | `427b591` |
+|---|---|---|
+| "CamCore Start Error 0x208" log lines, boot to ≈ 210 s | 435 | **0** |
+| CamCore start result (probe `43A40110`) | 1 × 0, 520 × 0x208 | **481 × 0** |
+| `+0x410` at the shooting screen | 1 | 0 |
+| IRQ 35 / `436A75CC` / `43A46E62` at the shooting screen | 0 | 1058 / 529 / 529 in 20.9 s uptime (≈ 25/s each event) |
+| `xp 0xf3120210` / `+0x48..+0x54` | 0x101 / 0x02000000 0 1 1 | 0x101 / 0 0 1 1 |
+| YC chain (`437737D4`, `43661BC8`, `438F6CF4`, `437E3910`, `43546E40`) | runs in both (≈ 1 `437737D4` per s, same order of counts) | no visible change |
+
+The RE_LIVEVIEW_REQUEST §9 blocker ("`437737D4`/`43661BC8` 0 hits") no longer holds on `18850ab` either, so the Iif
+fix is not what unblocks YC state 2; nothing else changed visibly there.
+
+Lever off (`sendkey o` at ≈ 300 s, §8 probe list): `EnterCap` → `RawDevInit` (`+0x210` := 0) → `CapExpose 43858D80`
+→ `SgcWrap(3)` → `Sgc1Exec(3, V 0x538, H 0xCA)` → `F22_wait(0x100)` (107) → `43A59D42` → `43A59D62` (both in the
+IRQ 35 path) → `F22_wait(2)` passes → `S4` → `ccs_err` r0 = **0** → `SgcWrap(3)` from `438589B7` → `Sgc1Exec(3, V
+0x538, H 0x1EBC)` → `F22_wait(1)` (72), `F22_wait(0x200)` (107) pass → `S4` → **`EndRawSeq 437C3B54`** (96) → `S4` in
+102/73/76 → live view back (`+0x210` = 0x101). **Stop:** `F22_wait(0x440)` from `4385B82F` in `liro-kliro_115`
+(`wchan` = `twai_flg`, tasks 72/107 in `trcv_mbf`); `43A59E4E` (bit 0x40) fired once, bit 0x400 (`43A59E6A`) never.
+No `sub-micro power off (factor 7 …)`; VM running. This is the §6 gate. Baseline `18850ab` in the same setup stops
+at `F22_wait(0x100)` from `438594A9`, as in §1.1.
+
+No regression: shooting screen OSD identical to `18850ab`; MENU opens, PLAY shows "no memory card" (a `sendkey p
+300`/`m 300` hold is more reliable than the 100 ms default in both binaries); `pmca-console updatershell` → OK →
+`sub-micro power cycle (factor 13)` → updater stage 2 → shell answers `help`. Idle power save (factor 8, warm, DDR
+kept) and lever OFF/ON HOT resume work and MENU opens afterwards. Observed but not caused by this change [?]: after a
+HOT resume the kernel panicked in 2 of 2 runs with the 0x51000F = 1 loader on **both** binaries (`18850ab` too), and
+once (1 of 4 runs) with the stock loader on `427b591` (av-cam oops `PC 4394AA4C` memcpy from a NULL `[r4+0xC38]` at
+`437DEE48`, task `liro-kliro_113`, 15.7 s after the resume); `18850ab` with the stock loader resumed cleanly in 1 of
+1 run. See the open items.
+
+Open items: (1) §6 (flag 22 bit 0x400 in task 115). (2) The HOT-resume panics above — the boot-mode 1 loader plus a
+HOT resume looks like a separate topic (RE_STILL_CAPTURE §6.1: 0x51000F = 2 belongs to the HOT path) [?]; the single
+stock-loader oops (3 later runs clean, MENU opens) needs more runs to decide whether the SG changes the resume timing. (3) Real SG clock / still
+timing and the A → B hold are hypotheses. (4) `+0x214` latch could return the real line counter.

@@ -249,10 +249,10 @@ index b1d8d8e..d7af1eb 100644
 +system_ss.add(when: 'CONFIG_CXD90014_SA', if_true: files('cxd90014_sa.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_DDRC', if_true: files('cxd90014_ddrc.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index e3f64c0..3c1c05c 100644
+index e3f64c0..145b59e 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -403,3 +403,24 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
+@@ -403,3 +403,28 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
  i2c_echo_event(const char *id, const char *event) "%s: %s"
  i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
  i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
@@ -269,6 +269,10 @@ index e3f64c0..3c1c05c 100644
 +
 +# cxd90014_campig.c
 +cxd_campig_frame(uint64_t base, uint32_t paths) "0x%08" PRIx64 " frame done, status |= 0x%08x"
++cxd_campig_sg_start(uint64_t base, uint32_t ctl, uint32_t v, uint32_t h, uint32_t line, int64_t us) "0x%08" PRIx64 " sgc1 frame ctl 0x%x V %u H %u A@line %u len %" PRId64 " us"
++cxd_campig_sg_event(uint64_t base, char ev) "0x%08" PRIx64 " sgc1 event %c"
++cxd_campig_sg_stop(uint64_t base) "0x%08" PRIx64 " sgc1 stopped"
++cxd_campig_iif_end(uint64_t base) "0x%08" PRIx64 " iif frame end, +0x410 bit0 cleared"
 +
 +# cxd90014_ddrc.c
 +cxd_ddrc_rd(uint64_t off, uint32_t v) "rd +0x%03" PRIx64 " -> 0x%08x"

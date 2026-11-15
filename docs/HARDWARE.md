@@ -49,6 +49,8 @@ Every value here was recovered from the official 1.10 firmware (kernel
 | hdmi | 0xF2A24000 | — | — |
 | clkrst4 | 0xF2A30000 | — | unimp |
 | cec | 0xF3C10000 | — | — |
+| CamCore input unit "Pig" | 0xF3120000 (0x500) | 35 | cxd90014-campig, `input-unit=on`. +0x48/+0x4C status (W1C, 32 bit), +0x50/+0x54 their enables bit for bit; IRQ = `(st48 & +0x50) \| (st4c & +0x54)` (V, `43A46272`/`43A4651C`, ISR `436A6904`). **Sgc1 sync generator** +0x210 bit0 run / bit8 continuous, +0x220 = (V−1)<<16 \| (H−1), +0x224 = line of event A (+0x48 bit0); frame end = event B (+0x4C bit0); a one-shot drops +0x210 bit0 at its end (V: live view ~30 events/s, lever-off exposure completes). 27 MHz clock: V for the live 900 900-clock frame, H for the still one-shots; B is held until an enabled A is acked (H, emulator order guarantee). **Iif** +0x410 bit0 run bit cleared at the next frame end (H; V that CamCore start then returns 0 instead of 0x208), +0x410 bit16 reads 0, +0x47C reads back (`docs/RE_CAPTURE_COMPLETION.md` §5, §9) |
+| CamCore units 0/1 "Pig" | 0xF3000000 / 0xF3100000 (0x400) | 36 / 37 | cxd90014-campig: path k frame done = +0x48 bit 24+k once per 33 367 µs engine frame, enable +0x50 (`docs/RE_SENSOR_ISP.md` §2.3) — V |
 | dmac ch0-3 / ch4-7 | 0xF0000000 / 0xF0010000 | 189..196 | — |
 | usb ho / h2xbb | 0xF0200000 / F0203000 | — | — (host side, unused in device mode) |
 | usb hdmac | 0xF0204000 | 228, 229 (errors only, never raised) | cxd90014-usbhdc region 1 — V for bulk DMA (`docs/RE_USB_DEVICE_CONTROLLER.md` §5/§9) |

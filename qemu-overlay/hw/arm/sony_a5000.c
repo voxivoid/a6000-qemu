@@ -1837,6 +1837,8 @@ static void a5k_init(MachineState *ms)
         for (int i = 0; i < ARRAY_SIZE(pig); i++) {
             dev = qdev_new("cxd90014-campig");
             qdev_prop_set_uint64(dev, "base", pig[i].base);
+            /* Sgc1 SG + Iif, docs/RE_CAPTURE_COMPLETION.md §5 */
+            qdev_prop_set_bit(dev, "input-unit", pig[i].irq == 35);
             sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
             sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, pig[i].base);
             sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
