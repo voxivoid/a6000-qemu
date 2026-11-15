@@ -266,3 +266,13 @@ Fresh NAND clone per run, no SD unless stated, `A5K_SHELL` on.
   `437ccfe8 S4`, `437c3b54 EndRawSeq`, `436f94d4 ExitCap`, `436f94a0 EnterCap`.
 * Kernel stack of a waiting task: find `comm` in a `pmemsave` of DDR (task_struct + 0x1E8), `stack` pointer at
   task_struct + 8, `cpu_context.sp` at thread_info + 0x3C, scan up to thread_info + 0x2000 for odd av-cam addresses.
+
+## 7. Implementation attempt: MENU breaks with boot mode 1 (open)
+
+`a5kcopy -bkset <prop> <hex>` exists (`provision/a5kcopy.c`: verifies the BK header and checksum, writes the value,
+recomputes the checksum). With `a5kcopy -bkset 0x0051000f 01` in `loader.sh`: `bk.elf r 0x0051000F` = 01, unit 0400
+is freed by 62 s, the shooting screen and PLAY work, and on a lever off the RAW unit 0x173762 is placed at 0x9EEB2000
+(area 0x11 on table 0x2B). **But MENU no longer opens** (`sendkey m`, two runs; the stock loader with 02 opens it with
+the same procedure). Mode 12 (BIS) makes the camera restart itself (factor 39). The loader therefore keeps 02 and the
+`-bkset` step is not in `loader.sh` yet. Lead [?]: the SA manager's cold branch frees a "program kind 2" unit that
+nothing loads again; or another cold-boot reader (upm boot-factor result, libObj) leaves the menu unavailable.

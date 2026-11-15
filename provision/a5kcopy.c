@@ -13,8 +13,15 @@
  *   a5kcopy -stage2 <kernel> <initrd>             stage kernel @0x90000000,
  *        initrd @0x90400000 and write the board's loader descriptor
  *        {"A5KB", kpa, klen, ipa, ilen} at PA 0x80027000
+ *   a5kcopy -bkset <prop-id> <hexbytes> [Backup.bin]
+ *        set one fixed-size property in the RAM copy of Backup.bin that
+ *        -backup placed at the PA in the file's header word 0 (file default
+ *        /mnt/setting/Backup.bin) and recompute the header checksum
+ *        (docs/RE_STILL_CAPTURE.md section 6)
  *
- * Built with arm-none-eabi-gcc -nostdlib.
+ * Build (from the emulator repository root):
+ *   arm-none-eabi-gcc -march=armv7-a -marm -O2 -nostdlib -static \
+ *       -ffreestanding -o provision/a5kcopy provision/a5kcopy.c
  */
 typedef unsigned long ul;
 typedef unsigned int u32;
@@ -170,6 +177,97 @@ static void mumin_handoff(ul dev_va)
     puts1("a5kcopy: MUMIN hand-off written, rebased "); puthex(n); puts1(" pointers\n");
 }
 
+/*
+ * Backup.bin RAM image (docs/RE_STILL_CAPTURE.md 6.2, layout as parsed by
+ * PMCA BackupFile):
+ *   +0x0C "BKn\0" (n = 4: 6-byte property entries {u16 attr, u32 ptr};
+ *         n = 2: 5-byte entries {u8 attr, u32 ptr})
+ *   +0x10 numSubsystems, +0x14 numProperties, +0x18 dataOffset,
+ *   +0x1C dataSize, +0x20 checksum = byte sum of [0, dataOffset + dataSize)
+ *         without +0x20..+0x23
+ *   +0x100 subsystem table {u16 numProperties, u32 firstIndex} (index =
+ *         id >> 16), then the property table (entry firstIndex + (id & 0xFFFF));
+ *   property data at ptr & 0xFFFFFF, size ptr >> 24 (0 = variable,
+ *   0xFF = oversize: both refused here)
+ */
+static int xdig(int c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 :
+           c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+static void putbytes(const unsigned char *p, ul n)
+{
+    for (ul i = 0; i < n; i++) {
+        char t[3] = { "0123456789abcdef"[p[i] >> 4], "0123456789abcdef"[p[i] & 15], 0 };
+        puts1(t);
+    }
+}
+static u32 ld32(const unsigned char *p) { return p[0] | p[1] << 8 | p[2] << 16 | (u32)p[3] << 24; }
+static u32 bk_sum(const unsigned char *p, ul len)
+{
+    u32 s = 0;
+    for (ul i = 0; i < len; i++)
+        if (i < 0x20 || i >= 0x24) s += p[i];
+    return s;
+}
+static void bkset(ul id, const char *val, const char *file)
+{
+    unsigned char nv[64];
+    ul n = 0;
+    if (val[0] == '0' && (val[1] == 'x' || val[1] == 'X')) val += 2;
+    for (; val[0]; val += 2) {
+        int hi = xdig(val[0]), lo = val[1] ? xdig(val[1]) : -1;
+        if (hi < 0 || lo < 0) die("bkset: value must be an even number of hex digits");
+        if (n == sizeof(nv)) die("bkset: value too long");
+        nv[n++] = hi << 4 | lo;
+    }
+    if (n == 0) die("bkset: empty value");
+
+    long fd = sc(SYS_open, (long)file, 0, 0, 0, 0, 0);
+    u32 pa = 0;
+    if (fd < 0 || sc(SYS_read, fd, (long)&pa, 4, 0, 0, 0) != 4) die("bkset: cannot read Backup header");
+    sc(SYS_close, fd, 0, 0, 0, 0, 0);
+    if (pa < 0x80000000 || pa >= 0xA0000000) die("bkset: bad Backup phys address");
+
+    ul ml; long b;
+    unsigned char *h = pmap(pa, 0x100, &ml, &b);
+    u32 w0 = ld32(h), ns = ld32(h + 0x10), np = ld32(h + 0x14);
+    u32 doff = ld32(h + 0x18), dsz = ld32(h + 0x1c), ck = ld32(h + 0x20);
+    unsigned char m0 = h[0xc], m1 = h[0xd], rev = h[0xe], m3 = h[0xf];
+    punmap(b, ml);
+    if (w0 != pa) die("bkset: RAM copy not found (header word 0 mismatch)");
+    if (m0 != 'B' || m1 != 'K' || m3 != 0) die("bkset: bad Backup magic");
+    if (rev != '4' && rev != '2') die("bkset: unknown Backup revision");
+    ul es = rev == '4' ? 6 : 5;
+    ul ptab = 0x100 + 6 * (ul)ns, total = (ul)doff + dsz;
+    if (ns == 0 || np == 0 || ptab + es * np > doff || dsz == 0 || total > 0x1000000)
+        die("bkset: bad Backup header");
+
+    unsigned char *p = pmap(pa, total, &ml, &b);
+    if (bk_sum(p, total) != ck) die("bkset: header checksum mismatch before write");
+    ul sub = id >> 16, idx = id & 0xffff;
+    if (sub >= ns) die("bkset: subsystem outside the table");
+    unsigned char *se = p + 0x100 + 6 * sub;
+    ul cnt = se[0] | se[1] << 8, first = ld32(se + 2);
+    if (idx >= cnt || first + idx >= np) die("bkset: property outside the table");
+    ul eoff = ptab + es * (first + idx);
+    u32 ptr = ld32(p + eoff + es - 4);
+    ul doffp = ptr & 0xffffff, sz = ptr >> 24;
+    if (sz == 0 || sz == 0xff) die("bkset: variable-size property not supported");
+    if (sz != n) die("bkset: size mismatch");
+    if (doffp < doff || doffp + sz > total) die("bkset: property data outside the data area");
+
+    puts1("a5kcopy: bkset "); puthex(id); puts1(" entry "); puthex(eoff);
+    puts1(" ptr "); puthex(ptr); puts1(" PA "); puthex(pa + doffp);
+    puts1(" old "); putbytes(p + doffp, sz);
+    for (ul i = 0; i < sz; i++) p[doffp + i] = nv[i];
+    u32 nck = bk_sum(p, total);
+    p[0x20] = nck; p[0x21] = nck >> 8; p[0x22] = nck >> 16; p[0x23] = nck >> 24;
+    puts1(" new "); putbytes(p + doffp, sz);
+    puts1(" checksum "); puthex(ck); puts1(" -> "); puthex(ld32(p + 0x20)); puts1("\n");
+    punmap(b, ml);
+}
+
 void cmain(int argc, char **argv)
 {
     if (argc >= 4 && streq(argv[1], "-f2p")) {
@@ -183,6 +281,8 @@ void cmain(int argc, char **argv)
         if (pa < 0x80000000 || pa >= 0xA0000000) die("bad Backup phys address");
         ul n = file_to_phys(argv[2], pa);
         puts1("a5kcopy: Backup "); puthex(n); puts1(" bytes at "); puthex(pa); puts1("\n");
+    } else if (argc >= 4 && streq(argv[1], "-bkset")) {
+        bkset(hex(argv[2]), argv[3], argc > 4 ? argv[4] : "/mnt/setting/Backup.bin");
     } else if (argc >= 3 && streq(argv[1], "-mumin")) {
         mumin_handoff(hex(argv[2]));
     } else if (argc >= 4 && streq(argv[1], "-w32")) {
