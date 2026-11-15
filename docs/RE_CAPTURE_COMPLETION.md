@@ -542,3 +542,62 @@ known. (Note: `commands … continue` auto-continue blocks combined with a hardw
 Confidence: consumer-reads-DRAM-record, grid-all-zero, OPD-area-empty, lever-off-is-power-off — **V** (runtime).
 count = window-area/4 and the 0xF3031090 gate — **H** (static, `sub_4396C18C`). The exact harvest sink
 (0xF3031000 table vs DMA buffer) and the result magnitudes — **[?]**, pending the shutter-capture experiment above.
+
+### 6. Capture harness attempt — reached CapStart, blocked before RawDevInit (2026-11-16)
+
+Goal: drive a real shutter still-capture to the gate-3 divide (`0x439B193C`) to confirm the sink (a on-chip
+`0xF3031000` vs b DMA buffer) and then implement/verify `cxd90014_opd.c`. Method: SD image (`tools/mksd.py`, 4 GiB
+FAT32), COW NAND clone, `-monitor`/`-gdb`, `a5ktrace` plugin, HMP `sendkey`/`screendump`. Emulator only, no flash
+writes. **Outcome: the trap was not reached** — recorded here per the budget stop-rule; the implementation is left
+for a follow-up once the trap is reachable (sink still `[?]`). Build HEAD: `sony-a5000` with the Sgc1/Iif
+(`a44b7b9`) and IDT/OPD (`3bf04eb`) models.
+
+**How far it gets.**
+* SD + blank card → AUTOREPAIR dialog → "create database?" → `sendkey ret` → DB created → shooting screen (SCN,
+  RAW+J). The DB persists in the SD image across boots.
+* `0x0051000F = 01` (COLD), so the DMM/RAW-buffer gate (§RE_STILL_CAPTURE) is satisfied.
+* **`lens=ekit` + SD:** a full shutter (`sendkey shift-s`) **does** fire **`EnterCap 436F94A0`** (lr `437C43CB`,
+  i.e. from **`CapStart 437C43A8`**), and `CapStart` runs to **`StepMachStart 43A72BA2`**. This is **further than
+  the prior docs' "shutter capture not reached"** (`RE_STILL_CAPTURE §0`, `RE_CAPTURE_COMPLETION §0`). **But the
+  capture then aborts before `RawDevInit 437D0C18`** — no `RawDevInit`, no `CapExpose`, no `Stage_OPD`, no `ExitCap`;
+  the capture tasks return to idle (`trcv_mbf`), 148-shot counter unchanged, no error dialog. The RAW-develop / OPD
+  path (which contains the gate-3 divide) is never entered. Cause (hypothesis): with `lens=ekit` the body treats a
+  lens as present but the stage-C UART lens never readies (`RE_LENS_EMOUNT §8`), so the capture is cancelled.
+* **`lens=none` + SD:** a shutter press does **not** fire `EnterCap` at all (the body blocks release with no lens).
+  The documented unblock is **"Release w/o Lens" = Enable** (`RE_LENS_EMOUNT §6`, menu `CustomReleaseWOLens`), which
+  must be set through the MENU.
+
+**Why the harness stalled (tooling limits, all under host load ≈ 4 from a concurrent engine session).**
+1. **MENU navigation is unreliable.** The top tile menu renders fully (6 tiles: 카메라/사용자정의/무선/애플리케이션/
+   재생/설정) but the **arrow→ADC mapping navigates erratically**: a single `sendkey up` moved the highlight
+   *left* (설정→재생), `left` moved it down, etc., and presses queue and fire after my `screendump` so the shown
+   frame lags. The arrow ADC levels in `hw/arm/sony_a5000.c` (`up=182,left=356,down=520,right=686,centre=45` on ADC
+   unit 1) are a hypothesis and may not match the firmware's menu key decode; this needs its own RE before menu
+   automation is dependable. `ret` (centre) works on a modal dialog (AUTOREPAIR) but did not reliably enter a tile.
+   So I could not get to *Release w/o Lens*.
+2. **gdb watch/breakpoints desync the stub under the live multi-vCPU capture.** Any `commands … continue`
+   auto-continue, and even two plain breakpoints hit during a running capture, produce "Cannot execute this command
+   while the target is running" and lose sync (the VM must be recovered by a detach). This gdb has **no Python**
+   (`python` unsupported), so a synchronous gdb-driven stepping loop is not available either. The reliable tool is
+   the `a5ktrace` TCG plugin (PC-hit logging), but it cannot read a load's source address, and its `fncap` is
+   per-probe (live-view probes like `StepCall`/`Sgc1Exec` exhaust the cap, capture-only probes do not).
+
+**Re-confirmed runtime facts (this session).** At the shooting screen / menu: OPD on-chip table `0xF3031000` = 0 and
+`0xF3031090` = 0 (per-zone count/validity), `0xF3031098/9C` = `0x11d49f00 / 0x11d4a000` (OPD DMA working-buffer bus
+pointers); the global grid source `unk_43D995B4+0x820` and the idle record grid are 0. So the per-zone {count,sum}
+is zero everywhere, as in §5 — the OPD block produces no detection data.
+
+**To finish (for the next run, when host load is low — the engine session idle, to avoid the task-113 vCPU-starvation
+oops and the input lag).** Pick ONE of:
+* (i) **`lens=none` + enable *Release w/o Lens*.** Either fix/verify the arrow ADC levels so the menu is navigable
+  (RE the firmware key decode), or set the setting without the menu (the userland path is PARAMID `0x2EC` →
+  `MSGID_SET_NO_LENS_RELEASE_CMD` → liro `0x4085`; find the av-cam flag the liro handler sets and poke it, or persist
+  the setting in the SD/NAND). Then `sendkey shift-s` should run the full capture.
+* (ii) **Find and clear the `lens=ekit` capture-abort condition** between `CapStart`/`StepMachStart` and `RawDevInit`
+  (decompile the capture-context init `437E3910` / the first step after `43A72BA2`; probe `ExitCap 436F94D4` and the
+  step dispatcher `43A72C56` w[2]=step fn to see the last step before the abort).
+Then, at the capture, break (plain `break`, one at a time, no auto-continue) at `437904F8`/`43790674`; when it stops,
+read `$r7` (= &divisor) and single-step the loads that fill `rec+0x3844` back to their source — that resolves sink
+(a) `0xF3031000..0x17FF` vs (b) the DMA buffer at `0xF3031098/9C → 0x11d4….`. Only then implement `opd_done()`
+(per §5 refined spec) and verify the trap is gone. Implementation was **not** committed this session because it
+cannot be verified without reaching the trap (AI_WORKFLOW: commit only verified states).
