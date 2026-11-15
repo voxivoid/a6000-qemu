@@ -49,9 +49,9 @@ Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M
 | `O` | power lever (slide switch: each press flips OFF / ON; starts ON) | sub-micro slot A frame byte 28 bit 0 (1 = ON); while the camera is off, lever ON powers it up |
 | `S` | shutter half press (S1, key 0x1F1) | GPIO P0.1 + P0.11 low (active low) |
 | `Shift+S`, or `Space` | shutter full press (S1 + S2, key 0xA7) | additionally GPIO P1.5 + P0.13 low |
-| `T` / `W` | zoom lever tele / wide (slow) | ADC unit 1 ch 3 (ch 0x0F), level 478 / 400 (value 1 / 0x8001) |
-| `Shift+T` / `Shift+W` | zoom lever tele / wide (fast) | same channel, level 162 / 301 (value 2 / 0x8002) |
-| — | control wheel rotation | not wired yet (av-cam JogTpu counter) |
+| `T` / `W` | zoom lever tele / wide (slow) | ADC unit 1 ch 3 (ch 0x0F), level 400 / 478 (value 0x8001 / 1 → event0 610 / 611) |
+| `Shift+T` / `Shift+W` | zoom lever tele / wide (fast) | same channel, level 301 / 162 (value 0x8002 / 2) |
+| `]` / `[` | control wheel rotate CW / CCW (event0 525 / 526); `Shift` = x4 | `cxd90014-jog` 16-bit counter at 0xF2404014 (`docs/RE_WHEEL_ZOOM_DATE.md`) |
 
 Keys are also accepted from the HMP monitor: `sendkey ret 300`, `sendkey down 300`, `sendkey m 300`, ... Hold keys for about 300 ms: av-cam samples the buttons only every ~43 ms of guest time, and the default 100 ms press is often missed.
 QEMU's own hot keys: Ctrl+Opt+G releases the mouse, Ctrl+Opt+1 / 2 switch between the panel (console 0) and the debug frame-buffer view.

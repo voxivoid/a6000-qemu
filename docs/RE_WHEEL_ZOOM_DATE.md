@@ -267,3 +267,11 @@ Mark the exact sub-cause `[?]` until that probe is run. Whatever the outcome, §
 | Emulator zoom reversed | `hw/arm/sony_a5000.c` `a5k_key_event` `T`=162/478, `W`=301/400 |
 | Clock data valid | live udate base `0x3F088E48` = flag 1 UTC, TZ 540, DST 0, area 0; `udate.ko` `udate_get_localtime` @`0x508`; `libObj` `M_CLOCK onGetInfo` case 0 (`sub_404FD8`, `~0x405160`) |
 | Date row = UI model query | `viewUnified2` `sub_2A4C28` (`getModelInfo(@M015/@M060/@M063/@M090, 9)`, params `0x10F/0x110/0x111`, `setDate` else-skip), `sub_2A4D40`/`sub_2A4D88`/`sub_2A4E2C`; `RE_RTC.md` §6 (setDate never called) |
+
+---
+
+## Implementation notes: wheel (branch `wheel`)
+
+* New device `hw/misc/cxd90014_jog.c` (`cxd90014-jog`), 0x30 bytes at `0xF2404000`, overlay priority 0 over the io-f0 regfile. `+0x14` returns the 16-bit counter (writes set it); other registers echo writes. `a5k_key_event`: `]` = CW (+1), `[` = CCW (-1), Shift = x4, on key-down.
+* Verified: with MENU > Setup page 4 open, two `]` presses moved the highlight down one row, two `[` presses moved it back up (selection moves with lag; one press alone sometimes does not cross the dial-event detent/curve threshold, so a press is a fraction of a detent). Cold boot, MENU, PLAY unaffected. The av-cam `435a6690` trace was not captured (UI reaction observed directly instead).
+* Open: tune per-press step (Backup 0x1070100..02 interval/curve) so one press = one row.

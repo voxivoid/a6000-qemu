@@ -39,6 +39,7 @@ Every value here was recovered from the official 1.10 firmware (kernel
 | UART0/1/2 (PL011, ttyAM0/–/ttyAM1) | 0xF2000000 / 1000 / 2000 | 150/151/152 | QEMU pl011 — V |
 | WDT | 0xF2402000 | — | cxd4115-timer (watchdog=on): CTRL 0x80000012 setup, 0x80001012 start, kick CLR=0x10 — V |
 | Timer block (CXD4115) | 0xF2403000, ch n at +0x100·n | 153+n | cxd4115-timer — V (hwtimer0..3 = ch5..8 = IRQ 158..161 confirms the formula) |
+| TPU / control-wheel counter | 0xF2404000..2F, 16-bit counter at +0x14 | - | cxd90014-jog (host keys `]` / `[`); av-cam JogTpu, docs/RE_WHEEL_ZOOM_DATE.md |
 | sircs (IR remote) | 0xF2400000 | 198 | — |
 | i2c | 0xF2401000 | 199 | — |
 | sio0..4 | 0xF2405000 + 0x200·n | 201..205 | sub-micro link on ch0/ch3. Slot-A RX byte 28 (CAkey1): bit0 = power lever, slide switch, 1 = ON (V: 0 → firmware starts an off with factor 7), bit1 = PLAY, bit2 = MENU. Slot-A TX (frame[0] = 0x21) off data: +0x13 bit0 valid, +0x14 factor, +0x15 next boot (0x20 restart / 0x21 stay off), +0x1B bit0 warm, +0x1E factor, +0x1F..+0x21 wake masks (bit meaning H) — V by the factor 7/8/13 offs (`docs/RE_REBOOT.md` B.1, B.5) |

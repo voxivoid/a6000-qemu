@@ -39,6 +39,7 @@
 #include "hw/arm/boot.h"
 #include "hw/sd/sdhci.h"
 #include "hw/misc/cxd90014_adc.h"
+#include "hw/misc/cxd90014_jog.h"
 #include "ui/input.h"
 #include "hw/misc/cxd90014_sio.h"
 #include "hw/misc/a5k_nfc.h"
@@ -141,6 +142,7 @@ struct A5KMachineState {
     bool key_shift;                 /* host Shift held (zoom speed) */
     bool key_s2;                    /* shutter fully pressed */
     DeviceState *adc[2];
+    DeviceState *jog;               /* control-wheel counter */
     char *submicro_file;
     /* sub-micro RTC (docs/RE_RTC.md section 7) */
     time_t rtc_offset;              /* seconds added to qemu_get_timedate */
@@ -933,11 +935,22 @@ static void a5k_key_event(DeviceState *dev, QemuConsole *src,
             a5k_shutter(s, false, false);
         }
         break;
+    case Q_KEY_CODE_BRACKET_RIGHT:
+    case Q_KEY_CODE_BRACKET_LEFT:
+        /* control wheel: ] = CW (event0 525), [ = CCW (526); Shift = x4 */
+        if (down && s->jog) {
+            int n = s->key_shift ? 4 : 1;
+            cxd90014_jog_step(s->jog,
+                              qcode == Q_KEY_CODE_BRACKET_RIGHT ? n : -n);
+        }
+        break;
     case Q_KEY_CODE_T:
-        a5k_adc_key(s, 3, qcode, down, s->key_shift ? 162 : 478);
+        /* tele: ADC value 0x8001/0x8002 -> event0 610 (docs/RE_WHEEL_ZOOM_DATE.md 2.3) */
+        a5k_adc_key(s, 3, qcode, down, s->key_shift ? 301 : 400);
         break;
     case Q_KEY_CODE_W:
-        a5k_adc_key(s, 3, qcode, down, s->key_shift ? 301 : 400);
+        /* wide: ADC value 1/2 -> event0 611 */
+        a5k_adc_key(s, 3, qcode, down, s->key_shift ? 162 : 478);
         break;
     case Q_KEY_CODE_RET:
     case Q_KEY_CODE_KP_ENTER:
@@ -1828,6 +1841,11 @@ static void a5k_init(MachineState *ms)
                                          0xF2406000 + u * 0x1000,
                                          pic[GIC_ID(215 + u)]);
     }
+
+    /* control-wheel TPU counter (docs/RE_WHEEL_ZOOM_DATE.md 1) */
+    s->jog = qdev_new(TYPE_CXD90014_JOG);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(s->jog), &error_fatal);
+    sysbus_mmio_map_overlap(SYS_BUS_DEVICE(s->jog), 0, 0xF2404000, 0);
 
     /* camera buttons from the host keyboard (after GPIO and ADC exist) */
     qemu_input_handler_activate(
