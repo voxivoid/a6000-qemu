@@ -46,6 +46,7 @@ Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M
 | `M` | MENU | sub-micro slot A frame byte 28 bit 2 |
 | `P` | PLAY (playback) | sub-micro slot A frame byte 28 bit 1 |
 | `R` | MOVIE (record) | GPIO P10.10, active low |
+| `O` | power lever (slide switch: each press flips OFF / ON; starts ON) | sub-micro slot A frame byte 28 bit 0 (1 = ON); while the camera is off, lever ON powers it up |
 | `S` | shutter half press (S1, key 0x1F1) | GPIO P0.1 + P0.11 low (active low) |
 | `Shift+S`, or `Space` | shutter full press (S1 + S2, key 0xA7) | additionally GPIO P1.5 + P0.13 low |
 | `T` / `W` | zoom lever tele / wide (slow) | ADC unit 1 ch 3 (ch 0x0F), level 478 / 400 (value 1 / 0x8001) |
@@ -91,8 +92,9 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
   `A5K_DEBUG_CONSOLE=1` puts it on stdio). Without `shell-socket=` UART2 is the third `-serial`
   (`-serial null -serial null -serial tcp:...`). `console=ttyAM0` (`A5K_DEBUG_CONSOLE=ttyAM0`) is for early-boot logs only:
   UART0 belongs to av-cam's monitor and the UI does not start.
-- The firmware's idle power save cycles the guest after about 5 minutes without key input; the shell session and
-  `/android/a5k` are lost. `a5kshell.py` reports this (exit status 3). Send a harmless key over HMP now and then, or work
+- The firmware's idle power save turns the camera off after about 5 minutes without key input (VM suspended until the
+  power lever `O`, `S`/`M`/`P` or HMP `system_wakeup` powers it on again); the shell session and `/android/a5k` are
+  lost. `a5kshell.py` reports this (exit status 3). Send a harmless key over HMP now and then, or work
   within that window.
 
 ## Status (2026-11-15)
@@ -119,7 +121,7 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
 - ⏳ Camera front end: sensor writer (P2S, IRQ 38), front-end frame IRQs, AIF channel groups (IRQs 40–50) modelled; capture errors gone, live view still black (no YC-output request yet, `docs/RE_SENSOR_ISP.md` §7)
 - ✅ SA DSP cores: null model (`cxd90014_sa.c`) completes the imager's defect-table job → the engine reaches monitoring; the shooting screen now shows the exposure readout (shutter/aperture scales). Live view itself still stops before YC state 2 (`docs/RE_LIVEVIEW_REQUEST.md` §9); PLAY and SD work: no-card playback view; with a card the image-database dialog creates the database on the card (first SD writes) (`docs/RE_PLAYBACK_SWITCH.md`)
 - ✅ Live-view path: with SYSV as the master V clock the firmware enables the panel YUV layer and programs ch51 every frame (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51 is an 8-bit luma plane (1024×516) scaled to the panel; nothing fills it yet (no ISP model), so it is black like a capped lens; `-global cxd90014-aif.lv-source=bars|ramp|file:PATH.pgm` writes a test luma frame into that buffer at the resize output (debug, `docs/RE_LIVEVIEW_IMAGE.md`)
-- ✅ USB device (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS glue model with a TCP virtual cable ("A5KU"); the camera enumerates (MTP 054C:08D3), `pmca-console info -d socket` prints ILCE-5000 / 1.10, `install` (connection test) completes, and the updater core enumerates as 054C:03E2 and runs the PMCA updater shell. After SWITCH_MODE the camera powers off like the real one (sub-micro power-off handshake, DDR controller, p0.10 power-off line) and the sub-micro power-cycles it into the updater: `pmca-console updatershell -d socket` reaches the updater shell with no manual reset (second PMCA run with `-m ILCE-5000`, `docs/RE_REBOOT.md`). Machine option `poff=restart|off` (default `restart`) decides what the power-off line does
+- ✅ USB device (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS glue model with a TCP virtual cable ("A5KU"); the camera enumerates (MTP 054C:08D3), `pmca-console info -d socket` prints ILCE-5000 / 1.10, `install` (connection test) completes, and the updater core enumerates as 054C:03E2 and runs the PMCA updater shell. After SWITCH_MODE the camera powers off like the real one (sub-micro power-off handshake, DDR controller, p0.10 power-off line) and the sub-micro power-cycles it into the updater: `pmca-console updatershell -d socket` reaches the updater shell with no manual reset (second PMCA run with `-m ILCE-5000`, `docs/RE_REBOOT.md`). Machine option `poff=auto|restart|off` (default `auto`) decides what the power-off line does: `auto` follows the off data the CPU sent in the slot-A TX frame (+0x15 = 0x20 → power cycle, otherwise the camera stays off = VM suspended, `info status` → `paused (suspended)`; power lever `O`, after an idle power save also `S`/`M`/`P`, or HMP `system_wakeup` powers it on again with a cold boot, `docs/RE_REBOOT.md` B.7).
 - ⬜ Sensor/ISP (live view), lens serial protocol, audio
 
 ## Firmware and legal notice

@@ -39,10 +39,10 @@ Every value here was recovered from the official 1.10 firmware (kernel
 | Timer block (CXD4115) | 0xF2403000, ch n at +0x100·n | 153+n | cxd4115-timer — V (hwtimer0..3 = ch5..8 = IRQ 158..161 confirms the formula) |
 | sircs (IR remote) | 0xF2400000 | 198 | — |
 | i2c | 0xF2401000 | 199 | — |
-| sio0..4 | 0xF2405000 + 0x200·n | 201..205 | — |
+| sio0..4 | 0xF2405000 + 0x200·n | 201..205 | sub-micro link on ch0/ch3. Slot-A RX byte 28 (CAkey1): bit0 = power lever, slide switch, 1 = ON (V: 0 → firmware starts an off with factor 7), bit1 = PLAY, bit2 = MENU. Slot-A TX (frame[0] = 0x21) off data: +0x13 bit0 valid, +0x14 factor, +0x15 next boot (0x20 restart / 0x21 stay off), +0x1B bit0 warm, +0x1E factor, +0x1F..+0x21 wake masks (bit meaning H) — V by the factor 7/8/13 offs (`docs/RE_REBOOT.md` B.1, B.5) |
 | clkrst3 | 0xF2900000 | — | unimp |
 | ldec (LZ decoder) | 0xF2903000 | 171 | — |
-| gpio_p0..p17 | 0xF2910000 + 0x100·n | — | cxd90014-gpio; p0.10 = power-off line: the board sets it high at reset (bootloader stand-in, H) and a 1→0 edge (IRAM sleep code, `0xF2910048 = 0x400`) triggers the sub-micro power cycle / power off (`poff=`) — V for the updater restart (`docs/RE_REBOOT.md` §4.4) |
+| gpio_p0..p17 | 0xF2910000 + 0x100·n | — | cxd90014-gpio; p0.10 = power-off line: the board sets it high at reset (bootloader stand-in, H) and a 1→0 edge (IRAM sleep code, `0xF2910048 = 0x400`) triggers the sub-micro power cycle / power off (`poff=auto|restart|off`, default `auto` = slot-A TX off data +0x15: 0x20 power cycle, else stay off = VM suspended) — V for the updater restart (factor 13) and the idle power-save off (factor 8) (`docs/RE_REBOOT.md` §4.4, B.4, B.7) |
 | DDR controller | 0xF0104000 | — | cxd90014-ddrc: +0xAC command (bit1 → +0x128 bit12 done), +0x12C W1C, +0x78[31:24] requested state, +0x7C low byte 0x25 when 0x0A requested; register names H — V for the IRAM sleep code (`docs/RE_REBOOT.md` §4.3) |
 | system ctrl | 0xF2915000 | — | cxd90014-sysctl: +0 chip id 0x500 (S), +0x44/+0x48 rst set/clr, 0x11 = SoC reset — V |
 | otg | 0xF2920000 | 232 (VBUS), 233 (ID) | cxd90014-usbhdc: +0x10 bit0 VBUS active low, bit1 ID; 3 = no cable, 2 = A5KU client connected; GIC 232 pulse on change — V (`docs/RE_USB_DEVICE_CONTROLLER.md` §6/§9) |

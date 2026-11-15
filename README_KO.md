@@ -61,7 +61,7 @@
 - ⏳ 카메라 프런트엔드: 센서 라이터(P2S, IRQ 38)·프런트엔드 프레임 IRQ·AIF 채널 그룹(IRQ 40–50) 모델 → 캡처 오류 해소, 라이브뷰는 아직 검정(YC 출력 요청 없음, `docs/RE_SENSOR_ISP.md` §7)
 - ✅ SA DSP 코어: null 모델(`cxd90014_sa.c`)로 센서 결함표 작업 완료 → 엔진이 모니터링 상태 도달, 촬영 화면에 노출 표시(셔터/조리개 눈금). 라이브뷰는 YC 상태 2 전에서 정지(`docs/RE_LIVEVIEW_REQUEST.md` §9), PLAY·SD 동작: 카드 없음 재생 화면, 카드가 있으면 이미지 DB 생성 대화상자 → 카드에 DB 생성(첫 SD 쓰기) (`docs/RE_PLAYBACK_SWITCH.md`)
 - ✅ 라이브뷰 경로: SYSV를 마스터 V 클럭으로 바꾼 뒤 펌웨어가 패널 YUV 레이어를 켜고 ch51을 매 프레임 설정 (`docs/RE_LIVEVIEW_PIPELINE.md`). ch51은 8비트 휘도 평면(1024×516)을 패널로 스케일; 채우는 ISP 모델이 아직 없어 렌즈 캡을 닫은 것처럼 검정; `-global cxd90014-aif.lv-source=bars|ramp|file:PATH.pgm`이면 리사이즈 출력 시점에 그 버퍼로 테스트 휘도 프레임을 기록(디버그, `docs/RE_LIVEVIEW_IMAGE.md`)
-- ✅ USB 디바이스 (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS 글루 모델과 TCP 가상 케이블("A5KU") → 카메라가 열거됨(MTP 054C:08D3), `pmca-console info -d socket`이 ILCE-5000 / 1.10 출력, `install`(연결 테스트) 완료, 업데이터 코어가 054C:03E2로 열거되어 PMCA 업데이터 셸 실행. SWITCH_MODE 후 실기처럼 전원이 꺼지고(서브마이컴 전원 끄기 핸드셰이크, DDR 컨트롤러, p0.10 전원 끄기 라인) 서브마이컴이 전원을 다시 넣어 업데이터로 부팅 → `pmca-console updatershell -d socket`이 수동 리셋 없이 업데이터 셸까지 도달(두 번째 PMCA 실행은 `-m ILCE-5000`, `docs/RE_REBOOT.md`). 머신 옵션 `poff=restart|off`(기본 `restart`)로 전원 끄기 라인의 동작을 선택
+- ✅ USB 디바이스 (`docs/RE_USB_DEVICE_CONTROLLER.md` §9, `docs/RE_USB_HOST_PATH.md` §9): F_USB20HDC + HDMAC + VBUS 글루 모델과 TCP 가상 케이블("A5KU") → 카메라가 열거됨(MTP 054C:08D3), `pmca-console info -d socket`이 ILCE-5000 / 1.10 출력, `install`(연결 테스트) 완료, 업데이터 코어가 054C:03E2로 열거되어 PMCA 업데이터 셸 실행. SWITCH_MODE 후 실기처럼 전원이 꺼지고(서브마이컴 전원 끄기 핸드셰이크, DDR 컨트롤러, p0.10 전원 끄기 라인) 서브마이컴이 전원을 다시 넣어 업데이터로 부팅 → `pmca-console updatershell -d socket`이 수동 리셋 없이 업데이터 셸까지 도달(두 번째 PMCA 실행은 `-m ILCE-5000`, `docs/RE_REBOOT.md`). 머신 옵션 `poff=auto|restart|off`(기본 `auto`)로 전원 끄기 라인의 동작을 선택: `auto`는 CPU가 slot-A TX 프레임에 보낸 끄기 데이터를 따름(+0x15 = 0x20 → 전원 재투입, 그 외에는 꺼진 상태 유지 = VM suspended, `info status` → `paused (suspended)`; 전원 레버 `O`, 자동 전원 끄기 후에는 `S`/`M`/`P`도, 또는 HMP `system_wakeup`으로 콜드 부팅하여 다시 켜짐, `docs/RE_REBOOT.md` B.7).
 - ⬜ 센서/ISP(라이브뷰), 렌즈 시리얼 프로토콜, 오디오
 
 ## 사용
@@ -80,6 +80,7 @@
 | `M` | MENU | 서브마이컴 slot A 프레임 바이트 28 비트 2 |
 | `P` | 재생 | 서브마이컴 slot A 프레임 바이트 28 비트 1 |
 | `R` | MOVIE (동영상 녹화) | GPIO P10.10, active low |
+| `O` | 전원 레버 (슬라이드 스위치: 누를 때마다 OFF / ON 전환, 시작 시 ON) | 서브마이컴 slot A 프레임 바이트 28 비트 0 (1 = ON); 카메라가 꺼진 동안 레버 ON = 전원 켜짐 |
 | `S` | 셔터 반누름 (S1, 키 0x1F1) | GPIO P0.1 + P0.11 low (active low) |
 | `Shift+S` 또는 `Space` | 셔터 완전 누름 (S1 + S2, 키 0xA7) | 추가로 GPIO P1.5 + P0.13 low |
 | `T` / `W` | 줌 레버 망원 / 광각 (저속) | ADC 유닛 1 ch 3 (ch 0x0F), 레벨 478 / 400 (값 1 / 0x8001) |
@@ -121,7 +122,8 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
 - 기타 머신 옵션: `console=ttynull|ttyAM1|ttyAM0`, `debug-console=on`(= `console=ttyAM1`; `run.sh`에서는 `A5K_DEBUG_CONSOLE=1`
   이면 stdio로). `shell-socket=` 없이 쓰면 UART2는 세 번째 `-serial`이다(`-serial null -serial null -serial tcp:...`).
   `console=ttyAM0`(`A5K_DEBUG_CONSOLE=ttyAM0`)은 초기 부팅 로그 전용: UART0는 av-cam 모니터 포트라서 UI가 뜨지 않는다.
-- 키 입력 없이 약 5분이 지나면 펌웨어의 유휴 절전이 게스트를 껐다 켠다. 셸 세션과 `/android/a5k`는 사라진다.
+- 키 입력 없이 약 5분이 지나면 펌웨어의 유휴 절전이 카메라를 끈다(전원 레버 `O`, `S`/`M`/`P` 또는 HMP
+  `system_wakeup`으로 다시 켤 때까지 VM suspended). 셸 세션과 `/android/a5k`는 사라진다.
   `a5kshell.py`는 이를 알려준다(종료 코드 3). HMP로 가끔 무해한 키를 보내거나, 그 시간 안에 작업한다.
 
 ## 펌웨어 · 법적 고지

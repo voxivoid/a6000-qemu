@@ -152,9 +152,16 @@ struct A5KMachineState {
     uint8_t sa_tx_boot[128];        /* the first one after reset */
     bool sa_tx_valid, sa_tx_boot_valid;
     int poff_level;                 /* p0.10 latch as last reported */
-    bool poff_restart;              /* poff=restart (default) or off */
+    int poff_mode;                  /* A5K_POFF_* from poff= (auto) */
     char *poff;
     QEMUTimer *poff_t;
+    /* off kinds and the power lever (RE_REBOOT.md B.4, B.5, B.7) */
+    uint8_t off_info[0x22];         /* slot-A TX +0x13..+0x21 (frame offs) */
+    bool off_info_valid;            /* latched; cleared on power-on */
+    bool powered_off;               /* VM suspended = camera off */
+    bool lever_on;                  /* power slide switch, kept on reset */
+    Notifier wakeup;
+    Notifier suspend;
     int reset_kind;                 /* A5K_RESET_* consumed on reset */
     char *cmdline;
     uint8_t *kernel, *initrd;
@@ -420,8 +427,12 @@ static void a5k_submicro_card_inserted(uint8_t *frames)
  * "CAkey1" word (av-cam field parser 43AC73AE: b28 | b29 << 8, copied to the
  * task-48 state +24 = 0x43ED43C8 and served to input.ko on sync queue
  * 0x280132).  input.ko's key table (Backup 0x1120000): bit1 = PLAY (0x1F7),
- * bit2 = MENU (0x1AB), both active high.  The snapshot word is 0x0201.
+ * bit2 = MENU (0x1AB), both active high; bit0 = the power lever, a held
+ * two-position slide switch (BF_KEY_POWER_SLIDE), 1 = ON, input.ko keycode
+ * 0x0002 POWER "pressed" while it is 0 (RE_REBOOT.md B.5).  The snapshot
+ * word is 0x0201.
  */
+#define A5K_LEVER_BIT       0
 static void a5k_submicro_front_key(A5KMachineState *s, int bit, bool down)
 {
     if (!s->submicro_frames) {
@@ -582,6 +593,47 @@ static void a5k_submicro_mem_tx(A5KMachineState *s, const uint8_t *tx)
     }
 }
 
+/*
+ * Off data in the slot-A TX frame (docs/RE_REBOOT.md B.1, B.4).  upm
+ * k_upm_snd_hcrn_ura sends the end data (factor, warm, restart) to av-cam;
+ * av-cam's TX item 38 writer 439126DC fills +0x1B (0x80 | warm), +0x1C..+0x1D
+ * (439121A8: restart kind delay, returns next boot 32 / 33), +0x1E = factor,
+ * +0x1F..+0x21 = wake masks (Backup 0x28000D for factor 7, 0x28000A for the
+ * factors listed in 0x28000F, else 00 01 81); item 42 writer 43915AC0 sets
+ * +0x13 bit 0 = off data valid, +0x14 = factor, +0x15 = next boot code
+ * (0x20 = power up again, 0x21 = stay off).  The micro acts on the last
+ * valid set at the p0.10 drop, so it is latched until power-on.
+ */
+#define A5K_OFF_VALID       0x13    /* bit 0 */
+#define A5K_OFF_FACTOR      0x14
+#define A5K_OFF_NEXT        0x15    /* 0x20 restart, 0x21 (0x1F) stay off */
+#define A5K_OFF_WARM        0x1B    /* bit 0: 1 warm (type 27), 0 cold */
+#define A5K_OFF_WAKE        0x1F    /* +0x1F..+0x21 wake masks */
+#define A5K_OFF_NEXT_RESTART 0x20
+
+static void a5k_submicro_off_latch(A5KMachineState *s, const uint8_t *tx)
+{
+    const uint8_t *o = s->off_info;
+
+    if (tx[0] != 0x21 || !(tx[A5K_OFF_VALID] & 1)) {
+        return;
+    }
+    if (s->off_info_valid &&
+        !memcmp(s->off_info + A5K_OFF_VALID, tx + A5K_OFF_VALID,
+                sizeof(s->off_info) - A5K_OFF_VALID)) {
+        return;
+    }
+    memcpy(s->off_info + A5K_OFF_VALID, tx + A5K_OFF_VALID,
+           sizeof(s->off_info) - A5K_OFF_VALID);
+    s->off_info_valid = true;
+    info_report("sony-a5000: sub-micro off data: factor %d, next 0x%02x "
+                "(%s), %s, wake %02x %02x %02x", o[A5K_OFF_FACTOR],
+                o[A5K_OFF_NEXT],
+                o[A5K_OFF_NEXT] == A5K_OFF_NEXT_RESTART ? "restart" : "off",
+                (o[A5K_OFF_WARM] & 1) ? "warm" : "cold", o[A5K_OFF_WAKE],
+                o[A5K_OFF_WAKE + 1], o[A5K_OFF_WAKE + 2]);
+}
+
 static void a5k_submicro_slot_a(A5KMachineState *s, const uint8_t *tx,
                                 uint8_t *out)
 {
@@ -599,6 +651,7 @@ static void a5k_submicro_slot_a(A5KMachineState *s, const uint8_t *tx,
         a5k_submicro_crc(out);
     }
     a5k_submicro_mem_tx(s, tx);
+    a5k_submicro_off_latch(s, tx);
     if (tx[0] != 0x41) {
         memcpy(s->sa_tx_last, tx, 128);
         s->sa_tx_valid = true;
@@ -751,7 +804,7 @@ static void a5k_submicro_tick(void *opaque)
  *   GPIO P10.10 active low = STARTSTOP (0x1F0, the MOVIE button)
  *   sub-micro slot A byte 28 bit 2 MENU (0x1AB), bit 1 PLAY (0x1F7)
  *   GPIO p0.1/p0.11 S1 (0x1F1), p1.5/p0.13 S2 (0xA7), all active low
- * Host keys: arrows, Enter = centre, M = MENU, P = PLAY,
+ * Host keys: arrows, Enter = centre, M = MENU, P = PLAY, O = power lever,
  * Delete/Backspace = delete, R = MOVIE, T/W = zoom tele/wide (slow; with
  * Shift held = fast), S = shutter half press, Shift+S or S+Space = full.
  * Band mid-points are used.
@@ -787,6 +840,49 @@ static void a5k_shutter(A5KMachineState *s, bool s1, bool s2)
     qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 13), !s2);
 }
 
+static void a5k_power_on(A5KMachineState *s, const char *why);
+
+/*
+ * Power lever (host key O, RE_REBOOT.md B.5, B.7 step 4): each key-down
+ * flips the slide switch; key-up is ignored.  While on, ON -> OFF lets the
+ * firmware power off by itself (factor 7); while off, OFF -> ON powers on.
+ */
+static void a5k_power_lever(A5KMachineState *s)
+{
+    s->lever_on = !s->lever_on;
+    a5k_submicro_front_key(s, A5K_LEVER_BIT, s->lever_on);
+    info_report("sony-a5000: power lever %s", s->lever_on ? "ON" : "OFF");
+    if (s->powered_off && s->lever_on) {
+        a5k_power_on(s, "power lever");
+    }
+}
+
+/*
+ * While off the SoC is unpowered and only the micro watches its wake
+ * sources.  After an idle power save (factor 8/9, the Backup 0x28000F list
+ * with wake mask Backup 0x28000A = 81 FF FE) the micro also wakes on keys:
+ * hypothesis: S (shutter), M (MENU) and P (PLAY), the minimal set backed by
+ * upm's BF_KEY_RELEASE_APO / MENU_APO / PLAY_APO boot factors; the mask bit
+ * meaning is not decoded (RE_REBOOT.md B.2, B.7 step 5).  After a lever off
+ * (mask 81 81 81) only the lever wakes it.  Returns true when the key is
+ * consumed (never forwarded to the unpowered SoC).
+ */
+static bool a5k_off_key(A5KMachineState *s, int qcode, bool down)
+{
+    int f = s->off_info_valid ? s->off_info[A5K_OFF_FACTOR] : -1;
+
+    if (!s->powered_off) {
+        return false;
+    }
+    if (down && s->lever_on && (f == 8 || f == 9) &&
+        (qcode == Q_KEY_CODE_S || qcode == Q_KEY_CODE_M ||
+         qcode == Q_KEY_CODE_P)) {
+        a5k_power_on(s, qcode == Q_KEY_CODE_S ? "shutter" :
+                        qcode == Q_KEY_CODE_M ? "MENU" : "PLAY");
+    }
+    return true;
+}
+
 static void a5k_key_event(DeviceState *dev, QemuConsole *src,
                           InputEvent *evt)
 {
@@ -795,11 +891,20 @@ static void a5k_key_event(DeviceState *dev, QemuConsole *src,
     int qcode = qemu_input_key_value_to_qcode(key->key);
     bool down = key->down;
 
-    switch (qcode) {
-    case Q_KEY_CODE_SHIFT:
-    case Q_KEY_CODE_SHIFT_R:
+    if (qcode == Q_KEY_CODE_O) {
+        if (down) {
+            a5k_power_lever(s);
+        }
+        return;
+    }
+    if (qcode == Q_KEY_CODE_SHIFT || qcode == Q_KEY_CODE_SHIFT_R) {
         s->key_shift = down;
-        break;
+        return;
+    }
+    if (a5k_off_key(s, qcode, down)) {
+        return;
+    }
+    switch (qcode) {
     case Q_KEY_CODE_S:
         /* S = half press, Shift+S = full press (passes through S1) */
         if (down) {
@@ -914,25 +1019,95 @@ static void a5k_dump_sa_tx(const char *what, const uint8_t *f)
 }
 
 /*
- * Restart/factor bytes of the slot-A TX packet (RE_REBOOT.md 4.4).  Seen at
- * the p0.10 drop of an OFF_BY_UPDATE (pmca updatershell, factor 13, cold):
- *   +0x14 0d  +0x15 20  +0x1B 80  +0x1D 80  +0x1E 0d  +0x20 01  +0x21 81
- *   +0x31 80
- * i.e. the RE_REBOOT.md 4.4 table with the entries 0x1F..0x25 four bytes
- * lower (0x14, 0x15 and 0x31 match).  hypothesis: 0x1E = off factor,
- * 0x20 bit 0 = restart, 0x21 = cold flag | 0x80; a plain off (restart 0)
- * has not been observed yet.  Logged on every off; the decision itself is
- * the poff= option for now.
+ * What the sub-micro does on the p0.10 drop (docs/RE_REBOOT.md B.4): with
+ * poff=auto (default) it follows the latched off data, +0x15 == 0x20 = power
+ * cycle (SWITCH_MODE factor 13, UI reset factor 20), anything else = stay
+ * off (idle power save factor 8, power lever factor 7, battery, heat, ...);
+ * no off data latched = stay off [? micro default, never observed].
+ * poff=restart / poff=off force one of the two.
  */
-#define A5K_SA_TX_FACTOR    0x1E
-#define A5K_SA_TX_RESTART   0x20
+enum {
+    A5K_POFF_AUTO = 0,
+    A5K_POFF_RESTART,
+    A5K_POFF_OFF,
+};
+
+static int a5k_off_factor(A5KMachineState *s)
+{
+    return s->off_info_valid ? s->off_info[A5K_OFF_FACTOR] : -1;
+}
 
 static void a5k_poff_cycle(void *opaque)
 {
     A5KMachineState *s = opaque;
-    int factor = s->sa_tx_valid ? s->sa_tx_last[A5K_SA_TX_FACTOR] : -1;
 
-    info_report("sony-a5000: sub-micro power cycle (factor %d)", factor);
+    info_report("sony-a5000: sub-micro power cycle (factor %d)",
+                a5k_off_factor(s));
+    s->reset_kind = A5K_RESET_POWER;
+    qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+}
+
+/*
+ * Camera off = suspended VM: the vCPUs stop, QEMU keeps running, and the
+ * input layer still delivers key events (ui/input.c accepts RUNNING and
+ * SUSPENDED), so the micro model below can watch its wake sources.  A
+ * wakeup (power lever, APO wake key, HMP system_wakeup) runs
+ * a5k_power_wakeup, which powers the SoC up like the power cycle: DDR and
+ * IRAM cleared, cold boot.  The real camera most likely resumes warm offs
+ * (type 27) from DDR [? RE_REBOOT.md B.5, B.9 question 5].
+ */
+static void a5k_power_off(A5KMachineState *s)
+{
+    const uint8_t *o = s->off_info;
+
+    if (s->off_info_valid) {
+        info_report("sony-a5000: sub-micro power off (factor %d, %s, wake "
+                    "%02x %02x %02x)", o[A5K_OFF_FACTOR],
+                    (o[A5K_OFF_WARM] & 1) ? "warm" : "cold", o[A5K_OFF_WAKE],
+                    o[A5K_OFF_WAKE + 1], o[A5K_OFF_WAKE + 2]);
+    } else {
+        info_report("sony-a5000: sub-micro power off (factor -1, no off "
+                    "data)");
+    }
+    s->powered_off = true;
+    qemu_system_suspend_request();
+}
+
+static void a5k_power_on(A5KMachineState *s, const char *why)
+{
+    if (!s->powered_off) {
+        return;
+    }
+    info_report("sony-a5000: sub-micro power on (%s)", why);
+    qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER, NULL);
+}
+
+/*
+ * pause_all_vcpus() (qemu_system_suspend) also stops QEMU_CLOCK_VIRTUAL
+ * timers.  The sub-micro stays alive while the SoC is off, and so must
+ * the host input path: HMP sendkey releases a key and sends the next one
+ * from a QEMU_CLOCK_VIRTUAL timer (ui/input.c qemu_input_queue_delay), so
+ * with the clock stopped only the first key press of an off period would
+ * ever arrive.  Keep the virtual clock running while off; the vCPUs stay
+ * paused, and the power-on reset rebuilds every SoC device anyway.
+ */
+static void a5k_power_suspended(Notifier *n, void *data)
+{
+    A5KMachineState *s = container_of(n, A5KMachineState, suspend);
+
+    if (s->powered_off) {
+        qemu_clock_enable(QEMU_CLOCK_VIRTUAL, true);
+    }
+}
+
+static void a5k_power_wakeup(Notifier *n, void *data)
+{
+    A5KMachineState *s = container_of(n, A5KMachineState, wakeup);
+
+    if (!s->powered_off) {
+        return;
+    }
+    s->powered_off = false;
     s->reset_kind = A5K_RESET_POWER;
     qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
 }
@@ -948,6 +1123,7 @@ static void a5k_poff_line(void *opaque, int n, int level)
 {
     A5KMachineState *s = opaque;
     bool fall = s->poff_level && !level;
+    bool restart;
 
     s->poff_level = level;
     if (!fall) {
@@ -962,17 +1138,30 @@ static void a5k_poff_line(void *opaque, int n, int level)
     }
     if (s->sa_tx_valid) {
         a5k_dump_sa_tx("at off", s->sa_tx_last);
-        info_report("sony-a5000: slot-A TX factor byte 0x%02x = 0x%02x, "
-                    "restart byte 0x%02x = 0x%02x [?]", A5K_SA_TX_FACTOR,
-                    s->sa_tx_last[A5K_SA_TX_FACTOR], A5K_SA_TX_RESTART,
-                    s->sa_tx_last[A5K_SA_TX_RESTART]);
     }
-    if (s->poff_restart) {
+    switch (s->poff_mode) {
+    case A5K_POFF_RESTART:
+        restart = true;
+        break;
+    case A5K_POFF_OFF:
+        restart = false;
+        break;
+    default:
+        restart = s->off_info_valid &&
+                  s->off_info[A5K_OFF_NEXT] == A5K_OFF_NEXT_RESTART;
+        break;
+    }
+    info_report("sony-a5000: sub-micro off decision: %s (poff=%s, off data "
+                "%s, next 0x%02x)", restart ? "power cycle" : "stay off",
+                s->poff_mode == A5K_POFF_RESTART ? "restart" :
+                s->poff_mode == A5K_POFF_OFF ? "off" : "auto",
+                s->off_info_valid ? "latched" : "none",
+                s->off_info_valid ? s->off_info[A5K_OFF_NEXT] : 0);
+    if (restart) {
         timer_mod(s->poff_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                   A5K_POFF_DELAY_MS * SCALE_MS);
     } else {
-        info_report("sony-a5000: sub-micro power off");
-        qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
+        a5k_power_off(s);
     }
 }
 
@@ -1030,6 +1219,7 @@ static void a5k_boot_reset(void *opaque)
         address_space_set(as, A5K_IRAM_BASE, 0, A5K_IRAM_SIZE,
                           MEMTXATTRS_UNSPECIFIED);
         info_report("sony-a5000: power-on (DDR and IRAM cleared)");
+        s->off_info_valid = false;          /* micro: off data consumed */
     }
     s->reset_kind = A5K_RESET_SOC;
     a5k_poff_hold(s);
@@ -1366,18 +1556,23 @@ static void a5k_init(MachineState *ms)
     s->gpio = dev;
     s->submicro_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_submicro_tick, s);
     /* power-off line p0.10 -> sub-micro (power cycle / power off) */
-    if (!s->poff || !strcmp(s->poff, "restart")) {
-        s->poff_restart = true;
+    if (!s->poff || !strcmp(s->poff, "auto")) {
+        s->poff_mode = A5K_POFF_AUTO;
+    } else if (!strcmp(s->poff, "restart")) {
+        s->poff_mode = A5K_POFF_RESTART;
     } else if (!strcmp(s->poff, "off")) {
-        s->poff_restart = false;
+        s->poff_mode = A5K_POFF_OFF;
     } else {
-        error_report("sony-a5000: poff=%s: expected restart or off", s->poff);
+        error_report("sony-a5000: poff=%s: expected auto, restart or off",
+                     s->poff);
         exit(1);
     }
-    qemu_log_mask(LOG_UNIMP, "sony-a5000: power-off line: restart decision "
-                  "from poff=%s, not from the slot-A TX restart bit (offsets "
-                  "unconfirmed, RE_REBOOT.md 4.4)\n",
-                  s->poff_restart ? "restart" : "off");
+    /* camera off = suspended VM; power-on through the wakeup path */
+    qemu_register_wakeup_support();
+    s->wakeup.notify = a5k_power_wakeup;
+    qemu_register_wakeup_notifier(&s->wakeup);
+    s->suspend.notify = a5k_power_suspended;
+    qemu_register_suspend_notifier(&s->suspend);
     s->poff_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_poff_cycle, s);
     qdev_connect_gpio_out_named(dev, "out", 0 * 32 + A5K_POFF_PIN,
                                 qemu_allocate_irq(a5k_poff_line, s, 0));
@@ -1415,6 +1610,9 @@ static void a5k_init(MachineState *ms)
         if (sd) {
             a5k_submicro_card_inserted(s->submicro_frames);
         }
+        /* the power lever starts ON (snapshot byte 28 bit 0 = 1) */
+        s->lever_on = true;
+        a5k_submicro_front_key(s, A5K_LEVER_BIT, true);
         cxd90014_sio_attach(dev, 0, a5k_submicro_xfer, s);
         cxd90014_sio_attach(dev, 3, a5k_submicro_xfer, s);
     }
@@ -1998,8 +2196,9 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
         "Stage-1 loader initramfs (bootloader NAND duties), see docs/BOOT.md");
     object_class_property_add_str(oc, "poff", a5k_get_poff, a5k_set_poff);
     object_class_property_set_description(oc, "poff",
-        "restart|off: what the sub-micro does when the power-off line "
-        "p0.10 drops (default restart = power cycle)");
+        "auto|restart|off: what the sub-micro does when the power-off line "
+        "p0.10 drops (default auto = follow the off data the CPU sent: "
+        "power cycle or stay off)");
     object_class_property_add_str(oc, "preload", a5k_get_preload,
                                   a5k_set_preload);
     object_class_property_set_description(oc, "preload",
