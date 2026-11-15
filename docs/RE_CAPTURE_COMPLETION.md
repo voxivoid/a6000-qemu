@@ -354,3 +354,116 @@ Open items: (1) §6 (flag 22 bit 0x400 in task 115). (2) The HOT-resume panics a
 HOT resume looks like a separate topic (RE_STILL_CAPTURE §6.1: 0x51000F = 2 belongs to the HOT path) [?]; the single
 stock-loader oops (3 later runs clean, MENU opens) needs more runs to decide whether the SG changes the resume timing. (3) Real SG clock / still
 timing and the A → B hold are hypotheses. (4) `+0x214` latch could return the real line counter.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## Gate 3: IDT/FOPD divide-by-zero — producer analysis (2026-11-16)
+
+Scope: the 3rd still-capture gate traps in the av-cam software unsigned-divide runtime (a genuine `x / 0`). This
+section identifies the divide call site, the data it divides, the producer that should fill that data, and the
+emulator gap. RE only; no emulator code was changed. All addresses are av-cam.bin VAs (IDA load base
+**0x43541000**, Thumb); the live-dump base used elsewhere in this file (0x43500000) differs by 0x41000, so a VA here
+= (that file's VA) only after accounting for the load base — use the `boot_avcam.bin.i64` base 0x43541000.
+
+Evidence: static only, IDA Pro 9.4 + Hex-Rays on `boot_avcam.bin.i64` (the 10 MiB av-cam dump). Device-model quotes
+are from `qemu-overlay/hw/misc/cxd90014_opd.c` / `cxd90014_idt.c`. `[?]` = not proven.
+
+### 0. Summary
+
+| Question | Answer |
+|---|---|
+| What the trap is | `0x439B193C`/`0x439B1946` is the **div-by-zero handler of the Thumb software unsigned-divide runtime** `sub_4355C3A8` (`__udivsi3`/`__aeabi_uidiv`): `if (divisor == 0) JUMPOUT(0x439B1946)`, and `sub_439B193C` = `MEMORY[0] = 0; STRB R3,[R3]` (deliberate null-store abort). `0x4355C5FA → B.W 0x439B1946` is the same path in the signed variant. So the trap is a real divide-by-zero, divisor = 0. |
+| Who divides | **`sub_437904F8`** (and its twin **`sub_43790948`**, chosen by `*(a2+1461)`), the OPD develop-param transform. Inner loop: `v40 = (u16*)(ctx + 132*row + 492)`, `row = 0..8`, inner `col = 0..10`; `divisor = *v40` (u16 @ `ctx+0x1EC`), `dividend = *((u32*)v40 + 1)` (u32 @ `+4`); it calls `sub_4355C3A8(dividend, divisor)` **unconditionally** → aborts when `divisor == 0`. Matches the oops exactly: `r4 = ctx = rec+0x3658`, `r7 = v40 = ctx+0x1EC` (row 0, col 0), both u16@[r7] and u32@[r7+4] = 0. |
+| What the data is | A **9×11 = 99-zone grid** of 12-byte entries `{u16 count, u32 sum, u32}` at `ctx+0x1EC` (ctx = capture record `rec+0x3658`, the FOPD/IDT context = KickFOPD's first arg). The transform outputs `count` and `sum/count` (a per-zone average) into the OPD develop hw-param buffer. This is **per-zone OPD photometry** (sum + pixel count), i.e. detection *results*, not static geometry. |
+| Consumer call chain | `Stage_OPD` **`sub_4385B90C`** (`Stage_OPD.cpp:428`, pipeline stage 42; `v0 = sub_43A59C60()` = capture record = rec) → **`sub_43A7B9A6`**`(v0+1044, v0+8)` → `sub_437904F8(v0+13912 /*=rec+0x3658=ctx*/, v0+4180, v0+6588)`. The divide runs only when `*(ctx+32) ∉ {8,27,20,10,16}` **or** `*(a2+416)==0` (`sub_43A7B9A6` gate) — so it is capture-mode dependent, which is why the forced lever-off run of `RE_RAW_DEVELOP.md` (a different mode/branch) reached the IRQ-69 wait without hitting this divide. |
+| Who should produce the grid | The **IDT/OPD develop-param pipeline** `sub_4377DEB4` (stage markers `sub_43806B6C(32..54, 0/1)`), reached via `sub_4377D7DA` (stage 19) ← `sub_4377D7D4`. Its final stage **`sub_43785F24`** does `sub_4394A9D0(a17+240, a15+820, 1188)` — a **memcpy of the exact 1188 = 0x4A4-byte grid** (99×12) from the global working buffer `&unk_43D995B4 + 0x820` into a develop context. The grid values in `unk_43D995B4` are computed by the earlier pipeline stages (`sub_43780DD8`, `sub_437923E8`, …) from the OPD detection results + IDT param tables (`idt_cam.bin`). |
+| **Emulator gap** | **`cxd90014_opd.c` and `cxd90014_idt.c` raise completion IRQs but write no result data.** Their own headers: OPD = *"No data is moved (the OPD tables / results are not written)."*; IDT = *"No image data is moved (the FOPD output at bus 0x1EC00000 is not written)."* So the OPD detection block never fills the per-zone accumulators. Every zone's `count` (the divisor) stays 0 → `sum/count` → divide-by-zero. Gate 2 (the flag-22 completion waits) passes **because only the IRQ is needed there**; gate 3 needs the *data*, which no device produces. |
+| **Minimal faithful fix** | When an OPD detection pass completes (`cxd90014_opd.c` `opd_done`, i.e. `OPD_CTRL +0x0C` bit 1 0→1), the model must deposit **non-zero per-zone detection results** where the firmware reads them — at minimum per-zone `count > 0` for all 99 zones. Two candidate sinks (confirm which by the watchpoint below, then model that one): **(a)** the on-chip OPD result tables **0xF3031000..0xF30317FF** (512 words, cleared pre-pass by `436ADB7A`, "read back" today); **(b)** the DRAM FOPD/OPD output buffer at **0x9EC00000** (bus `0x1EC00000`; = `F30317C0` output address written by KickFOPD `439739F0`). A faithful `count` = the per-zone accumulation pixel count implied by the detection-window geometry the firmware programs into the OPD registers; `sum` can be `count * mid-gray` (any value keeps the pipeline numerically sane). This is a **hardware-model data-production gap, not a register-address gap.** |
+
+### 1. The divide (firmware)
+
+`sub_4355C3A8(numerator, divisor)` (Hex-Rays): `if (divisor == 0) JUMPOUT(0x439B1946);` — the `__udivsi3`/`__aeabi_uidiv`
+runtime. `0x439B193C`: `MEMORY[0] = 0;` then `STRB R3,[R3]` with `R3 = 0` (null-store abort). Both the `CBZ R0 →
+0x4355C600 → B.W loc_439B1946` veneer at `0x4355C5FA` and the direct `a2==0` branch land here.
+
+`sub_437904F8(ctx, a2, a3)` inner body:
+```
+v40 = (u16*)(ctx + 132*row + 492);        // row = v18 = 0..8     (492 = 0x1EC, 132 = 0x84 stride)
+...
+v25 = *v40;                                // u16 count   (divisor)
+v26 = *((u32*)v40 + 1);                    // u32 sum      (dividend)   @ ctx+0x1F0+...
+*(u16*)v41    = v25;
+v27 = sub_4355C3A8(v26, v25);              // UNCONDITIONAL divide  -> abort if count==0
+*(u32*)(v41+4) = v27 >> 1;
+*(u32*)(v41+8) = *((u32*)v40 + 2) >> 1;
+...  v40 += 6 (u16, = +12 bytes); col = v31 = 0..10;  row stride += 132
+```
+Twin `sub_43790948` is identical with `v35 = ctx + 132*row + 500` (reads `*(u16*)(v35-8)` = `ctx+0x1EC`,
+`*(u32*)(v35-4)` = `ctx+0x1F0`) and a `(8 * div) >> 8` scale. The oops `r7 = 0x9cab3644 = rec+0x3658+0x1EC`,
+`r4 = 0x9cab3458 = rec+0x3658`, `rec = 0x9caafe00`; `0x9caafe00 + 13912 = 0x9cab3458` (stage dispatch
+`v0 + 13912`).
+
+### 2. The grid and its producer
+
+Grid = `[9][11]` of `{u16 count; u16 pad; u32 sum; u32 w2}` (12 bytes) at `ctx+0x1EC` (= `rec+0x3844`), 1188 bytes.
+`count` is the per-zone pixel/accumulation count (divisor); `sum` the accumulated value (dividend); the consumer emits
+`count` and `sum/count` = the per-zone average → OPD develop hw params → OPD MMIO (`sub_439799D0`, e.g.
+`MEMORY[0xF30317F0]`, `MEMORY[0xF30317C0]`).
+
+Producer pipeline `sub_4377DEB4` (callees pass the static param tables `&word_43D98CD4`, `&unk_43D11200`, … and the
+shared working buffer `&unk_43D995B4`): stage 32 `sub_43780DD8`, stage 35 `sub_437923E8`, …, stage 53
+`sub_43785F24`. `sub_43785F24` line "`sub_4394A9D0(a17+240, a15+820, 1188)`" copies the finished 99-zone grid from
+`unk_43D995B4+0x820`. `sub_43780DD8` fills `unk_43D995B4` from the detection results + IDT tables (its result reads
+render as base-lost `MEMORY[small]` loads in Hex-Rays — the OPD/IDT result source). `[?]` the single store that lands
+the grid at `rec+0x3844` specifically: `sub_43785F24` targets `a17+240` of a develop context whose base did not
+resolve to `rec+0x3658` here, so there is at least one further copy between the pipeline output and `rec+0x3844` —
+name it with the watchpoint in §4.
+
+### 3. Why it is zero in the emulator
+
+The OPD detection block and the IDT/FOPD develop block are **modelled only as IRQ/status generators**:
+
+* `cxd90014_opd.c`: `opd_done()` sets `status bit0` in enabled units and lowers the IRQ-line gate; **it writes no
+  per-zone results** to the 0xF3031000 tables or to DRAM. Header: *"No data is moved (the OPD tables / results are
+  not written)."* The 0xF3031000..0x17FF tables "read back as written" (and were cleared to 0 by the firmware's
+  `436ADB7A` before the pass).
+* `cxd90014_idt.c`: raises IRQ 72 events 1/2 (→ `set_flg(22, 0x400)`) but *"No image data is moved (the FOPD output
+  at bus 0x1EC00000 is not written)."*
+
+So the detection results the develop-param pipeline consumes are **all zero**. `idt_cam.bin` (→0x83501000) and
+`sa_dfdet.bin` (→0x9EC00000) are loaded by `provision/loader.sh -loadtable`, so static IDT/defect data is present;
+the missing thing is the **runtime per-zone photometry the OPD hardware would accumulate during the detection pass**.
+Every `count = 0` → `sum/count` → the `__udivsi3` div-by-zero handler → gate-3 trap.
+
+This is the same device family as gates 1-2 (unmodelled cxd90014 engine events), one level deeper: gates 1-2 needed
+the hardware *events*; gate 3 needs the hardware-produced *data*.
+
+### 4. Spec for the follow-up agents
+
+**Decisive experiment (RE, to pin the exact sink before coding).** Reproduce the gate-3 trap (the run that captured
+the oed `r4/r7`), then with gdb:
+1. Hardware watchpoint on `rec+0x3844` (the grid) and on `&unk_43D995B4 + 0x820` (the grid source). Record the last
+   writer of each and its source operand — this names the exact store into `rec+0x3844` left `[?]` in §2.
+2. Probe `sub_4377DEB4`, `sub_43785F24` (the 1188-byte memcpy), `sub_43780DD8`; and dump OPD MMIO `0xF3030000`/
+   `0xF3031000..0x17FF` and DRAM around `0x9EC00000` right before `Stage_OPD` (`sub_4385B90C`) runs. This decides
+   whether the develop stage reads the per-zone results from the **on-chip table 0xF3031000** or the **DRAM buffer
+   0x9EC00000**.
+
+**Code (cxd90014_opd.c, after the watchpoint confirms the sink).** In `opd_done()` (the completion of an
+`OPD_CTRL +0x0C` bit-1 start), additionally write plausible non-zero per-zone results into the confirmed sink:
+* 99 zones (9×11), per-zone `count > 0` (e.g. a constant derived from the programmed detection-window size, or any
+  fixed positive value as a first cut), and `sum = count * mid-level`. The firmware only requires `count != 0`;
+  magnitudes affect the computed OPD gains, not whether the capture proceeds (mark magnitudes `H`).
+* Leave the IRQ/status behaviour unchanged (gates 1-2 still pass).
+* If the sink is the DRAM buffer at 0x9EC00000, the write goes through the device's DMA/`address_space` to that PA
+  (its address is what `439739F0` programmed into `F30317C0` / `+0x17C0`); if it is the on-chip table, write the
+  0xF3031000-region registers.
+
+**Acceptance.** With the data produced: the still-capture no longer traps at `0x439B193C`; `Stage_OPD`
+(`sub_4385B90C`) completes `sub_43A7B9A6` without the div-by-zero; the capture advances past gate 3 to the next
+stage. Cross-check: no regression in gates 1-2 (flag-22 `0x100`/`2`/`0x440` waits still pass) and in live view.
+
+Provenance: `sub_4355C3A8`/`0x439B1946` (udiv + div0), `sub_437904F8`/`sub_43790948` (the divide and the 99×12 grid),
+`sub_4385B90C`/`sub_43A7B9A6` (Stage_OPD consumer), `sub_4377DEB4`/`sub_43785F24` (producer pipeline + 1188-byte
+memcpy), `cxd90014_opd.c`/`cxd90014_idt.c` headers ("no data is moved"). Hypotheses marked `[?]`/`H`: the exact
+`rec+0x3844` store, the on-chip-table-vs-DRAM sink, and the result magnitudes.
