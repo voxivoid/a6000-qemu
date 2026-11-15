@@ -793,9 +793,8 @@ Evidence: B.1 (writer chain) and the three frames in B.1. The kind delay in +0x1
 6. **Hand-off / boot factor:** keep the ROM blob (+0x4C = 7) and the NAND Backup values (0x510013 = 1 POWER_SLIDE,
    0x51000F = 2): correct for a lever power-on. A shutter/MENU/PLAY wake would set 0x510013 bit 4/2/1 on the real
    camera; patching the RAM Backup image (stage-1 `a5kcopy`) is optional and not needed for the tests [?].
-   **0x51000F (open):** `RE_STILL_CAPTURE.md` §6 proposes 1 (COLD) for the loader's cold boot (`a5kcopy -bkset`,
-   implemented in `a5kcopy.c`), but with 1 the MENU key no longer opens the menu (two runs), so the loader still
-   presents 2 (HOT) until that is understood (RE_STILL_CAPTURE §7).
+   **0x51000F:** superseded — the stage-1 loader presents 1 (COLD) for its cold boot (`a5kcopy -bkset`,
+   `RE_STILL_CAPTURE.md` §6, `RE_COLD_BOOT_MODE.md`); 2 (HOT) stays for a HOT resume, which bypasses the loader.
 7. Comments: cite `439126DC`, `43915AC0`, `439121A8`, upm `k_upm_snd_hcrn_ura`, Backup 0x28000A/0D/0F; mark the
    mask-bit meaning and the APO wake key set as hypothesis.
 

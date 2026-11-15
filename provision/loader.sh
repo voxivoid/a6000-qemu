@@ -3,7 +3,8 @@
 # duties of the Sony bootloader on every cold boot (see docs/BOOT.md):
 #   - mount MUMIN and leave its state at PA 0x80000000 (nand.ko boot_mode=0
 #     re-registers it), 128 KiB
-#   - /setting/Backup.bin  -> the PA in its header (0x82EC0000)
+#   - /setting/Backup.bin  -> the PA in its header (0x82EC0000), then the
+#     loader-owned boot mode 0x51000F = 1 (COLD) in that RAM copy
 #   - boot-mode decision (docs/RE_UPDATER_BOOT.md): if /setting/updater/mode
 #     exists, boot the updater core from nflasha1 (/boot/vmlinux.bin +
 #     /boot/initrd.img at the addresses in /boot/loadaddr.txt); otherwise
@@ -28,6 +29,14 @@ fail() { echo "a5k-loader: FAILED: $1"; cat /proc/partitions; exec /bin/sh; }
 a5kcopy -mumin 0x3f03ad20 || fail mumin
 mount -t vfat -o ro /dev/nflasha2 /mnt/setting || fail setting
 a5kcopy -backup /mnt/setting/Backup.bin || fail backup
+# loader boot mode 1 = COLD (the file keeps the last real power-on's 2 = HOT).
+# upm k_upm_setup_boot_factor maps it to g_bf+8 = 1, so av-cam's SA manager
+# takes its cold branch (43AC9084) and frees boot unit 0x0400 (Backup
+# 0x93000A); with HOT it never does and RAW unit 0x173762 cannot be placed
+# (docs/RE_STILL_CAPTURE.md 6, docs/RE_COLD_BOOT_MODE.md).
+# hypothesis: the Sony bootloader writes this on its cold path (no code).
+# A HOT resume bypasses this loader and keeps 2 (docs/RE_WARM_RESUME.md).
+a5kcopy -bkset 0x0051000f 01 || fail "boot mode"
 if [ -f /mnt/setting/updater/mode ]; then
     # updater core (nflasha1, plain FAT): "<kernel PA>,<initrd PA>"
     echo "a5k-loader: /setting/updater/mode set -> updater core (nflasha1)"
