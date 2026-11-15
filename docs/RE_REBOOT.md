@@ -105,6 +105,11 @@ black because the display was already switched off by the earlier inact steps.
 
 ### 1.4 After im.elf OFF_CMP (static only; not reached in the emulator)
 
+> **Correction (`RE_WARM_RESUME.md`):** this kernel has no `ddr_ctrl` parameter, so the `"dpd,dpd"` write is a no-op and
+> DDR is never put in deep power-down; the IRAM bytes read below as `ddr_ctrl` are `pm.pasr0`/`pm.pasr1` (both 0, so
+> the per-channel steps are skipped), and the DDR command values read as `0x11008000`/`0x11018002` are byte-swapped
+> (`0x00800011` / `0x02800011`). Every off is a `"mem"` suspend; whether RAM is lost depends on the power-on path.
+
 1. upm → 33 → 34; im.elf case 0x92014F (from upm in state 34) → `sub_9FB4(0)` writes **`"mem"` to `/sys/power/state`** (cold off: not
    `"warm"`).
 2. Kernel: `enter_state` → `cxd90014_pm_begin` → `cxd90014_pm_prepare` (`udif_driver_suspend`; on failure
@@ -814,7 +819,7 @@ Fresh NAND clone each, binary copied, monitor on TCP, no `poff=` option unless s
 
 1. Bit meaning of the wake masks +0x1F..+0x21 and the exact APO wake key set.
 2. The writer of +0x1C/+0x1D = 40 8B in the APO frame (not item 38).
-3. av-cam stall on lever off from live view: path 6 → 0x21 step 18, module 1 request 0x0104 never answered.
+3. av-cam stall on lever off from live view: path 6 → 0x21 step 18, module 1 request 0x0104 never answered. Answered in "Power-lever off: module 1 (0x0104) gate": a kind-2 capture blocked on a DMM allocation (unit 0x173762).
 4. Who in libObj turns key 0x0002 into the off request (probe `+56527C` / `+319B14` with a libObj base found earlier;
    the k-runs never resolved the base before the off).
 5. Warm resume after a warm (type 27) off: real power-on is probably HOT/WARM from DDR; the emulator cold-boots.
@@ -831,3 +836,162 @@ Fresh NAND clone each, binary copied, monitor on TCP, no `poff=` option unless s
   -ex 'set *(unsigned short*)0x43ac73b2 = 0x2300' -ex detach` (restore with 0x7f0b).
 * Stall check: `xp /8wx 0x83DC7104` (steps 0x43B701C4, index 0x12), `xp /16xh 0x83DC7120` / `0x83DC7160`, upm state
   `x/wx 0x3F32E5CC` = 0x12.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## Power-lever off: module 1 (0x0104) gate
+
+Closes B.5 / B.9 question 3. Binary `910eae2` (lever on host key `O`, A.5 sub-micro power-off ack and B.7 off latch
+already in), pristine NAND clone per run, no SD (one run with SD), `a5ktrace` `fn=` probes, av-cam log text captured
+with a probe on the log writer `43894784` (`fnr1s=1`: r1 = formatted text), HMP `xp` / `pmemsave`, a guest root shell
+(`/proc/*/wchan`), a kernel-stack scan of one stuck task, and one diagnostic gdb byte write. Static RE: IDA (copy of
+`offkind\ok.i64`) for the first part; the rest by local disassembly of a `pmemsave` of av-cam (PA 0x83500000, 10 MB,
+VA = PA − 0x40000000) because the IDA host was unreachable. Runs r1–r7 (lever OFF at ≈ 215–285 s uptime, before the
+idle power save at ≈ 316 s). `[?]` = not proven.
+
+### C.0 Result
+
+| Question | Answer |
+|---|---|
+| What module 1 = 0x0104 is | Camera state **0x04 = still capture**. VD_Pre starts a capture when the module-1 request is 0x104 (or 0x141); VD_Post answers 0x104 only after the capture has ended. Module 1 reads **0x0000** while it waits. |
+| Why the lever off captures | The lever path 6 → 0x21 (steps `0x43B701C4`) contains `0104 … WAIT{1,10} … 011A`: av-cam runs one capture of **kind 2** before it goes to the off state. The idle power save (APO) path has no 0x0104 step [? APO path not re-traced here; B.5 shows it completes]. |
+| Where the capture stops | Its second step `RawDevInit` (`437D0C18`, task 107) asks the RAW memory manager for one buffer of **DMM unit type 0x173762**. The request is a blocking DMM allocation (`AllocNewWait` `438956BC`, sync message to dmm.ko, timeout −1). **dmm.ko never answers**, so task 107 sleeps forever, the capture never ends, `ExitCapturing` never runs, and module 1 never reports 0x0104. |
+| Missing hardware / sub-micro event? | **No sub-micro response is involved** (the A.5 TLV 0x0A/0x03 ack is not even requested yet at this point). The blocker is a memory allocation inside the firmware (av-cam ↔ dmm.ko). Why dmm.ko has no free block of unit 0x173762 is **not resolved** [?]; see C.5. |
+| Proof | r1: gdb `set *(unsigned char*)0x43E64FC7 = 0` (clear the "capturing" flag) while stuck → within seconds: `sub-micro power-off request acknowledged (TLV 0x0a data[1] = 0x40)`, `power-off line p0.10 low (pc ~0xc00200d8, off request 0x40)`, `sub-micro off decision: stay off (poff=auto, off data latched, next 0x21)`, `sub-micro power off (factor 7, warm, wake 81 81 81)`, HMP `info status` → `paused (suspended)`. So 0x0104 is the only gate left on the lever path; everything after it (0x0D20 handshake, slot-A reads, suspend, IRAM, p0.10) already works. |
+
+### C.1 Stuck state (reproduced in r1, r2, r4, r6, r7)
+
+```
+sequencer 0x43DC7104: steps 0x43B701C4, 30 steps, index 0x12 (= 0x8201: WAIT modules 1 and 10)
+targets  0x43DC7120: 0104 021f 0342 0405 0502 0602 0702 0000 0950 0a92 0b10 0c02 0d00
+actuals  0x43DC7160: 0000 021f 0342 0405 0502 0602 0702 0000 0950 0a92 0b10 0c02 0d00
+capturing flag 0x43E64FC7 = 1
+```
+
+Step array `0x43B701C4` (halfwords): `011a 021f 0302 0405 0502 0602 0702 0950 0a00 0b10 0c02 0d00 | 807f | 0342 0aa1 |
+8204 | 0104 0a92 | 8201 | 0a93 | 8200 | 011a 0343 0a94 | 8205 | 0aa5 | 8204 | 0a00 | 8300 …`
+
+Trace order (r2, r4; `CapconExec` words, av-cam log text):
+1. lever OFF → `CapconExec 0x3007` (path 2 → 6), upm end data factor 7 (`43AC7002`, B.1);
+2. task 96: log `CapMgr)CaptureCancel_PowerOffDetect() offFactor=7` (`437C2BE4`; cancels a capture that might be
+   running, none was);
+3. `CapconExec 0x301C`, then `0x300E` → `PATH_setup` from state 6 (path array `0x43B71AB8`) → sequencer steps above;
+4. at `0104`: VD_Pre `437DCC20` → `437C2B78(kind 2, …)` → **`EnterCapturing` `436F94A0`** (`0x43E64FC7 = 1`); log
+   `Imager param error shut:6, svr_num:0, VdNum:0`, `Imager svd error. shut:6, svd:3 -> 0` (imager set for the capture);
+5. task 96 `437C43A8` (capture start: `RawMemMgr Replace` `43753BD8(0,1)` returns non-zero, so no "Replace Cancel"
+   log; `43753B84`; image record created with `437E3910`);
+6. image record `0x43DD3394`/`0x43DD33D4` (sequence `43A8A77C`): step 0 `43853B80` (task 72) returns, step 1
+   **`RawDevInit` `437D0C18` (task 107) is entered and never returns**. Steps 2–4 (`43A8BE64`, `437D0DB0`,
+   `437CCFE8`) and `EndRawSequence` `437C3B54` never run.
+
+### C.2 Module 1 = camera state; 0x104 = capture
+
+* HS_Main `4376ABFC`: module 1 actual = `*(u16*)(*(0x43D84A44) + 0x260)` = **`0x43D874F8`** (`4376B216..4376B222`,
+  pointer table `0x43D84A3C`, live value `0x43D87298`).
+* The only writer is **`4376BDBC` + 0x104** (`4376BEC0`: `STRH R0,[word_43D874F8]`) with R0 = return value of
+  **VD_Post `4376FC48`**. VD_Post switches on the current camera-state request `**a3`:
+  `case 0x104, 0x141: if (436F9494() == 0) return 0x104/0x141; else return a3[2][304]` (keep). With an
+  in-progress transition the kept value is 0x0000 (observed).
+* **`436F9494` = `return byte_43E64FC7`** ("capturing"). `436F94A0` sets it (`EnterCapturing %d` log when the av-cam
+  log level is negative), `436F94D4` clears it (`ExitCapturing %d`). Callers of Enter: `437C2B78` (capture init),
+  `437C43A8`, `437D0C18`; of Exit: `437C320C` (via `437C387C`), `437C3B54` `EndRawSequence` (cancel path),
+  `43A5BF10` (from `4375AB80`).
+* VD_Pre `4376CFDC` → **`437DCC20`** (`4376E112`) every frame: when the module-1 request is 0x104 or 0x141 it picks
+  a capture kind from the exposure mode words at `*(ctx+80)` and `437D87E4()` (kinds 1–8; this path gives **2**,
+  via `4398E080() != 0` or the mode list {78, 194, 196, 236, 33, 81, 96} [? which one]) and starts it:
+  `437C2B78(kind, cb)` (EnterCapturing, capture object at `0x43DBDB80`), `437C282C`, then posts `437C3734`,
+  `437C4678` (→ `437C43A8`) and `437C35CC` to the CapMgr task (task 96, `437C3590`).
+
+### C.3 Where task 107 sleeps (kernel-stack evidence)
+
+Guest shell: `liro-kliro_107` wchan **`osal_rcv_msg_tmo`** (a synchronous OSAL request waiting for its reply). Its
+kernel stack (task_struct found by its comm at +0x1E8 in a `pmemsave` of DDR; thread_info at PA 0x8A93C000,
+`cpu_context.sp` 0x4A93DB68; kernel VA = PA − 0x40000000) holds these av-cam return addresses, innermost first:
+
+```
+4355DA43  osal receive (reply wait)
+43895749  438956BC DMM AllocNewWait            (RE_AVCAM_IRQ_BOOT: "sync to 0x8F0139, timeout -1")
+43A5A63F  43A5A612 (unit type, 0, count 1, timeout -1)   trace codes 19/20
+4375421B  43754130 RawMemManager GetMem (RawMemManager.cpp), r1 = 0x173762, r2 = 1
+437C16AD  437C1688 (field +0x499E == 0xFFFF: no buffer yet)
+43756E1B  43756DEC
+437D0D2F  437D0C18 RawDevInit (call at 437D0D2A)
+43A6C1FB  image-record step dispatcher → 43A8A77C
+```
+
+Probe in r6/r7: `RawGet` `43754130` r1 = **0x00173762**, r2 = 1, LR `437C16AD`, then `43A5A612` r0 = 0x00173762,
+r2 = 1, r3 = 0xFFFFFFFF, and nothing more from task 107.
+
+`43754130` first tries the pre-reserved RAW table (`0x43DC1380`, enable byte +0 and count +0x1A8, filled by
+`437C5240` from the `437C5CE4..437C5E2C` set-up functions). Here the enable byte is **0** (HMP `xp 0x83DC1380`), so
+it goes straight to the blocking DMM allocation (`4375420A..43754216`). **0x173762 is a DMM unit type**: it appears
+in `DmmConfig.bin` (the copy in `re/backup/setting/`) at offset 0xFD38 as entry `{0x00173762, 0, 0x4E, 0xFFFFFFFF}`
+(unit index 0x4E), next to other `0x17xxxx` units; it is also the unit stored in the CamCore image descriptors set up
+by `437C10B0` / `437C1198` / `437C11C8`.
+
+During boot and live view (r7, probes from power-on) **no other call** of the DMM client API with unit 0x173762 was
+seen (`43A5A52C`, `43A5A564`, `43A5A592`, `43A5A5E8`, `43A5A612`, `43A5A674`); the only boot-time `43A5A612` calls
+use ids 0x2B4 and 0x2B5. So nobody in av-cam holds a 0x173762 block when the capture asks for one; the block is
+missing on the dmm.ko side (area of unit 0x4E closed, not yet re-mapped for capture, or occupied by another unit
+of the same area) [?].
+
+### C.4 What it is on the real camera [?]
+
+A kind-2 still capture on every lever off (not on APO) needs the mechanical shutter and the RAW path. Plausible
+purposes: closing/re-cocking the shutter for transport, or a dark frame for defect (pixel) mapping [? not decoded].
+The real camera's off takes well under a second, so this capture is short; the memory for it must be available
+immediately. In the emulator the first thing it needs (a DMM block) is already missing, so later capture
+dependencies (sensor exposure/readout, CamCore RAW write completion, mechanical shutter drive) are **not reached and
+not known yet** [?].
+
+### C.5 Spec for the code agent
+
+**No board change is specified by this section.** The gate is not a sub-micro response and not a register the
+board leaves unanswered at this point; it is a firmware-internal DMM allocation that cannot be satisfied. Forcing
+the "capturing" flag, answering the DMM request, or patching av-cam would violate AI_WORKFLOW §1.2/§1.5. What the
+code agent can do now:
+
+1. Keep `poff`/lever code as is (B.7); nothing in it needs to change for this gate.
+2. Optional debug aid (machine option, default off, no effect on stock behaviour): none recommended; the gdb
+   one-liner in C.7 is enough for testing the rest of the off.
+
+**Next RE task (needed before a board spec is possible):**
+1. Decode `DmmConfig.bin` (dmm.ko, loaded with `DmmConfig=/usr/share/dmm/DmmConfig.bin`): which area unit 0x173762
+   (index 0x4E) lives in, its block size/count, and which other units share the area. Then dump dmm.ko's live area
+   table in a stuck run (module base 0x3F0C7000) to see who holds that area.
+2. Check whether the area is the one the live-view pipeline keeps while monitoring and only frees on a full EE stop
+   (`EE_STOP`/0x3007 path, RE_PLAYBACK_SWITCH) or on a CamCore completion the emulator lacks; the repeated
+   `CamCore Start Error 0x208` (also before the lever, ~400 times per boot) is a candidate symptom [?].
+3. Compare with a normal shutter release: with SD (`state/sd.img`) and no lens the release is refused
+   ("Check the lens is attached … set Release w/o Lens to Enable") before any capture starts, so the same
+   `RawDevInit` path has never run in the emulator. Enabling *Release w/o Lens* in the menu (RE_LENS_EMOUNT §6) and
+   pressing Space should show whether a user capture blocks at the same `43A5A612(0x173762)`; if yes, this gate is
+   the general still-capture gap, not a power-off topic.
+
+### C.6 Acceptance test (for whoever fixes the root cause)
+
+Fresh NAND clone, no SD, monitor on TCP, binary with the B.7 lever.
+1. Boot to the shooting screen (≥ 200 s), before 316 s: `sendkey o`.
+2. Expected board log, in this order: `power lever OFF`, `sub-micro off data: factor 7, next 0x21 (off), warm, wake
+   81 81 81`, `sub-micro power-off request acknowledged (TLV 0x0a data[1] = 0x40)`, `power-off line p0.10 low`,
+   `sub-micro off decision: stay off (poff=auto, off data latched, next 0x21)`, `sub-micro power off (factor 7, warm,
+   wake 81 81 81)`; HMP `info status` → `paused (suspended)`.
+3. Probes: `437D0C18` returns (step dispatcher `43A6C1FA` hit from task 107), `437C3B54` or `437C320C` runs,
+   `436F94D4` (ExitCapturing) hits, `xp /16xh 0x83DC7160` index 0 = 0x0104 before the sequencer moves on.
+4. Then B.8 test 3: `sendkey s` does not wake; `sendkey o` (lever ON) powers on and boots to the shooting screen.
+5. Regression: B.8 tests 1, 2, 4 unchanged.
+
+### C.7 Reproduce
+
+* Run: `A5K_SHELL=<p+2> A5K_NAND=<clone> A5K_QEMU=<copy> ./run.sh -display none -monitor tcp:127.0.0.1:<p>,server,nowait
+  -gdb tcp::<p+1> -d plugin -D <log> -plugin tools/liba5ktrace.dylib,fn=<file>,fncap=3000,fnwords=4,s=0,fnr1s=1`.
+  Wait until `/proc/uptime` > 200 s (`tools/a5kshell.py --port <p+2> run 'cat /proc/uptime'`), then HMP `sendkey o`.
+* av-cam log text: `fn=` line `43894784 LOG` with `fnr1s=1` (mode 1 and 3 copies of every `43894848` message).
+* Probes: `436f94a0 EnterCap`, `436f94d4 ExitCap`, `437c43a8 CapStart`, `43853b80 S0`, `437d0c18 RawDevInit`,
+  `43a8be64 S2`, `437d0db0 S3`, `437ccfe8 S4`, `43754130 RawGet`, `4375421a RawGetDone`, `43a5a612 DmmWait`,
+  `437c3b54 EndRawSeq`, `43a6c1fa SeqRet` (r0 = step result, noisy: the EE sequence runs it every frame). Do not
+  probe `437DCC20`: VD_Pre calls it every frame.
+* State: `xp /8wx 0x83DC7104`, `xp /16xh 0x83DC7120`, `xp /16xh 0x83DC7160`, `xp /4xb 0x83E64FC4` (+3 = capturing),
+  `xp /8wx 0x83DC1380` (reserved RAW table, +0 enable). Guest: `cat /proc/<pid of liro-kliro_107>/wchan`.
+* Diagnostic only (proves the rest of the off; not a fix): `arm-none-eabi-gdb -batch -ex 'target remote :<p+1>'
+  -ex 'set *(unsigned char*)0x43E64FC7=0' -ex detach`.
