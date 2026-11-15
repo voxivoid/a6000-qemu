@@ -1487,7 +1487,15 @@ static const char *a5k_console_token(A5KMachineState *s)
         return NULL;
     }
     if (!strcmp(con, "ttyAM1")) {
-        return "console=ttyAM1 amba2.console=1";
+        /*
+         * loglevel=4: Sony's pl011_int prints "amba2:%d:TXRIS" under the
+         * port lock; on this RT kernel that printk flushes queued messages
+         * to the same console and re-takes the lock (BUG in
+         * rt_spin_lock_slowlock) when warnings are queued, as after a HOT
+         * resume.  Levels 0-3 still reach the shell console
+         * (docs/RE_UART_RESUME.md).  Debug console only.
+         */
+        return "console=ttyAM1 amba2.console=1 loglevel=4";
     }
     warn_report("sony-a5000: console=ttyAM0 conflicts with av-cam's "
                 "monitor on UART0; the stock UI will not start "

@@ -129,8 +129,8 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
   미해결, `docs/RE_ENGINE_OOPS.md`).
 - 키 입력 없이 약 5분이 지나면 펌웨어의 유휴 절전이 카메라를 끈다(전원 레버 `O`, `S`/`M`/`P` 또는 HMP
   `system_wakeup`으로 다시 켤 때까지 VM suspended). 실기처럼 웜 오프라서 다음 전원 투입은 남아 있는 RAM 이미지에서
-  재개한다(HOT 재개, `warm-resume=on`). 단 디버그 셸 콘솔(`console=ttyAM1`)을 쓰면 재개 직후 CPU0이 UART2 드라이버에서
-  교착되어 셸이 사라진다(`docs/RE_WARM_RESUME.md` §7). `-M warm-resume=off`면 콜드 부팅하고 `/android/a5k`는 사라진다.
+  재개한다(HOT 재개, `warm-resume=on`). 디버그 셸도 재개 후 그대로 살아 있다(Sony UART 드라이버 교착을 피하려고 디버그
+  콘솔은 `loglevel=4`로 돈다, `docs/RE_UART_RESUME.md`). `-M warm-resume=off`면 콜드 부팅하고 `/android/a5k`는 사라진다.
   HMP로 가끔 무해한 키를 보내거나, 그 시간 안에 작업한다.
 
 ## 펌웨어 · 법적 고지

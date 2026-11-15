@@ -100,9 +100,8 @@ python3 tools/a5kshell.py --port 46310 pull /android/a5k/out.bin out.bin
   `liro-kliro_113`; open, `docs/RE_ENGINE_OOPS.md`).
 - The firmware's idle power save turns the camera off after about 5 minutes without key input (VM suspended until the
   power lever `O`, `S`/`M`/`P` or HMP `system_wakeup` powers it on again). Like the real camera this is a warm off: the
-  next power-on resumes the kept RAM image (HOT resume, `warm-resume=on`), but with the debug shell console
-  (`console=ttyAM1`) CPU0 deadlocks in the UART2 driver right after the resume, so the shell is gone
-  (`docs/RE_WARM_RESUME.md` §7); with `-M warm-resume=off` it cold-boots and `/android/a5k` is lost. Send a harmless
+  next power-on resumes the kept RAM image (HOT resume, `warm-resume=on`), and the debug shell survives it (the debug
+  console runs with `loglevel=4` to avoid a Sony UART driver deadlock, `docs/RE_UART_RESUME.md`); with `-M warm-resume=off` it cold-boots and `/android/a5k` is lost. Send a harmless
   key over HMP now and then, or work within that window.
 
 ## Status (2026-11-15)
