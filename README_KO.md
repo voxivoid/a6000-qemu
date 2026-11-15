@@ -66,6 +66,7 @@
 - ✅ NFC (`docs/RE_NFC.md` §4): SIO2에 붙은 보드 수준 FeliCa Plug 계열 태그(`a5k-nfc`). RFDET 유휴 high(부팅 시 폰이 있다고 오인하지 않음), 리더 명령 1개당 IRQ 125 한 번(스텁이 125를 엣지 트리거로 설정, H), 호스트 "가상 폰"(`nfc=<chardev>`: `field`, `cmd`, `read`, `tap`, `status`). tap은 펌웨어가 만든 NDEF 태그(AIB + `application/x-sony-pmm` Wi-Fi Direct 레코드 + PlayMemories AAR)를 읽고, 쓰기는 거부(`01A5`), 핸드오버로 PlayMemories Camera Apps가 열린 뒤 Wi-Fi 시작에서 멈춘다(Wi-Fi 모델 없음)
 - ✅ HDMI (`docs/RE_HDMI.md` §6): SoC 내장 TX 코어(`cxd90014-hdmi`, 0xF2A24000) + CEC(`cxd90014-cec`, 0xF3C10000), IRQ 없이 폴링. `-M hdmi=on`(기본 off = 케이블 없음, 순정)으로 가상 1080p TV에 케이블을 연결하며, 런타임 핫플러그 가능(`qom-set /machine hdmi on`). 펌웨어가 HPD를 감지하고 TX의 DDC 마스터로 내장 범용 EDID를 읽어(`edid=<file>`로 교체) TX를 설정(PHY on, AVI VIC 16 = 1080p60)한 뒤 **라인** 출력으로 전환한다. 카메라 UI가 **QEMU 콘솔 1**(`screendump FILE vph 1`)에 1920×1080으로 표시되고, 패널은 그대로 콘솔 0. CEC는 논리 주소를 할당받고 가상 TV가 물리주소/전원상태 질의에 응답한다. 함께 확정: SYS_STAT +0x024 bit0은 OMAP4 P_STABLE이 아니라 0으로 읽히는 "busy" 플래그(전원 켜기 셀이 0이 될 때까지 대기). 케이블 없으면 동작 불변, CEC churn 없음
 - ⬜ 센서/ISP(라이브뷰), 렌즈 조리개/초점/줌 내용(주기적 Info 프레임, 미해독), 오디오
+- ⬜ OSD의 라이브 F값 (`docs/RE_LENS_EMOUNT.md` §11.7, 2026-11-16 실측): 표시 F / SDCom 파라미터 267은 **렌즈 바이트가 아니라** 라이브뷰/AE 경로에서 생성된다. `lens=ekit`는 인식되지만 av-cam은 시작 블록 8개만 요청하고 주기적 블록 5/6은 **한 번도** 요청하지 않음(MENU·셔터에도 불변) → OSD는 `F--` 유지, SDCom `0x1002` connect는 타임아웃(데몬 Scalar 비활성). `a5k-lens`에 라이브뷰/AE 모델링 후를 위한 inert `aperture`/`focal-length` 프로퍼티 추가
 
 ## 사용
 ```sh

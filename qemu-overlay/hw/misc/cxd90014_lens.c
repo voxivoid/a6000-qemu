@@ -51,6 +51,19 @@
  *
  * Open: periodic type-1 traffic (blocks 5/6, focus/zoom/aperture state),
  * the content of blocks 7/8/0A, the 1.5 Mbaud switch.
+ *
+ * Aperture / F-number not yet reported (RE_LENS_EMOUNT.md section 11.7,
+ * measured 2026-11-16): the live F-number shown on the OSD comes from the
+ * periodic type-1 Info frames (blocks 5/6), which av-cam requests only
+ * under live-view VD.  In the emulator av-cam asks for the eight startup
+ * blocks (01 07 08 09 0a 0b 0d 10) once per power-up and never a periodic
+ * frame (confirmed idle / MENU / shutter half+full), so a pushed 5/6 frame
+ * would never be read.  Block 8 (requested at startup) does feed av-cam's
+ * capability table at 0x43CC5B30 (mapped: block8[150] -> table[64], the
+ * class-1 word read by 436B7E5C as 100*value), but populating it does not
+ * light the OSD F-number either (stays "F--").  So reporting a live F needs
+ * the live-view / AE path modelled first; the aperture/focal-length props
+ * above are the knob for that work, inert until then.
  */
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"
@@ -91,6 +104,8 @@ struct LensState {
     uint32_t frames;
     uint8_t power_class;        /* property: block 7 [1] bits1:0 */
     uint8_t drive_mode;         /* property: block 9 [1] bits1:0 */
+    uint16_t aperture;          /* property: desired F-number x100 (0 = off) */
+    uint16_t focal_length;      /* property: desired focal length mm (0 = off) */
 };
 
 /* block table at 0x43ED86E0 (3.2): {A body->lens, B lens->body}, id incl. */
@@ -382,6 +397,17 @@ static const Property lens_props[] = {
     DEFINE_PROP_LINK("mdma", LensState, mdma, TYPE_DEVICE, DeviceState *),
     DEFINE_PROP_UINT8("power-class", LensState, power_class, 1),
     DEFINE_PROP_UINT8("drive-mode", LensState, drive_mode, 0),
+    /*
+     * Aperture / focal length the lens should report (0 = not reported,
+     * current behaviour).  Declared as the stable knob for a future
+     * live-view integration; NOT emitted on the wire yet, see the
+     * "Aperture not yet reported" note in the file header and
+     * docs/RE_LENS_EMOUNT.md section 11.7.  Setting them today has no
+     * effect because av-cam never polls the virtual lens for the live
+     * aperture in the emulator (no live-view VD; measured 2026-11-16).
+     */
+    DEFINE_PROP_UINT16("aperture", LensState, aperture, 0),
+    DEFINE_PROP_UINT16("focal-length", LensState, focal_length, 0),
 };
 
 static void lens_class_init(ObjectClass *klass, const void *data)

@@ -727,3 +727,71 @@ aperture and 0x1002 returns 267 = 0 / "F--". To make a mounted virtual lens repo
 * (b) engine-memory offset exists but offset unknown: **low**.
 * (c) emulator: lens frame carries aperture — **high** that it does; the **byte offset/unit is
   undecoded** — **low/`[?]`**. Periodic 5/6 emission in the emulator is unbuilt.
+
+### 11.7 Emulator decode + measurement (2026-11-16): why the virtual lens cannot light the F-number yet
+
+Follow-up to §11.5 (the "do NOT implement here" spec). Method: a run of the unmodified firmware
+with `lens=ekit` (pristine COW NAND, no SD), the `a5k_lens_*` trace, HMP `xp` reads of av-cam memory
+(PA = VA + 0x40000000), IDA 9.4/Hex-Rays on `lens_avcam.i64`, and one black-box mapping experiment
+(a debug build that filled the block-8 reply with an incrementing pattern; reverted). All facts carry
+evidence; `[?]` = unproven.
+
+**Finding (high confidence): the live F-number is produced only by the live-view / AE path, which does
+not run in the emulator. A lens-model change alone cannot make av-cam report param 267 or show an F on
+the OSD today.** Three independent measurements:
+
+1. **av-cam never polls the lens after startup.** With `lens=ekit` the body requests exactly the eight
+   startup blocks — `01 07 08 09 0a 0b 0d 10`, all **type 2**, once per power-up cycle (16 frames =
+   8×2 cycles, matching the one DETACH-RETRY recovery of §10.2) — and **never a periodic type-1 frame /
+   block 5 or 6**. Unchanged after MENU, and after a shutter half-press (S1) **and** full-press (S2):
+   still zero periodic frames. Evidence: `-trace a5k_lens_*`, counting `a5k_lens_block` / `a5k_lens_frame`.
+   The protocol is request→reply, and av-cam's RX poll (`43A4A730`) runs only right after it sends a
+   request, so an unsolicited pushed 5/6 frame would never be read. Synthesising periodic frames on a
+   timer (the §11.5-step-2 "harder half") is therefore **dead in the current emulator** — av-cam has to
+   initiate, and it only does so on live-view VD.
+
+2. **The OSD "F--" is driven by the AE path, not by any startup block.** The stock shooting OSD renders
+   fine (panel console 0): aperture scale `F1.4 2.8 5.6 11 22` with a positioned marker, and the big
+   `F--` placeholder at bottom-left. av-cam exposes the F-number as a rational in a "camInfo" struct
+   (dump `sub_435EB4A8`): **`fNumber` valid@+12, numerator@+16, denominator@+20** (also
+   `maxApertureValue` num@+28/den@+32, `focalLength` further on). Param 267 = `100 * num/den` (F×100,
+   matches the device 180 = f/1.8). camInfo.fNumber is filled by the exposure/AE float code
+   (`sub_4372A38C` and the YC "CalcParam/SetParam" jobs, strings `DCV::job_YC_*`, `fno:%d`), which is
+   the live-view pipeline. That pipeline does not run (README: live view stops before YC state 2), so
+   fNumber stays invalid and the OSD stays `F--`.
+
+3. **Populating the startup capability table does not help.** `sub_436B7E5C` (block-7 power-class path)
+   reads a u16 at `word_table[64]` (class 1) / `[65]` (class 2), `word_table` base `0x43CC5B30`
+   (`[64]` = `0x43CC5BB0`), and computes `100 * value`. That table is fed by **block 8** (202 B,
+   requested at startup, handler `sub_436B74B4` → an indirect parse hook, then the id-59 capability
+   check). Mapping experiment: filling block 8 with `o[k]=k` made the previously-all-zero table read
+   `table[64]=0x96=150`, i.e. `table[64] <- block8[150]` (the value equals the offset); detection still
+   reached BL state `0x05` (no `LENS_TYPE_UNKNOWN` / `LENS FIRMERR`). But with the table thus populated
+   the OSD **still showed `F--`**, and param 267 was still unreachable. So block 8 feeds a startup
+   capability word (likely a max-aperture or focal capability used for scale limits [?]), **not** the
+   live F-number. Block 7 does not carry the live aperture either (consistent with §9.5). `xp`:
+   `0x83D707C8[0] = 0x05` (BL state), `0x83CC5B30` region all-zero on the stock (zero-filled) block 8.
+
+4. **SDCom read channel is blocked independently.** From a guest root shell (native root, `/dev/uipc`
+   present), `SDPROBE 2 0x1002` returns `connect(0x1540432,2) = -5` for every component id, at both high
+   and low host load. `-5` is `SDComIPC::connect`'s `pthread_cond_timedwait == ETIMEDOUT` (110): the
+   connect message reaches the daemon queue but **no reply arrives in 5 s**. The ScalarDaemon only
+   accepts when the Scalar engine is active (state 5/9; NOTES §10.7), which the emulator never reaches
+   (live-view incomplete). So even if an aperture existed, verifying it over SDCom 0x1002 in the
+   emulator is not currently possible. (The real device accepts because ILCE Remote has the engine
+   live.) Verification route for the emulator is therefore the **panel OSD screendump**, not SDCom.
+
+**Consequence / revised plan.** The §11.5 lens-model spec is correct about the *source* (periodic 5/6)
+but its end-to-end payoff is gated on the **live-view / AE pipeline** (the ⬜ Sensor/ISP live-view item),
+not on the lens bytes. Order of work to actually show an F in QEMU:
+  (a) model enough of the live-view VD so av-cam runs its AE loop and *requests* periodic lens frames
+      (or reaches Scalar-active so SDCom 0x1002 answers);
+  (b) only then decode the aperture byte inside block 5/6 **dynamically** (vary the byte, watch
+      camInfo.fNumber +16/+20 or param 267) — static decode is blocked by av-cam's accessor-indirected
+      lens-info store (`sub_436B6F74` writes fields by index, not at a fixed struct offset);
+  (c) drive it from the `a5k-lens` `aperture` / `focal-length` properties added in `cxd90014_lens.c`
+      (declared now as the stable knob; inert until (a)/(b)).
+
+**Confidence:** findings 1–4 **high** (direct trace / `xp` / screendump / source). "block8[150] →
+cap-table[64]" **high** (pattern-equals-offset). Semantics of that capability word (aperture vs focal)
+**low/`[?]`**. "a lens-model-only change cannot show F today" **high**.
