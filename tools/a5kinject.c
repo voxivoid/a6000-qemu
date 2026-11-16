@@ -24,7 +24,7 @@
  *   arm-linux-gnueabi-gcc -std=gnu99 -O2 -static -fno-stack-protector \
  *     -o a5kinject tools/a5kinject.c
  * Run (emulator guest shell):
- *   P=$(grep -la im.elf /proc/[0-9]*/cmdline ...); a5kinject $P /android/a5k/inj.so c37cc
+ *   P=$(grep -la im.elf /proc/[0-9]+/cmdline ...); a5kinject $P /android/a5k/inj.so c37cc
  */
 #include <stdio.h>
 #include <stdlib.h>
