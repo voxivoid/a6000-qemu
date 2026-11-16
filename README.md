@@ -54,6 +54,7 @@ Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M
 | `]` / `[` | control wheel rotate CW / CCW (event0 525 / 526); `Shift` = x4 | `cxd90014-jog` 16-bit counter at 0xF2404014 (`docs/RE_WHEEL_ZOOM_DATE.md`) |
 
 Keys are also accepted from the HMP monitor: `sendkey ret 300`, `sendkey down 300`, `sendkey m 300`, ... Hold keys for about 300 ms: av-cam samples the buttons only every ~43 ms of guest time, and the default 100 ms press is often missed.
+The ↑ / ↓ / ← / → arrows drive the control-wheel 4-way **and move the stock MENU highlight in that exact direction** (verified in the 3×2 tile menu, `docs/RE_ENGINE_TICK.md` §11.6). The ADC ladder levels are firmware-verified (`RE_INPUT_I2C_POWER.md` §7), so when a single key is sent and the UI is allowed to settle before the screendump, ↑ = up, ↓ = down, ← = left, → = right, with no swap. **For scripted menu navigation send one directional key at a time and wait (a few seconds) before the screendump**: the whole input→engine→UI→GPU pipeline lags by roughly one key, so firing keys back-to-back makes a screendump show the *previous* key's result and look like "↑ went left". This latency is firmware/engine timing (av-cam ~43 ms sampling + input.ko 4×10 ms debounce), not a key-mapping bug.
 QEMU's own hot keys: Ctrl+Opt+G releases the mouse, Ctrl+Opt+1 / 2 switch between the panel (console 0) and the debug frame-buffer view.
 Keys pressed in the first ~20 s after the first-boot dialog appears are ignored by the firmware (input service not active yet).
 

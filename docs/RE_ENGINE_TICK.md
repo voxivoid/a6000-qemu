@@ -203,6 +203,35 @@ the **MOVIE (record start/stop) button**. So the first-boot dialog closed via th
 - Menu and wheel not responding in shooting mode: check whether a camera startup (CAMUSER_* / av-cam sensor path) completion event is required.
 - Inputs: RTC (blank date display), zoom lever (ADC 0x0F multi-level), shutter (S1/S2 path not identified).
 
+### 11.6 "↑ moves the highlight LEFT" in the stock MENU = screendump lag, not a mapping bug (verified 2026-11-16)
+A report that a single `sendkey up` moved the main-menu highlight **left** (Setup → Playback) and that "input lags behind
+screendumps" was investigated and traced to the observation method, not the device model. The 4-way ADC mapping in
+`a5k_key_event` is correct.
+
+- **Input path for menu navigation = the 4-way ADC ladder on ch 0x0D** (not the jog dial, not a separate arrow device).
+  Each arrow writes one band mid-point into `cxd90014_adc_set(adc[1], ch 1, level)`: ↑ 182, ← 356, ↓ 520, → 686, centre 45.
+  The band table (§11, `RE_INPUT_I2C_POWER.md` §7) is **firmware-verified** against the real-camera WBI snapshot and the
+  user's `Backup.bin` (0x1120000): 92..273 → 0x03 UP, 274..439 → 0x15 LEFT, 440..599 → 0x30 DOWN, 600..772 → 0x1AF RIGHT.
+  libInputServant (0x3364) then maps 0x03→103, 0x30→108, 0x15→105, 0x1AF→106. The `cxd90014_adc` model stores and returns
+  `result[ch]` verbatim with no latch or sweep, so the level the board writes is exactly the value input.ko decodes — no
+  place for a swap. (The control-wheel **rotation** `] / [` → event0 525/526 is a *separate* input, `RE_WHEEL_ZOOM_DATE.md`;
+  it also scrolls the menu but is not what the arrows use.)
+- **Stock MENU is a 3×2 tile grid** (not a horizontal tab bar): row0 Camera / Custom / Wireless, row1 Application /
+  Playback / Setup. Navigation is an ordinary 2-D grid: ← → move within a row, ↑ ↓ move within a column (wrap at the
+  edges).
+- **In-emulator verification** (one key per screendump, ~450 ms hold, ~4 s settle before the dump): every transition is
+  correct — Setup --←--> Playback --←--> Application --↑--> Camera --→--> Custom --↓--> Playback --→--> Setup --↑--> Wireless.
+  8/8 transitions match a correct grid; in particular **↑ from Setup goes to Wireless (straight up), never to Playback**.
+- **Root cause of the false report**: the whole input→av-cam→input.ko→im.elf→view→GPU-redraw pipeline lags by roughly one
+  key (av-cam samples the ADC only every ~43 ms, input.ko debounces 4×10 ms, then the view redraws over several frames).
+  When keys are fired back-to-back, a screendump taken right after `up` still shows the *previous* key's result. Sending a
+  prior `left` (Setup→Playback) and then `up`, with the dump landing on the stale frame, reads exactly as "up moved left
+  (Setup→Playback)". With one key at a time and an adequate settle the symptom disappears.
+- **Conclusion / fix**: no change to `hw/arm/sony_a5000.c` — the mapping is faithful. The fix is methodological and is now in
+  `README.md` (Keys): for scripted menu nav send one directional key at a time and wait before the screendump. Changing the
+  ADC levels would instead *break* fidelity (they are the firmware band mid-points, and the first-boot date editor in §11.3
+  already navigates correctly with them).
+
 ## 12. Shutter held since boot (MENU/PLAY ignored), shutter and zoom wiring, the SD-card repair stall, CEC W1C
 ### 12.1 Root cause of "MENU does nothing in shooting mode": S1/S2 read as pressed
 - At every boot the av-cam key path posted `{0x1F1, 0, 1}` and `{0xA7, 0, 1}` to 0x7A0020 (a5ktrace on `osal_snd_msg`,
