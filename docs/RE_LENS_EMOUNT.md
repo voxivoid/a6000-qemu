@@ -795,3 +795,13 @@ not on the lens bytes. Order of work to actually show an F in QEMU:
 **Confidence:** findings 1–4 **high** (direct trace / `xp` / screendump / source). "block8[150] →
 cap-table[64]" **high** (pattern-equals-offset). Semantics of that capability word (aperture vs focal)
 **low/`[?]`**. "a lens-model-only change cannot show F today" **high**.
+
+> **Correction (2026-11-16, `docs/RE_LIVEVIEW.md`):** finding #2 above ("that [AE] pipeline does not run")
+> and the "Consequence / revised plan" are based on the then-current, now-stale claim "live view stops before
+> YC state 2". On the current emulator HEAD (commit `9d0cad7`, SYSV master V clock) **YC state 2 is reached
+> and the AE float path runs** (`437737D4` ~3/s, `4372A38C` 128–180 hits, VPH ch51 programmed), measured with
+> both `lens=none` and `lens=ekit`. The OSD is **still "F--"** with the pipeline running, so the F-number is
+> **not** gated on YC state 2. The remaining gap is specifically the **periodic lens-aperture request
+> trigger** — av-cam issues no periodic (type-1 / block 5/6) lens request even with live-view VD active, so
+> the lens link is idle after startup and `camInfo.fNumber` never gets a current av. See `RE_LIVEVIEW.md` §3–§4
+> for the precise location and the follow-up spec.
