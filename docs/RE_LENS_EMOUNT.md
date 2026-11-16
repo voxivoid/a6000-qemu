@@ -963,3 +963,78 @@ Ghidra decompile / raw disasm / pool resolution, this pass). "AE-control job nev
 state-stuck)" **high** (0 hits + `+0x23`-init-0 semantics). "Gate lives in the live-view EE sequence advance"
 **high** (43546E40 is the poster layer and is an `img+0x23` machine). "Deep vs tractable at the EE-predicate
 level" **undecided** — that is exactly what the dynamic next step settles.
+
+### 11.10 Dynamic resolution (a5ktrace): AE-control unit never STARTS; it is NOT pixel-gated (2026-11-16)
+
+Follow-up to §11.9 (which left "deep vs tractable" undecided). Method: local QEMU (`qemu-frozen`, COW NAND
+clones, headless), `tools/liba5ktrace.dylib` probing av-cam VAs, `fnwords=10` to read `*(u8*)(r0+0x23)` (the
+job sub-state = `w[8]>>24`), HMP `screendump`. No flash writes; own qemu only. The EE stage byte and the
+module-C handlers were traced across several boots.
+
+**(1) The EE image sequence does NOT stall after metering — the §11.8/task premise is refuted.** Probing
+`sub_43546E40` entry per VD in steady live-view (`fnwords=10`), the stage byte `*(img+0x23)` histogram over
+815 hits is **stage0=106, stage1=525, stage2=92, stage3=92**: the EE sequence **cycles through all four
+stages** (reaches stage 3), it does not stop after the metering stage. It spends most time re-running stage 1
+(its final per-frame post `FUN_43A96FEC(...)!=0 → return 5` stays ~5× per advance — frame backpressure, not a
+hard stall). The case-1 gates are dataflow/readiness predicates (`4377250C→436FA37C` submodule readiness,
+`43769AB0` frame-count), **not** image-content reads. So the EE image pipeline is not the thing that blocks
+the AE apply.
+
+**(2) The AE-control sequence unit (module C) never STARTS — a separate, dormant unit.** All of module C's
+handlers get **0 hits** in valid live-view: `43A89512`(idx0=start), `43A89734`(idx8), `43A897D8`(idx9),
+`43A89824`(idx10), `43A898A6`(idx11), plus the apply→lens coupler `4380C5A8` = 0, and the **AE-control
+*starter* `sub_4385BDB8` = 0**. `4385BDB8` allocates the ~0x4980-byte AE-control context (`FUN_437597E8 →
+FUN_437C2500`) and posts module C's idx0 job (`FUN_437C76EC`); it is reached only by indirect/table dispatch
+(no static callers; `0x4385BDB8`/`0x4385BDB9` appear nowhere as a pointer, and its one BL site sits in a
+mis-disassembled region). Since idx0 (the start event) never runs and `job+0x23` is 0 at creation, **the whole
+AE-control unit is never kicked off.** `sub_437CB26C` (handler registration) **does run once at boot** (probed
+from boot: 1 hit, task `liro_entry`), so the handlers *are* installed — the unit is registered but never
+started. (An earlier "module-C object reads all-zero" note via HMP `xp` was a wrong-alias/`gva2gpa` read and
+is retracted; only a5ktrace reads, in guest context, are reliable here.)
+
+**(3) DECISIVE: it is NOT pixel/image-content gated.** Booted with `-global cxd90014-aif.lv-source=bars`:
+the screendump shows the **vertical-bar test pattern actually displayed in the live-view area** (pixels are
+present in the ch51 buffer and on screen) with the normal shooting OSD — **yet every module-C handler,
+`4385BDB8` and `4380C5A8` stay at 0 hits.** Adding a real image frame does not start the AE-control unit.
+Combined with `RE_SENSOR_ISP.md` §3 ("AE sees a black scene and saturates gain, which is harmless"), the
+AE-control start does **not** depend on image content or valid AE statistics. The apply itself consumes
+pre-computed exposure (§11.9). **So this is NOT the deep "needs a synthesized ISP image" case.**
+
+**(4) What it is NOT (ruled out):** image pixels/stats (lv-source, decisive); YC state 2 (reached — `437737D4`
+metering runs, `43661BC8` path active); lens recognition (prior §11.8: BL 0x07 with `lens=ekit`); S1/S2
+(prior). The AE-control start is an **engine mode/sequence event**, table-dispatched, that simply never fires
+in the emulator.
+
+**(5) Caveat + a live lead — `lens=ekit` does not reach live-view here.** With `lens=ekit` this agent's boots
+landed in a **persistent "Shooting Mode Switch" (촬영 모드 전환) overlay**: `AEfloat 4372A38C` spins (≥300,
+capped) but `43546E40`/`437737D4` = 0 — i.e. full live-view / the EE image sequence is **not** entered at all
+with a lens attached (whereas `lens=none`, incl. the lv-source run, reaches normal live-view). So this agent
+could not reproduce §11.8's "ekit → live-view → handlers 0" datapoint directly; §11.8 (documented) stands for
+that. The `lens=ekit → stuck mode-switch` behaviour is itself a concrete lead: the a5k-lens attach puts the
+engine into a mode transition that never completes to live-view, and **AE-control may be exactly what starts
+once that transition finishes.**
+
+**Classification: TRACTABLE-leaning — NOT the deep pixel/ISP-metering case.** The AE-control unit's start is
+gated on an engine state/event, not on image data (proven). No synthesized ISP front-end is required to light
+param 267 / the OSD F-number in principle. **But the single triggering event for `4385BDB8` is not yet pinned**
+(indirect dispatch + a mis-disassembled caller region), so no minimal faithful device change can be named with
+certainty this pass — stopping at the spec per fidelity rules (force-posting the idx0 job or poking `job+0x23`
+would fabricate state).
+
+**Precise next layer (ordered).**
+1. **Pin `4385BDB8`'s trigger.** It is table-dispatched; find the engine mode/sequence-manager decision that
+   enables AE-control. Dynamic route: probe the AE/mode task around `4372A38C` (which *does* run) and walk to
+   the enable decision; or resolve `4385BDB8`'s BL caller by forcing a clean Thumb disassembly of
+   `0x4385BE46..0x4385BF34` (Ghidra auto-analysis left it as data).
+2. **Chase the `lens=ekit` "Shooting Mode Switch" stall** (`RE_MODE_DIAL.md` territory): determine why a lens
+   attach leaves the engine in a mode transition that never reaches live-view, and whether completing it (a
+   faithful mode-dial / input event) starts the AE-control unit. This is the most promising tractable unblock.
+3. Only if 1–2 point there: the unmodeled engine completions of `RE_SENSOR_ISP.md` §4 (IRQ 36/37/38, 67–75).
+   Note YC state 2 is reached *without* them, so the AE-control gate is a **distinct** event, not the YC gate.
+
+**Confidence.** "EE sequence cycles stages 0–3, not stalled after metering" **high** (815-hit histogram).
+"AE-control unit (incl. starter 4385BDB8) entirely dormant in valid live-view" **high** (0 hits, multiple
+runs). "NOT pixel-gated" **high** (lv-source bars visibly displayed, still 0). "Registered-but-not-started"
+**high** (REG_init boot hit + 0 handler hits). "lens=ekit stuck in mode-switch here" **high** (screendump +
+EE/meter 0 vs AEfloat spinning); its causal link to AE-control start **[?]** (the live lead). Exact
+`4385BDB8` trigger **not pinned**.

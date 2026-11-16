@@ -142,6 +142,19 @@ The real open question is **what makes av-cam issue a periodic lens request** (t
 precedes the `43A4A730` RX poll). It is **not** the VD / YC frame we now model (§1: YC runs at ~3/s, lens link
 idle).
 
+**RESOLVED dynamically (2026-11-16, a5ktrace, `RE_LENS_EMOUNT.md` §11.10).** Traced in local QEMU: (a) the EE
+image sequence `43546E40` does **not** stall after metering — its stage byte `*(img+0x23)` cycles 0→1→2→3
+(histogram 106/525/92/92 over 815 hits), so EE is **not** the blocker. (b) The AE-control sequence unit
+(module C) **never starts**: handlers `43A89512/734/7D8/824/8A6`, apply coupler `4380C5A8`, and the AE-control
+**starter `4385BDB8`** (allocates the ctx + posts module C's idx0 job) all get **0 hits** in valid live-view,
+though `437CB26C` registers the handlers at boot. (c) **DECISIVE — not pixel-gated:** with
+`-global cxd90014-aif.lv-source=bars` the bar test pattern is **visibly displayed in live-view** (pixels
+present) yet AE-control stays at 0 hits. So the F-number gate is an **engine mode/sequence event, not image
+data** → **NOT the deep synthesized-ISP case; tractable-leaning.** The exact trigger for `4385BDB8` is not yet
+pinned (indirect dispatch). Live lead: with `lens=ekit` the engine gets **stuck in a "Shooting Mode Switch"
+overlay** and never enters full live-view (EE/metering = 0, AEfloat spinning) — completing that transition may
+be what starts AE-control. Full evidence + next steps in `RE_LENS_EMOUNT.md` §11.10.
+
 **DECODED (2026-11-16, Ghidra, `RE_LENS_EMOUNT.md` §11.9).** `AE-ctx[35]` is `job+0x23`, the **generic job
 sub-state** of av-cam's job-state-machine framework (getter `43A6EAFC`, init-to-0 `43A6CB24`), reused by ~30
 module handlers and by the EE-stage core `43546E40`. The three handlers `43A89734/824/8A6` are three
