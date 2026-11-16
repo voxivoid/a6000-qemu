@@ -52,18 +52,34 @@
  * Open: periodic type-1 traffic (blocks 5/6, focus/zoom/aperture state),
  * the content of blocks 7/8/0A, the 1.5 Mbaud switch.
  *
- * Aperture / F-number not yet reported (RE_LENS_EMOUNT.md section 11.7,
- * measured 2026-11-16): the live F-number shown on the OSD comes from the
- * periodic type-1 Info frames (blocks 5/6), which av-cam requests only
+ * Aperture / F-number not yet reported (RE_LENS_EMOUNT.md sections 11.7 /
+ * 11.8, measured 2026-11-16): the live F-number shown on the OSD comes from
+ * the periodic type-1 Info frames (blocks 5/6), which av-cam requests only
  * under live-view VD.  In the emulator av-cam asks for the eight startup
  * blocks (01 07 08 09 0a 0b 0d 10) once per power-up and never a periodic
  * frame (confirmed idle / MENU / shutter half+full), so a pushed 5/6 frame
  * would never be read.  Block 8 (requested at startup) does feed av-cam's
  * capability table at 0x43CC5B30 (mapped: block8[150] -> table[64], the
  * class-1 word read by 436B7E5C as 100*value), but populating it does not
- * light the OSD F-number either (stays "F--").  So reporting a live F needs
- * the live-view / AE path modelled first; the aperture/focal-length props
- * above are the knob for that work, inert until then.
+ * light the OSD F-number either (stays "F--").
+ *
+ * Decoded trigger (section 11.8, IDA + a5ktrace, 2026-11-16): the 5/6
+ * request is built by sub_436CFB70 -> sub_43A4C60E -> sub_436B5188, reached
+ * only from sub_4380C5A8 (the AE-result -> lens-aperture driver), which runs
+ * only via the AE "control/apply" job sub_43853DA8.  That job is dispatched
+ * by the per-VD AE job-slot handlers sub_43A89734 / 43A89824 / 43A898A6
+ * ONLY when the AE job-context state byte [ctx+35] (sub_43A6EAFC) == 1.
+ * Trace of a lens=ekit boot: AE metering runs hard (4372A38C x360,
+ * 437737D4 x195), the lens is fully recognised (BL state 0x07, all 8
+ * startup blocks answered), and sub_4380C5A8's own gate byte is already set
+ * ([0x43E44162] == 0x01) -- yet sub_43A89734/824/8A6, sub_43853DA8 and
+ * sub_4380C5A8 are NEVER executed, so block 5/6 is never enqueued.  So the
+ * block is NOT a lens-reply byte (candidate "a" refuted) and NOT S1/S2
+ * (candidate "b" as half-press refuted): it is av-cam's AE control/apply
+ * job never being scheduled in the emulator's live-view state (the AE
+ * sequencer, a separate layer).  No faithful lens-model byte can unblock
+ * it; the aperture/focal-length props above stay the inert knob for that
+ * later work.
  */
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"

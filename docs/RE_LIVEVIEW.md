@@ -140,22 +140,32 @@ hardware data the firmware never asked for, so it is out.
 
 The real open question is **what makes av-cam issue a periodic lens request** (the TX request builder that
 precedes the `43A4A730` RX poll). It is **not** the VD / YC frame we now model (§1: YC runs at ~3/s, lens link
-idle). Candidate triggers to decode (IDA on `lens_avcam.i64` + dynamic trace):
-1. A **lens-manager task** separate from the VD loop, gated on a lens "ready/aperture-controllable" state that
-   a startup block reply sets. Check what block 7/9/0x0a/0x0b reply fields gate the first periodic poll; the
-   `a5k-lens` zero-fills some of these (`cxd90014_lens.c` `lens_put_block`), so av-cam may classify the lens
-   as "no reportable aperture" and never poll. `[H]` likely a capability/flag byte.
-2. A **mode transition** (e.g. entering a specific AE/metering sub-state, or the first S1 half-press driving a
-   real AE cycle) that our always-on monitoring never triggers. Trace the lens TX builder across a scripted
-   S1/S2 (HMP `sendkey`), watching for the first type-1 frame.
-3. Once av-cam *does* request a periodic frame, decode the aperture byte **dynamically** (§11.7 step (b): vary
-   the byte in `cxd90014_lens.c`, watch `camInfo.fNumber` +16/+20 or param 267) — static decode is blocked by
-   the accessor-indirected lens-info store `sub_436B6F74`.
-4. Drive the decoded value from the already-declared, currently-inert `a5k-lens` `aperture` / `focal-length`
-   properties (added in `ec00518`).
+idle).
 
-Until (1)/(2) is known, there is **no small faithful change** that lights F, so none is made here. (The
-host-only Track-B build still fakes 267 via `A5K_FAKE_APERTURE` for UI testing; `RE_LENS_EMOUNT.md` §11.5.)
+**RESOLVED (2026-11-16, `RE_LENS_EMOUNT.md` §11.8).** The periodic block 5/6 request is built by
+`sub_436CFB70 → sub_43A4C60E → sub_436B5188`, reached only from `sub_4380C5A8` (the AE-result→lens-aperture
+driver), which runs only via the AE **control/apply** job `sub_43853DA8`. That job is dispatched by the per-VD
+AE job-slot handlers `sub_43A89734 / 43A89824 / 43A898A6` **only when the AE job-context state byte
+`*(ctx+35)` (`sub_43A6EAFC`) == 1**. A `lens=ekit` trace shows AE metering running hard (`4372A38C` ×360,
+`437737D4` ×195), the lens fully recognised (BL state `0x07`, all 8 startup blocks answered), and
+`sub_4380C5A8`'s own gate flag already set (`[0x43E44162]=0x01`) — yet `sub_43A89734/824/8A6`, `sub_43853DA8`
+and `sub_4380C5A8` are **never executed**, so block 5/6 is never enqueued.
+
+So the two earlier candidates are settled:
+1. **Not a lens startup-block / "aperture-controllable" byte (refuted).** The lens is fully attached and the
+   startup blocks all complete; the gate is inside av-cam's AE scheduling, independent of the lens reply bytes
+   (and §`RE_LENS_EMOUNT.md` 11.7 #3 already showed populating block 8 does nothing). No `lens_put_block`
+   change helps.
+2. **Not S1/S2 half-press (refuted).** Zero periodic frames on key events (prior run + this run). The trigger
+   is the AE **sequencer** scheduling the control/apply job (driving `AE-ctx[35]` to 1) — a live-view/AE layer
+   the emulator does not reach.
+3. Aperture-byte decode therefore stays blocked (can only be done once a real 5/6 request fires).
+4. The inert `a5k-lens` `aperture` / `focal-length` props remain the eventual knob.
+
+This is a **live-view / AE-sequencer** task, not a lens-model task: make av-cam's AE sequencer enqueue the job
+slot at `0x43EE10E0 / 0x43EDECD4 / 0x43EE0754` and drive `AE-ctx[35]==1`. Until then there is **no small
+faithful change** that lights F, so none is made. (The host-only Track-B build still fakes 267 via
+`A5K_FAKE_APERTURE` for UI testing; `RE_LENS_EMOUNT.md` §11.5.)
 
 ## 5. What remains for a *real* live-view image (separate from F)
 

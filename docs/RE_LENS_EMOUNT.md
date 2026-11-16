@@ -805,3 +805,82 @@ cap-table[64]" **high** (pattern-equals-offset). Semantics of that capability wo
 > trigger** — av-cam issues no periodic (type-1 / block 5/6) lens request even with live-view VD active, so
 > the lens link is idle after startup and `camInfo.fNumber` never gets a current av. See `RE_LIVEVIEW.md` §3–§4
 > for the precise location and the follow-up spec.
+
+### 11.8 Decoded trigger for the periodic 5/6 request (2026-11-16): av-cam's AE control/apply job, not a lens byte
+
+Follow-up to §11.7 / `RE_LIVEVIEW.md` §3–§4 (the open "what makes av-cam issue a periodic type-1 request"
+question). Method: IDA 9.4 / Hex-Rays on `lens2/lens_avcam.i64` (the av-cam process image) and a dynamic
+`a5ktrace` run of the unmodified firmware (`lens=ekit`, pristine COW NAND, no SD) with per-function probes at
+the av-cam VAs below. All facts carry evidence; `[?]` = unproven.
+
+**The full request chain (static, named).** The periodic lens-aperture (Info1/Info2) request is built here:
+
+```
+<AE control/apply job>  sub_43853DA8
+  -> sub_4385EC74 -> sub_4385EC78 -> sub_4380C5A8   (AE result -> lens-aperture driver)
+       -> sub_4380BD34 / sub_436CFB1C -> sub_436CFB70 / sub_43A4C60E
+            -> sub_436B5188  (enqueue one type-1 lens request; first byte = block id 5/6)
+```
+
+* `sub_436CFB70` picks one of two request templates `off_436CFCE8` / `off_436CFCEC` (selected by
+  `sub_436BB21C` = 1.5 Mbaud/class check and `sub_436BB3B4`); the reply blocks 5/6 are parsed by
+  `sub_436B7110` / `sub_436B7128` → `sub_436B6F74` (the accessor-indexed lens-info store of §11.7 step (b)).
+  So this is the Info1/Info2 periodic path. The exact template id byte in `off_436CFCE8/EC` is `[?]` (not
+  dumped), but the parse consumers confirm blocks 5/6.
+* `sub_4380C5A8` is the per-frame AE→lens coupler. Its own early-return gate is
+  `if (byte[0x43E44162]==0 && byte[0x43E44177]==0) return cb(...);` — i.e. it needs one AE-state flag set to
+  proceed to the request (`[0x43E44162]` = AE-ctx+0, `[0x43E44177]` = AE-ctx+0x15; base ptr at `0x43EDC008`).
+
+**The real gate: AE job-state == 1.** `sub_43853DA8` runs only from the per-VD AE job-slot handlers
+`sub_43A89734 / sub_43A89824 / sub_43A898A6`, each of which dispatches on the AE job-context state byte
+`*(ctx+35)` (reader `sub_43A6EAFC`) — **case 1 → `sub_43853DA8`**. Those handlers are registered as AE
+job-slot callbacks by the big initializer `sub_437CB26C` (`sub_43A6C296(slot, fn)` ×hundreds; the three
+handlers live at data slots `0x43EE10E0 / 0x43EDECD4 / 0x43EE0754`). They are invoked when the matching AE
+job is scheduled by the AE sequencer.
+
+**Dynamic measurement (`lens=ekit` boot, whole run).** Probe hit counts (`a5ktrace fn=`):
+
+| probe (av-cam VA) | meaning | hits |
+|---|---|---|
+| `4372A38C` | AE float / metering | **360** |
+| `437737D4` | AE job (metering) | **195** |
+| `436B5188` | lens request enqueue | 10 — **only** block ids 01 07 08 09 0a 0b 0d 10 16 (startup); **no 05/06** |
+| `43A6EAFC` | AE-state getter | 254 |
+| `4380C5A8` | AE→lens-aperture driver | **0** |
+| `43853DA8` | AE control/apply job | **0** |
+| `43A89734 / 43A89824 / 43A898A6` | AE job-slot handlers (→43853DA8) | **0** |
+
+HMP `xp` at the same time: `[0x83E44162]=0x01` (AE-ctx+0 flag already **set** — so `sub_4380C5A8`'s own gate
+would pass), `[0x83E44177]=0x00`, BL state `[0x83D707C8]=0x07` (lens fully recognised, past the 0x05 of §10.2,
+all 8 startup blocks answered).
+
+**Conclusion (high confidence).** The AE metering pipeline runs hard and the lens is fully attached, yet
+`sub_43A89734/824/8A6`, `sub_43853DA8` and `sub_4380C5A8` are **never executed**: av-cam never schedules the
+AE **control/apply** job in the emulator's current live-view state, so the type-1 block 5/6 request is never
+built. Therefore:
+
+* **Candidate (a) REFUTED** — no lens startup-block byte gates this. All startup blocks complete, the lens is
+  recognised (BL 0x07), `sub_4380C5A8`'s own flag is already 0x01; the block is entirely inside av-cam's AE
+  scheduling, independent of the lens reply bytes. (Consistent with §11.7 #3: populating block 8 did nothing.)
+* **Candidate (b) REFINED** — not S1/S2 half/full-press (prior agent + this run show zero periodic frames on
+  key events). The trigger is the AE **job-state machine** reaching the control/apply state (`AE-ctx[35]==1`),
+  driven by the AE sequencer scheduling `sub_43A89734/824/8A6` — a **live-view / AE-sequencer layer** that the
+  emulator does not yet reach.
+
+**Aperture-byte decode (§11.5 step 2 / §11.7 step (b)) stays BLOCKED** — it can only be done dynamically
+(vary a 5/6 reply byte, watch `camInfo.fNumber` +16/+20 or param 267), which requires the request to actually
+fire. Static decode is blocked by the accessor-indexed store `sub_436B6F74`. So this stops at the spec, per
+the fidelity rule: no faithful lens-model byte unblocks it, and forcing an unrequested 5/6 reply (or poking
+`camInfo`) would fabricate data the firmware never asked for.
+
+**Next layer to model (for a live-view/AE agent, not a lens agent).** Make av-cam's AE sequencer schedule the
+control/apply job — i.e. drive `AE-ctx[35]` to 1 so `sub_43A89734/824/8A6 → sub_43853DA8 → sub_4380C5A8`
+runs. Find the AE job-scheduler that posts those job slots (the VD-phase that enqueues the handler at
+`0x43EE10E0 / 0x43EDECD4 / 0x43EE0754`) and what makes `AE-ctx[35]` transition to 1 (the AE sequencer state;
+writer is pointer-indirected, not a fixed-offset STR in the getter's neighbourhood). Only then decode the
+aperture byte dynamically and drive it from the `a5k-lens` `aperture` property.
+
+**Confidence.** Chain (functions/addresses) **high** (IDA + trace). "5/6 never enqueued while AE runs" **high**
+(direct probe counts). "AE-ctx[35]==1 gates the apply job" **high** (3 dispatchers, identical case 1). Template
+`off_436CFCE8/EC` id byte **`[?]`** (not dumped; parse consumers imply 5/6). Exact AE-sequencer event that
+sets `AE-ctx[35]=1` **not decoded** (the deeper layer).
