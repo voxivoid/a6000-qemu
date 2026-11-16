@@ -601,3 +601,42 @@ read `$r7` (= &divisor) and single-step the loads that fill `rec+0x3844` back to
 (a) `0xF3031000..0x17FF` vs (b) the DMA buffer at `0xF3031098/9C → 0x11d4….`. Only then implement `opd_done()`
 (per §5 refined spec) and verify the trap is gone. Implementation was **not** committed this session because it
 cannot be verified without reaching the trap (AI_WORKFLOW: commit only verified states).
+
+### 6.1 Harness, second attempt — menu solved, Release w/o Lens enabled, but SCN full-press does not capture (2026-11-16)
+
+With the reliable menu method (one key, ~450ms hold, ~4s settle — `RE_ENGINE_TICK §11.6`; 100% in this run) the
+earlier "menu unreliable" blocker is gone. Steps that **worked**:
+
+* SD + AUTOREPAIR → DB created → shooting screen (SCN, RAW+J). `0x51000F = 01`.
+* **Enabled "렌즈 없이 촬영 = 가능" (Release w/o Lens = Enable)**: MENU → 사용자 정의 (Custom, tile col1/row0) →
+  page **3** (RIGHT ×2) → item 2 "렌즈 없이 촬영" → `ret` → 가능 → `ret`. Verified on screen (가능).
+* **Half-press (S1) works**: `sendkey s <hold>` runs AE metering — the OSD changes `ISO AUTO → ISO 3200`. So the
+  shutter GPIO (`a5k_shutter` p0.1/p0.11), AE, and live view are all fine, and AE does **not** circular-depend on the
+  missing OPD data (it produced a value).
+
+What **did not** work — the actual blocker now:
+
+* **A full press (S2) does not start a still capture.** `sendkey shift-s`, `sendkey spc` (both set S2), and an
+  S1-held-then-S2 overlap (`s` held 2–3 s, `spc` added while held, giving a clean S2 1→0 edge under S1) all produced
+  **no `EnterCap`** and no develop (probes `EnterCap 436F94A0`, `RawDevInit 437D0C18`, `CapExpose 43858D80`,
+  `StageOPD 4385B90C`, `OPDxform 437904F8`, `439B193C` — 0 hits across ~10 presses). One lone `EnterCap` (lr
+  `437C43CB`, from `CapStart`) was logged early in the session and aborted before `RawDevInit` (as in §6), but it did
+  not reproduce. The 148-shot counter never changes.
+* **Mode is fixed at SCN** (Scene). The emulator has **no mode-dial key** (`hw/arm/sony_a5000.c` keys: arrows, ret,
+  m, p, o, s, space, ]/[, t/w — none sets the exposure-mode dial), so I cannot leave SCN for P/A/M. In SCN, `ret`
+  opens the scene selector (`RE_ENGINE_TICK §261`); here it rendered a **black screen** (no visible scene list).
+  Hypothesis (`[?]`): the SCN still-release path needs a scene selected / an AF focus confirm that the no-lens state
+  does not provide, so S2 is rejected before `CapStart` completes — i.e. a mode/focus gate, not the lens-release
+  gate (which is now enabled).
+
+Tooling notes: `a5ktrace` `fncap` is **per-probe** and the `fn=` file **is reloadable** (rewrite → counts reset),
+so capture-only probes are not exhausted by live view; HMP `xp` and `screendump` are reliable; `sendkey` for the ADC/
+sub-micro menu keys is reliable with the settle method, but the GPIO **full shutter** did not drive a capture in SCN.
+
+**State at stop.** Gate-3 divide **not reached**; the OPD result table `0xF3031000` = 0 and `0xF3031090/98/9C` =
+`0 / 0x11d49f00 / 0x11d4a000` as before; sink (a on-chip vs b DMA buffer) still `[?]`; `opd_done()` **not**
+implemented (unverifiable without the trap). **Next blocker to clear first:** make a still capture actually fire from
+the fixed SCN mode with no lens — options: add a mode-dial control (or default the board to a P/Auto exposure mode)
+to leave SCN; or find why the SCN S2 release is rejected (probe the S2/shutter-release handler and the AF/scene
+precondition between the S2 GPIO edge and `CapStart`/`EnterCap`); or select a scene in the SCN selector (needs the
+selector to render). Then resume at §5/§6 to confirm the sink and implement `opd_done`.
