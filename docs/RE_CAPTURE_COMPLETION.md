@@ -640,3 +640,37 @@ the fixed SCN mode with no lens — options: add a mode-dial control (or default
 to leave SCN; or find why the SCN S2 release is rejected (probe the S2/shutter-release handler and the AF/scene
 precondition between the S2 GPIO edge and `CapStart`/`EnterCap`); or select a scene in the SCN selector (needs the
 selector to render). Then resume at §5/§6 to confirm the sink and implement `opd_done`.
+
+### 6.2 Harness, third attempt — P mode + Release w/o Lens reached; S2 full-press does not fire a capture (2026-11-16)
+
+With `-M sony-a5000,shoot-mode=p` (RE_MODE_DIAL.md) the SCN gate is gone. New results:
+
+* **P mode boots** ("P"/"P*" OSD), out of SCN. DB reused from the SD image (no AUTOREPAIR).
+* **Release w/o Lens = 가능 enabled** (Custom tab page 3). The menu is reliable with the one-key + ~450ms hold +
+  **long settle** method, **but a fast menu nav under host load (~3.7) triggered the task-113 engine oops** once
+  (klog "Entering exception monitor", `RE_ENGINE_OOPS.md`): the custom-settings list rendered blank, MENU stopped
+  responding, the shell died. Re-booting and navigating **slowly** (5–8 s between keys, let each page render)
+  avoided it. Operational rule: pace menu/GPU-heavy input and keep host load low (coordinator's note).
+* **Half-press (S1) works** in both SCN and P: `sendkey s <hold>` meters AE (OSD `ISO AUTO→250`, `±0.0→−0.3 EV`,
+  shutter `30"`). So S1 GPIOs (p0.1/p0.11) and AE are correct.
+* **Full-press (S2) does not start a still capture.** With Release w/o Lens on, in P mode, across **~15 presses**
+  (`shift-s`, `spc`, S1-held+`spc` overlap, 700 ms–2.5 s holds, and two 5–6× bursts) the probes `EnterCap 436F94A0`,
+  `S0 43853B80`, `RawDevInit 437D0C18`, `CapExpose 43858D80`, `StageOPD 4385B90C`, `OPDxform 437904F8`,
+  `439B193C` saw **no capture** — two lone `EnterCap` (lr `437C43CB`, from `CapStart`, aborting before `RawDevInit`
+  as in §6) across the whole session, not reproducible, and **0 on every deliberate burst**. The shot counter never
+  moves. A full press registers only as a **half-press** on screen (AE state persists) — S2 does not reach the
+  capture trigger.
+
+**So the blocker is now the S2 full-press itself**, not the mode (P) or the lens-release gate (enabled). The step
+machine runs only live-view steps (`StepCall` w[2] = `43546E41`, and `sub_437E02D8` AE/AF on the live contexts
+`43DD34xx`, tasks 74/75/76/115) — never a capture context. Hypotheses (`[?]`): (a) the **S2 GPIO mapping is wrong**
+— `a5k_shutter` drives S2 = **p1.5 + p0.13** (a model hypothesis, `hw/arm/sony_a5000.c`), and the firmware may read
+S2 on different pins, so S1 works but S2 is never seen; (b) an **AF focus-priority / release gate** blocks S2 with no
+lens despite Release w/o Lens (needs MF or "release w/o focus"); (c) `sendkey`'s chord/edge timing for S2.
+
+**State at stop.** Gate-3 divide **not reached**; OPD table `0xF3031000` = 0, `0xF3031090/98/9C` = `0 / 0x11d49f00 /
+0x11d4a000`; sink (a/b) still `[?]`; `opd_done()` **not** implemented. **Next blocker to clear first: make S2 fire a
+capture.** Validate the S2 shutter GPIO against the firmware's S2 read (RE the shutter-key handler / `BF_KEY_RELEASE`
+path and which GPIO it polls), or set Focus Mode = MF / release-without-focus; then a full press should run
+`EnterCap→S0→RawDevInit→…→StageOPD` and hit `0x439B193C`, at which point §5/§6 confirm the sink and `opd_done()` is
+implemented and verified.
