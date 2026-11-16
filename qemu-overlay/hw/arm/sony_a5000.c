@@ -169,6 +169,14 @@ struct A5KMachineState {
     int poff_mode;                  /* A5K_POFF_* from poff= (auto) */
     char *poff;
     QEMUTimer *poff_t;
+    /* boot shoot-mode (docs/RE_MODE_DIAL.md): there is no mode-dial hardware
+     * on the a5000 -- the "dial" is a soft dial persisted in Backup.  This
+     * optional machine knob makes the stage-1 loader pre-set it in the RAM
+     * Backup copy so the camera powers up in P/A/S/M/SCN instead of SCN. */
+    char *shoot_mode;               /* -M shoot-mode=p|a|s|m|scn (name) */
+    bool shoot_mode_set;            /* a valid name was parsed */
+    uint8_t shoot_mode_enum;        /* Backup 0x1070009 exposure-mode value */
+    uint8_t shoot_mode_dial;        /* Backup 0x10708BF mode-dial position */
     /* off kinds and the power lever (RE_REBOOT.md B.4, B.5, B.7) */
     uint8_t off_info[0x22];         /* slot-A TX +0x13..+0x21 (frame offs) */
     bool off_info_valid;            /* latched; cleared on power-on */
@@ -2288,6 +2296,22 @@ static void a5k_init(MachineState *ms)
     } else {
         s->cmdline = g_strdup(cmd);
     }
+    /*
+     * shoot-mode=<name>: there is no mode-dial hardware (docs/RE_MODE_DIAL.md);
+     * the shooting mode is a soft dial persisted in Backup (exposure-mode
+     * 0x1070009, dial position 0x10708BF), read live by getRecViewFromDial and
+     * applied by the on-screen mode-dial selector via
+     * requestModelExecute("model/CAMERA", 0x10, {0x12A}).  The board cannot
+     * write Backup, so it passes the values the selector would have written to
+     * the stage-1 loader, which sets them in the RAM Backup copy
+     * (a5kcopy -bkset) exactly like the persisted dial.  Default unset = stock
+     * (token absent, cmdline byte-identical). */
+    if (s->shoot_mode_set) {
+        char *old = s->cmdline;
+        s->cmdline = g_strdup_printf("%s a5kmodeset=%02x%02x", old,
+                                     s->shoot_mode_enum, s->shoot_mode_dial);
+        g_free(old);
+    }
     a5k_write_atags(s->cmdline, s->initrd_len);
     s->init_done.notify = a5k_init_done;
     qemu_add_machine_init_done_notifier(&s->init_done);
@@ -2520,6 +2544,51 @@ static void a5k_set_poff(Object *o, const char *v, Error **errp)
     A5K_MACHINE(o)->poff = g_strdup(v);
 }
 
+/*
+ * shoot-mode: the a5000 has no physical mode dial; the shooting mode is a soft
+ * dial.  Each name maps to the pair the on-screen mode-dial selector
+ * (viewUnified8 ViewModeDialGuide / PAS_ModeDial) persists: the exposure-mode
+ * enum (Backup 0x1070009, = model/CAMERA param 0x12A) and the dial position
+ * (Backup 0x10708BF, mapped to the RecView by getRecViewFromDial).  Values are
+ * from the selector's own writes (viewUnified8 sub_2B8C8 cases 0x1C..0x20);
+ * p (enum 1) and m (enum 4) are verified on the OSD, a/s inferred from the
+ * P-A-S-M case order, scn (enum 6) is the camera's default.  docs/RE_MODE_DIAL.md.
+ */
+static const struct {
+    const char *name;
+    uint8_t exp_enum;   /* Backup 0x1070009 */
+    uint8_t dial_pos;   /* Backup 0x10708BF */
+} a5k_shoot_modes[] = {
+    { "p",   1, 2 },    /* Program Auto      (verified: OSD "P")  */
+    { "a",   2, 3 },    /* Aperture Priority (inferred)           */
+    { "s",   3, 4 },    /* Shutter Priority  (inferred)           */
+    { "m",   4, 5 },    /* Manual Exposure   (verified: OSD "M")  */
+    { "scn", 6, 1 },    /* Scene Selection   (verified: default)  */
+};
+
+static char *a5k_get_shootmode(Object *o, Error **errp)
+{
+    A5KMachineState *s = A5K_MACHINE(o);
+    return g_strdup(s->shoot_mode ? s->shoot_mode : "");
+}
+
+static void a5k_set_shootmode(Object *o, const char *v, Error **errp)
+{
+    A5KMachineState *s = A5K_MACHINE(o);
+
+    for (size_t i = 0; i < ARRAY_SIZE(a5k_shoot_modes); i++) {
+        if (!strcasecmp(v, a5k_shoot_modes[i].name)) {
+            g_free(s->shoot_mode);
+            s->shoot_mode = g_strdup(a5k_shoot_modes[i].name);
+            s->shoot_mode_enum = a5k_shoot_modes[i].exp_enum;
+            s->shoot_mode_dial = a5k_shoot_modes[i].dial_pos;
+            s->shoot_mode_set = true;
+            return;
+        }
+    }
+    error_setg(errp, "shoot-mode=%s: expected p, a, s, m or scn", v);
+}
+
 static char *a5k_get_preload(Object *o, Error **errp)
 {
     return g_strdup(A5K_MACHINE(o)->preload);
@@ -2586,6 +2655,13 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
                                   a5k_set_preload);
     object_class_property_set_description(oc, "preload",
         "FILE@ADDR[;FILE@ADDR...] raw images placed in RAM at boot");
+    object_class_property_add_str(oc, "shoot-mode", a5k_get_shootmode,
+                                  a5k_set_shootmode);
+    object_class_property_set_description(oc, "shoot-mode",
+        "Power up in this shooting mode instead of SCN: p|a|s|m|scn.  The "
+        "a5000 has no mode-dial hardware; this pre-sets the soft dial in the "
+        "RAM Backup copy via the loader (docs/RE_MODE_DIAL.md).  Default "
+        "unset = stock (whatever Backup holds)");
     object_class_property_add_str(oc, "nand", a5k_get_nand, a5k_set_nand);
     object_class_property_set_description(oc, "nand",
         "Raw NAND backing file (created erased if missing)");

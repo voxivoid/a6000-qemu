@@ -39,6 +39,21 @@ a5kcopy -backup /mnt/setting/Backup.bin || fail backup
 # hypothesis: the Sony bootloader writes this on its cold path (no code).
 # A HOT resume bypasses this loader and keeps 2 (docs/RE_WARM_RESUME.md).
 a5kcopy -bkset 0x0051000f 01 || fail "boot mode"
+# Optional boot shoot-mode (docs/RE_MODE_DIAL.md): when the board is started
+# with -M sony-a5000,shoot-mode=p|a|s|m|scn it appends a5kmodeset=<EE><DD> to
+# the cmdline (EE = exposure-mode enum -> Backup 0x1070009, DD = mode-dial
+# position -> Backup 0x10708BF).  The a5000 has no mode-dial hardware; the
+# shooting mode is a soft dial persisted in Backup, so setting these two bytes
+# in the RAM Backup copy boots the camera in that mode exactly as the on-screen
+# mode-dial selector would have left it.  Absent token = stock (SCN default).
+MS=$(sed -n 's/.*a5kmodeset=\([0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]\).*/\1/p' /proc/cmdline)
+if [ -n "$MS" ]; then
+    EN=$(echo "$MS" | sed 's/^\(..\).*/\1/')
+    DP=$(echo "$MS" | sed 's/^..\(..\)/\1/')
+    a5kcopy -bkset 0x01070009 "$EN" || echo "a5k-loader: shoot-mode enum failed"
+    a5kcopy -bkset 0x010708bf "$DP" || echo "a5k-loader: shoot-mode dial failed"
+    echo "a5k-loader: shoot-mode enum=$EN dial=$DP"
+fi
 if [ -f /mnt/setting/updater/mode ]; then
     # updater core (nflasha1, plain FAT): "<kernel PA>,<initrd PA>"
     echo "a5k-loader: /setting/updater/mode set -> updater core (nflasha1)"

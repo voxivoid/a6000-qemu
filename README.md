@@ -35,7 +35,7 @@ The `qemu/` directory is **not published**. It is rebuilt from upstream QEMU `v1
 ```
 Developers working in `qemu/` (branch `sony-a5000`) run `tools/export-qemu.sh` after each QEMU commit to refresh `qemu-overlay/` and the patch.
 SD card: `-drive if=sd` / `A5K_SD`.
-Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M rtc-lost=on`): `rtc-lost=on` = clock backup lost (first-boot area/date/time setup); `lens=none|ekit` = empty E-mount (default) or kit lens (power + handshake + the UART1 serial HLE, `docs/RE_LENS_EMOUNT.md` §9); camera clock = QEMU RTC (`-rtc base=...`).
+Machine options, appended to `run.sh` as extra `-M` arguments (e.g. `./run.sh -M rtc-lost=on`): `rtc-lost=on` = clock backup lost (first-boot area/date/time setup); `lens=none|ekit` = empty E-mount (default) or kit lens (power + handshake + the UART1 serial HLE, `docs/RE_LENS_EMOUNT.md` §9); `shoot-mode=p|a|s|m|scn` = power up in that shooting mode instead of SCN (`docs/RE_MODE_DIAL.md`); camera clock = QEMU RTC (`-rtc base=...`).
 
 ### Keys (QEMU window)
 | Host key | Camera button | Emulated hardware path |
@@ -57,6 +57,8 @@ Keys are also accepted from the HMP monitor: `sendkey ret 300`, `sendkey down 30
 The ↑ / ↓ / ← / → arrows drive the control-wheel 4-way **and move the stock MENU highlight in that exact direction** (verified in the 3×2 tile menu, `docs/RE_ENGINE_TICK.md` §11.6). The ADC ladder levels are firmware-verified (`RE_INPUT_I2C_POWER.md` §7), so when a single key is sent and the UI is allowed to settle before the screendump, ↑ = up, ↓ = down, ← = left, → = right, with no swap. **For scripted menu navigation send one directional key at a time and wait (a few seconds) before the screendump**: the whole input→engine→UI→GPU pipeline lags by roughly one key, so firing keys back-to-back makes a screendump show the *previous* key's result and look like "↑ went left". This latency is firmware/engine timing (av-cam ~43 ms sampling + input.ko 4×10 ms debounce), not a key-mapping bug.
 QEMU's own hot keys: Ctrl+Opt+G releases the mouse, Ctrl+Opt+1 / 2 switch between the panel (console 0) and the debug frame-buffer view.
 Keys pressed in the first ~20 s after the first-boot dialog appears are ignored by the firmware (input service not active yet).
+
+**Shooting mode ("mode dial").** The a5000 has **no mode-dial hardware** — the shooting mode is a soft dial (the on-screen `PAS_ModeDial` widget) whose position is persisted in Backup, not a key/ADC/GPIO input (`docs/RE_MODE_DIAL.md`). To boot in P/A/S/M instead of SCN use the machine option **`-M sony-a5000,shoot-mode=p|a|s|m|scn`** (verified: OSD SCN→P, SCN→M); it pre-sets the persisted dial (Backup 0x1070009 exposure mode + 0x10708BF dial position) in the RAM Backup copy via the loader, exactly as the on-screen selector would. There is no host **key** for it (adding fake dial hardware would break fidelity).
 
 ### USB (virtual cable)
 The USB device controller (`cxd90014-usbhdc`, `docs/RE_USB_DEVICE_CONTROLLER.md`) serves the camera's real USB gadget over
