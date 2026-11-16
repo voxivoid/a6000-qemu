@@ -778,3 +778,31 @@ condition / unlock value / Backup propId **not yet determined** (needs Hex-Rays)
 (`sub_43A51DDA`/`43A5261A`/`43A5264C` targets) and the `CapStart` trigger + `RawDevInit` step precondition to find the
 focus/lens gate, its unlock (FocusMode=MF / release-priority), and its Backup propId for a `loader.sh` boot-set — or
 first fix RE_ENGINE_OOPS to make the Camera-Settings menu usable for setting MF.
+
+### 6.6 Gate decode blocked by tooling (IDA) + host load (2026-11-16)
+
+Resuming the release-gate decode with IDA reported free. **Both tooling paths are environmentally blocked this run;
+the RE state of §6.5 is unchanged** (shutter chain decoded, S2 pin correct, gate localized to the downstream
+capture-task release decision).
+
+* **IDA / Hex-Rays is broken on the windev host.** Every `idat.exe -A -S<script>` returns **"Failed to initialize IDA
+  as library (error code 4)"** (and a trivial `idat -A -B tiny.bin` returns error 1) — i.e. idat cannot initialize at
+  all, independent of the i64 (a fresh copy fails identically) and the script. It is **not** contention: no `idat`/
+  `ida` process is listed and the license file (`idapro.hexlic`, 4530 B, valid) is present; idat.exe is the stock
+  16 KB launcher, unchanged. idat **worked earlier this session** (dozens of decompiles), so the IDA license/runtime
+  state went bad during the other agent's heavy use. This cannot be fixed from the Mac side; the windev IDA
+  install/license needs a restart. → **the requested Hex-Rays gate decode could not run.**
+* **Runtime fallback also blocked by host load.** As a workaround (the integration team's `sendkey shift-s 400`
+  tip), I booted P mode + lens=none + SD to test whether the correct 400 ms full-press reaches the trap directly. But
+  host **load was 6.62** (the user's own desktop apps — WindowServer, a browser's GPU helper, a download manager —
+  not RE agents, so not mine to kill), and my QEMU was intermittently starved (46–82 % CPU). Under that starvation
+  **no key registered at all** — `ret`/`down` on the AUTOREPAIR dialog did nothing across ~8 attempts with 450–600 ms
+  holds and long settles, so the SD database could not even be created, let alone Release-w/o-Lens set or the shutter
+  tested. (Earlier boots this session navigated fine at load ≈ 3.7; the input is reliable only at low host load.)
+
+**State at stop.** Gate condition / unlock value / Backup propId **not determined** (IDA down). Boot-set **not done**.
+Gate-3 **not reached**; sink `[?]`; `opd_done()` **not implemented**. **To resume:** (1) restart the windev IDA
+install so Hex-Rays works, then decompile the shutter-event handlers (`sub_43A51DDA`/`43A5261A`/`43A5264C` and the
+`set_flg 0x43893F98` consumer), the `CapStart 437C43A8` trigger and the `RawDevInit 437D0C18` step precondition to
+find the focus/lens gate, its unlock, and its Backup propId; (2) run the capture harness only at **low host load**
+(the §6.4 method works then) with `sendkey shift-s 400`.
