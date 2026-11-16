@@ -806,3 +806,34 @@ install so Hex-Rays works, then decompile the shutter-event handlers (`sub_43A51
 `set_flg 0x43893F98` consumer), the `CapStart 437C43A8` trigger and the `RawDevInit 437D0C18` step precondition to
 find the focus/lens gate, its unlock, and its Backup propId; (2) run the capture harness only at **low host load**
 (the §6.4 method works then) with `sendkey shift-s 400`.
+
+### 6.7 Gate decode still blocked (windev IDA license) + capture S2 unreliable (2026-11-16)
+
+windev was rebooted and IDA reported recovered, but for **headless `idat.exe -A`** it is still broken: every run
+(incl. a trivial `idat -A -B`) returns **"Failed to initialize IDA as library (error 1/4)"**, and the IDA log reads
+**"Cannot continue without a valid license"**. The GUI `ida.exe` gets past license init but does not run my `-S` script
+non-interactively over ssh (RC=1, no output). So the Hex-Rays gate decode still cannot run — the reboot restored the
+GUI license, not the idalib/headless path my scripts use. **This needs a real license fix on windev (re-activation /
+floating-server), not just a reboot.**
+
+**Local capstone fallback** (installed `capstone 5.0.7` in a scratch venv, disassembling the local av-cam.bin) could
+decode leaf functions but not the message-passing gate: the shutter-event senders `sub_43A51DDA` (and siblings) are
+**generic alloc-copy-send helpers** (`sub_4355DAA0` alloc, copy 16/28 B, `sub_4355D9DC` send) — the gate is in the
+**receiver task**, which a manual Thumb trace across OSAL queues cannot practically reach.
+
+**Capture run (P mode, lens=none, SD, Release-w/o-Lens = 가능 set via the Custom menu — which works at load ≈ 4):**
+`sendkey shift-s 400` (the integration team's method) fired **`EnterCap` once in ~40 presses**, and that capture
+aborted **before `RawDevInit`** (as in §6.4/§6.6); all other presses (shift-s, spc, S1-held+S2 overlap, at load
+3.97–5) fired **nothing**. During presses only the live-view/AE steps run (`StepCall` w[2] = `43546E41`, `437E02D9`)
+and a verbose sequence logger `sub_43894848` ("HS_Main", "VD_Sequence" traces, not an error/gate). So **the S2
+full-press → capture is unreliable in this environment** (host load ≈ 4 from the user's own apps + another agent's
+QEMU starves the input; the earlier two `EnterCap` were flukes), and the **EnterCap→RawDevInit gate persists** on the
+rare fire.
+
+**State at stop (unchanged core result).** Gate condition / unlock value / Backup propId **not determined** (IDA down).
+Boot-set **not done**. Gate-3 **not reached**; sink `[?]`; `opd_done()` **not implemented**. §6.4's result stands:
+S2 pin correct, S2 detected, block is the downstream release / step-machine gate. **To finish, two environment fixes
+are needed first:** (1) **repair the windev IDA license for headless idat** (then decompile `sub_43A72BA2` step list /
+`RawDevInit 437D0C18` precondition and the shutter-event receiver → the focus/lens gate, unlock, propId); (2) run the
+harness at **genuinely low host load** so the S2 full-press fires reliably (shift-s 400). Both are outside this
+session's control.
