@@ -711,3 +711,32 @@ pin unresolved. Gate-3 not reached; OPD table still 0; sink `[?]`; `opd_done()` 
 2. Or RE the **FocusMode Backup propId** and set MF at boot via the loader (like `shoot-mode`), then retest S2.
 3. Either way, once S2 drives `EnterCap→RawDevInit→…→StageOPD`, resume §5/§6 (a5ktrace sink confirmation →
    `opd_done()` implement/verify).
+
+### 6.4 S2 GPIO pin confirmed correct at runtime — block is the release decision (2026-11-16)
+
+Runtime RE on the shooting screen (P mode, lens=none, no Camera-menu → no oops), a5ktrace on the GPIO read chain.
+
+**S2 pin = p1.5, and it is correct (no model change).** a5ktrace on the debounce wrapper `sub_43AC774C` (r0=port,
+r1=bit, lr=caller) shows the shutter is read by **`sub_436FC740`** (call site `436FC767`), which reads exactly two
+pins: **port 0 bit 1 (p0.1) and port 1 bit 5 (p1.5)**. p0.1 is S1 (the working half-press); **p1.5 is S2**. The
+emulator's `a5k_shutter` drives S1 = p0.1(+p0.11) and **S2 = p1.5**(+p0.13) — so the pin the firmware actually polls
+for S2 (**p1.5**) matches the model. The extra p0.11/p0.13 the model also drives are simply not read by the firmware
+(harmless). **So the S2 GPIO mapping is faithful; (a) is resolved, no correction.** (Other GPIO polls seen for
+context: p0.9 lens-detect — `sub_439939D3`, 169×; battery/media on `sub_4369B5xx`; P5.2 key — `sub_4358F271`.)
+
+**S2 is detected, but the capture is blocked after detection.** `sub_436FC740` runs **0× at idle and 2–14× during a
+full press** (it is event-driven on the shutter GPIO edge, not periodic). So av-cam **sees the S2 press**. But across
+long S1-held+S2 overlaps and `spc`/`shift-s` bursts, **`EnterCap 436F94A0`, `CapStart 437C43A8`, `RawDevInit` never
+run** — the release never turns into a capture. (In earlier unprobed sessions `EnterCap` fired twice and aborted
+before `RawDevInit`, so the gate is intermittent/occasionally-passable, consistent with a focus/release condition.)
+
+**Conclusion.** The blocker is **not** the S2 pin (model correct, S2 detected) but the **firmware's release decision
+between shutter-detect (`sub_436FC740`) and `CapStart`** — hypothesis (`[?]`): AF focus-priority with no lens (no AF
+lock → shutter held off), i.e. hypothesis (b) of §6.3. The fix is **Focus Mode = MF** (or release-priority), which is
+still blocked by the Camera-Settings-menu engine oops (§6.3) and has no known Backup propId for a boot-time route.
+
+**State at stop.** S2 pin confirmed correct (no model change). Capture still does not fire (release gate). Gate-3 not
+reached; sink `[?]`; `opd_done()` not implemented. **Next (needs the §6.3 options to set MF, or deeper RE):** decode
+the release path from `sub_436FC740` to `CapStart` to find and satisfy the exact gate (probe its callees, or
+IDA-decompile `sub_436FC740` and the release handler when the IDA host is free); or set MF (FocusMode propId RE / fix
+the Camera-menu oops); then S2 should drive `EnterCap→RawDevInit→…→StageOPD→0x439B193C`, and §5/§6 resume.
