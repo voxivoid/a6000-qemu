@@ -674,3 +674,40 @@ capture.** Validate the S2 shutter GPIO against the firmware's S2 read (RE the s
 path and which GPIO it polls), or set Focus Mode = MF / release-without-focus; then a full press should run
 `EnterCap→S0→RawDevInit→…→StageOPD` and hit `0x439B193C`, at which point §5/§6 confirm the sink and `opd_done()` is
 implemented and verified.
+
+### 6.3 S2 blocker — (b) MF and (a) S2-GPIO both blocked (2026-11-16)
+
+Pursuing the §6.2 S2 blocker per the two hypotheses.
+
+**(b) Focus-priority / MF — could not set MF.**
+* FocusMode lives in the **Camera Settings** menu (카메라 설정), and **entering that menu reliably triggers the
+  task-113 engine oops** (`RE_ENGINE_OOPS.md`): klog "Entering exception monitor", UI dead. It happened twice with
+  slow nav (3–8 s settles); the load spikes to ~4.9 **from my own single VM's GPU** rendering that menu's live-view
+  preview (the Custom/text menu of §6.2 never oopsed). The RE_ENGINE_OOPS GPU-under-BQL stall is unfixed, so the
+  Camera Settings menu is effectively unreachable while it renders a preview. → **MF not set via menu.**
+* No boot-time route either: FocusMode is **SDCom param 265** (`re/static/trackb_re_plan.md`; exposureMode=263),
+  but its **Backup propId is not known** (exposure mode = Backup `0x1070009` = model param 0x12A via RE_MODE_DIAL;
+  no analogous FocusMode propId is recorded), so I cannot add a loader `a5kcopy -bkset` for it like `shoot-mode`.
+  Finding it needs its own RE (the `Bkup_Read` of the focus-mode setting).
+
+**(a) S2 GPIO mapping — not resolvable statically.** The shutter is **not** in input.ko's key table (only GPIO
+entry there is P5.2→0x70A6); av-cam reads GPIO itself. The read chain is `sub_43917CD4(port,bit)` =
+`(*(uint*)(0xF2910000 + 0x100*port) >> bit) & 1` (gpio data at port_base+0, set/clear at +4/+8) → wrapper
+`sub_43AC774C(port,bit)` (debounce). The multi-pin reader `sub_4358F150` reads **three** GPIO states into its
+out-struct `+13/+14/+15`, and — crucially — **the port and bit are config-driven**, fetched via
+`sub_4355DCD8(<id>)` (ids ≈ 16318893/…894, 16319051/…052, 16319041/…042 or 16319493/…494), selected by a
+mode mask (0x28 / 0x16 / 0x40). So the S1/S2 pins are **not literals**; they come from a parameter table at runtime.
+The emulator's `a5k_shutter` S2 = p1.5+p0.13 (a hypothesis) therefore could neither be confirmed nor refuted from
+the binary alone. (S1 works, so whatever S1 pins the table yields match the model's p0.1/p0.11.)
+
+**State at stop.** S2 full-press still does **not** fire a capture; MF untested (menu oops, no Backup route); S2
+pin unresolved. Gate-3 not reached; OPD table still 0; sink `[?]`; `opd_done()` not implemented.
+
+**To finish (needs low host load to dodge the GPU oops, or a fix to RE_ENGINE_OOPS first):**
+1. Prefer **runtime resolution of (a)** on the shooting screen (no Camera-menu, so no oops): a5ktrace-probe
+   `sub_4358F150` and the `sub_4355DCD8` calls (or `sub_43AC774C`) while full-pressing, and read the port/bit it
+   polls for the S2 state — compare to the model's p1.5/p0.13. If they differ, fix `a5k_shutter` S2 pins; S2 should
+   then fire regardless of focus.
+2. Or RE the **FocusMode Backup propId** and set MF at boot via the loader (like `shoot-mode`), then retest S2.
+3. Either way, once S2 drives `EnterCap→RawDevInit→…→StageOPD`, resume §5/§6 (a5ktrace sink confirmation →
+   `opd_done()` implement/verify).
