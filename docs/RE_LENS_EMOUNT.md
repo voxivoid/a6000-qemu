@@ -884,3 +884,82 @@ aperture byte dynamically and drive it from the `a5k-lens` `aperture` property.
 (direct probe counts). "AE-ctx[35]==1 gates the apply job" **high** (3 dispatchers, identical case 1). Template
 `off_436CFCE8/EC` id byte **`[?]`** (not dumped; parse consumers imply 5/6). Exact AE-sequencer event that
 sets `AE-ctx[35]=1` **not decoded** (the deeper layer).
+
+### 11.9 AE-ctx[35] decoded with Ghidra: it is a generic job sub-state; the real gate is the AE-control job never being POSTED (2026-11-16)
+
+Follow-up to §11.8. Method: **Ghidra 12.2 headless + PyGhidra** (oeindev) on `av-cam.bin` (raw image,
+image base `0x43541000`, `ARM:LE:32:v7`), decompiling and disassembling the exact VAs below. All facts are
+backed by the decompiled C / raw disasm; `[?]` = unproven, `[H]` = hypothesis.
+
+**1. `AE-ctx[35]` is `job+0x23`, a generic job sub-state — not an AE-specific flag.**
+`sub_43A6EAFC(job) = *(u8*)(job+0x23)` (confirmed: `return *(undefined1 *)(param_1 + 0x23);`). The matching
+initialiser `sub_43A6CB24(job)` does `*(u8*)(job+0x23) = 0` (job creation resets the sub-state to 0). The
+getter `43A6EAFC` is read by **~30 handlers** across the `0x43A8xxxx` module-handler cluster **and** by the
+live-view EE-stage core `FUN_43546E40` — i.e. `+0x23` is the common "step" byte of av-cam's **job state
+machine framework**, reused by every sequence module, not a dedicated AE register.
+
+**2. The three handlers are three independent job state machines (raw disasm).**
+```
+43A89734: push{r4,lr}; mov r4,r0; bl 43A6EAFC; cmp r0,#0xb; bhi ...; tbh [pc,r0]   (states 0..0xb)
+43A89824: push{r4,lr}; mov r4,r0; bl 43A6EAFC; cmp r0,#0x9; bhi ...; tbb [pc,r0]   (states 0..9)
+43A898A6: push{r4,lr}; mov r4,r0; bl 43A6EAFC; cmp r0,#0xa; bhi ...; tbh [pc,r0]   (states 0..0xa)
+```
+Each takes the job in r0, reads `job+0x23`, and jump-tables on it. `43A898A6` **case 1** is the apply path:
+`ctx=*(job)` (`sub_43A59C60(job)=*job`), `43A59F86(ctx,0xc5)`, … `sub_4385EC74(ctx)`,
+`43893F98(4,0x2a, <fNo num/den from ctx+0x11A6/0x11AE/0x11BA>)`. `43A898A6` **case 0** posts an async
+request (`sub_438948B4(obj,template,job,0)`) and returns 0 → the job self-advances to state 1 on that
+request's completion, then case 1 (apply) runs. `sub_4385EC74` inlines `sub_4380C5A8` (the AE→lens-aperture
+coupler) whose gate is `*(char*)g==0 && *(char*)(g+0x15)==0` — i.e. the `[0x43E44162]`/`[0x43E44177]` flags
+of §11.8. **Confirmed the §11.8 chain end-to-end.**
+
+**3. The apply job consumes PRE-COMPUTED exposure — it does NOT need real pixels.** Case 1 reads the f-number
+rational straight out of `ctx+0x11A6/0x11AE/0x11BA`, which the metering copier `sub_437737D4` (runs ×195,
+§11.8) already fills from the AE-float result into the engine context. So **the apply stage itself is not the
+"deep, needs a real ISP image" case** — the exposure numbers already exist when the apply job would run.
+
+**4. Registration + framework (how the handlers hang off a module).** `sub_437CB26C` is a flat initialiser
+that calls `sub_43A6C296(slot, fn)` a few hundred times; `43A6C296 → 437C3AAC` writes `slot[0]=<type const>,
+slot[1]=0, slot[2]=fn` (20-byte slot, **fn at slot+8**). Resolving its literal pool: the three handlers land
+in **one module object** (call it module-C, runtime base `0x43DC6AE0`, held at pointer-slot `0x43EE1314`),
+at slot indices **8 / 10 / 11** (`base+0xA0`=734, `+0xC8`=824, `+0xDC`=8A6). A job is dispatched by looking
+the module up in a **17-entry registry** (`sub_437C7038(idx<0x11) = *(regbase + idx*4)`) and calling
+`module->slot[event].fn(job)`; jobs are posted onto a task queue by `sub_437C76EC/437C7754/437C74D0`
+(each: template copy `43A6C240`, `43A6CB24(job)` state=0, then `438948B4(...,job,0)`). `sub_43893DD4`
+(called with 0/4/5/8/9/10 inside the per-VD frame routine `sub_4376C1E4`) is a **timing profiler**, NOT the
+dispatcher — do not mistake those ids for event dispatch.
+
+**5. The actual gap: the AE-control job is never POSTED.** Prior trace: handlers 734/824/8A6 get **0 hits**
+while metering runs hard. Since a job's `+0x23` is 0 at creation and only advances once the handler runs,
+`AE-ctx[35]` never even reaches state 0's code — meaning **no AE-control job is enqueued at all**. The poster
+is the engine's live-view **AE/EE sequence**: the EE-stage core `sub_43546E40` is itself a `job+0x23` state
+machine (`EE stage = *(u8*)(img+0x23)`, §`RE_LIVEVIEW_PIPELINE.md`) that posts the next-stage jobs through the
+same framework. It reaches the metering stage (so `437737D4` runs) but **does not advance to the control/apply
+stage** in the emulator, so the module-C job is never posted.
+
+**Classification — NOT the "fabricate metering" deep case, but gated behind the live-view image/EE sequence
+(lean: STOP AT SPEC).** The trigger for `AE-ctx[35]=1` is not a standalone device IRQ/register. It is:
+*engine live-view AE/EE sequence advances to its control stage → posts the module-C AE-control job (state 0)
+→ that job's state-0 async request completes → `job+0x23` becomes 1 → apply (case 1) runs → camInfo.fNumber /
+param 267 populated.* The one unresolved link is **which EE-sequence predicate stalls between the metering
+stage (reached) and the control-job post**. Statically that predicate lives inside the giant `sub_43546E40`
+and its HS_Sequence job graph (`4376FB3C`, list `0x43D88F44`), coupled to the live-view image dataflow that
+the emulator does not yet generate (the synthesized-ISP "deep" item of `RE_LIVEVIEW.md` §5 /
+`RE_SENSOR_ISP.md` §4.b). **No small faithful device change drives `AE-ctx[35]=1` in isolation**, and
+force-posting the job or poking `job+0x23` would fabricate sequencer state the firmware never produced
+(fidelity violation) — so **no emulator change is made this pass.**
+
+**Precise next layer (dynamic, for a live-view/engine agent — needs the a5ktrace harness, ~130 s boot).**
+Probe `sub_43546E40` entry and log `*(u8*)(param_1+0x23)` (the EE stage) each VD, plus the stage-case
+predicates that `return 5` (abort/stay). Find the exact stage where the sequence stalls after metering. If
+that stalled predicate is a bare **completion/flag** an engine/ISP device fails to raise (the OPD/IDT
+"IRQ-but-no-data" pattern), it is **tractable** — raise that one signal and the control job posts. If it reads
+**image content / statistics**, it is **deep** — it needs the synthesized ISP front-end, and the F-number
+remains correctly blocked until then. The `a5k-lens aperture` prop and the aperture-byte decode of §11.5/11.7
+stay blocked behind this regardless.
+
+**Confidence.** `+0x23` = generic job sub-state, getter/setter, 3 independent state machines, apply consumes
+pre-computed exposure, module-C slot mapping, 17-entry registry, `43893DD4`=profiler: **all high** (direct
+Ghidra decompile / raw disasm / pool resolution, this pass). "AE-control job never posted (not merely
+state-stuck)" **high** (0 hits + `+0x23`-init-0 semantics). "Gate lives in the live-view EE sequence advance"
+**high** (43546E40 is the poster layer and is an `img+0x23` machine). "Deep vs tractable at the EE-predicate
+level" **undecided** — that is exactly what the dynamic next step settles.

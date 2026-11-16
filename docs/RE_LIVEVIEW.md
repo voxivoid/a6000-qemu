@@ -142,6 +142,23 @@ The real open question is **what makes av-cam issue a periodic lens request** (t
 precedes the `43A4A730` RX poll). It is **not** the VD / YC frame we now model (§1: YC runs at ~3/s, lens link
 idle).
 
+**DECODED (2026-11-16, Ghidra, `RE_LENS_EMOUNT.md` §11.9).** `AE-ctx[35]` is `job+0x23`, the **generic job
+sub-state** of av-cam's job-state-machine framework (getter `43A6EAFC`, init-to-0 `43A6CB24`), reused by ~30
+module handlers and by the EE-stage core `43546E40`. The three handlers `43A89734/824/8A6` are three
+independent `job+0x23` jump-table state machines registered into one module object (base `0x43DC6AE0`, slots
+8/10/11). Handler `43A898A6` case 1 = the apply path (`→4385EC74→4380C5A8`, reading the f-number rational
+straight from `ctx+0x11A6/0x11AE/0x11BA` that metering `437737D4` already filled — **the apply consumes
+pre-computed exposure, it does not need real pixels**). Case 0 posts an async request and returns 0; the job
+self-advances 0→1 on that completion. **The real gap:** the handlers get 0 hits because `job+0x23` is 0 at
+creation and only advances once the handler runs — i.e. the **AE-control job is never POSTED**. Its poster is
+the live-view AE/EE sequence (`43546E40`, itself an `img+0x23` machine), which reaches the metering stage but
+not the control/apply stage in the emulator. **Classification: NOT the "fabricate metering" deep case, but
+gated behind the live-view image/EE sequence advancing to its control stage — which is coupled to the
+synthesized-ISP dataflow of §5 / `RE_SENSOR_ISP.md` §4.b.** No small faithful device change sets
+`AE-ctx[35]=1` in isolation; the precise next step is a dynamic trace of `43546E40`'s stage byte to find which
+EE predicate stalls after metering (bare completion flag → tractable; reads image content → deep). Full
+evidence + the probe recipe in `RE_LENS_EMOUNT.md` §11.9.
+
 **RESOLVED (2026-11-16, `RE_LENS_EMOUNT.md` §11.8).** The periodic block 5/6 request is built by
 `sub_436CFB70 → sub_43A4C60E → sub_436B5188`, reached only from `sub_4380C5A8` (the AE-result→lens-aperture
 driver), which runs only via the AE **control/apply** job `sub_43853DA8`. That job is dispatched by the per-VD
