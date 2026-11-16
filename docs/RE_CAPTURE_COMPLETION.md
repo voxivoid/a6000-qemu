@@ -740,3 +740,41 @@ reached; sink `[?]`; `opd_done()` not implemented. **Next (needs the §6.3 optio
 the release path from `sub_436FC740` to `CapStart` to find and satisfy the exact gate (probe its callees, or
 IDA-decompile `sub_436FC740` and the release handler when the IDA host is free); or set MF (FocusMode propId RE / fix
 the Camera-menu oops); then S2 should drive `EnterCap→RawDevInit→…→StageOPD→0x439B193C`, and §5/§6 resume.
+
+### 6.5 Release-gate decode — shutter chain decoded, gate is downstream; IDA(Hex-Rays) unavailable (2026-11-16)
+
+Decoding the §6.4 release gate. The shutter read chain is fully decoded (local objdump, Thumb, VA base 0x43541000):
+
+* **`sub_436FC740(sel)`** — leaf "is the shutter pin pressed?" helper. `sel==0`: `port=sub_4355DCD8(0x00F90139)`,
+  `bit=sub_4355DCD8(0x00F9010A)`; `sel!=0`: `port=sub_4355DCD8(0x00F90140)`, `bit=sub_4355DCD8(0x00F90111)`; returns
+  `!gpio_get(port,bit)` (active-low → pressed). (The two config ids resolve at runtime, via `sub_4355DCD8`, to the
+  two shutter pins — confirmed p0.1=S1 and p1.5=S2 in §6.4.)
+* **`sub_436FC780(phase)`** — debounced shutter-state getter: a `tbb` switch on `phase` (0..3), a latch-table lookup
+  (`ldrh [r3, r4<<1]`, `tst #0x8000`), then `bl sub_436FC740` at `436FC80E`; returns the debounced pressed state.
+* **The dispatcher** (the function at ~`436FC842`, task **liro-kliro_111**) switches on a poll phase (1/2/3), calls
+  `sub_436FC780` for each shutter state (`436FC86C`, `436FC8D0`, `436FC94A`), and on a pressed state emits events:
+  `set_flg` (`sub_43893F98`) and messages (`sub_43A51DDA`, `sub_43A5261A`, `sub_43A5264C`). It is **event-driven on
+  the GPIO edge** (0× idle, runs on every press — §6.4).
+
+**So the shutter event IS generated on an S2 press** (the dispatcher reads S2 and emits its event). The capture still
+does not start → **the release/gate is DOWNSTREAM, in the capture task that receives this event** (it must check
+focus-lock / lens / mode before `CapStart 437C43A8`→`EnterCap`). This matches §6.4: S2 detected, capture blocked after
+detection. `CapStart` itself (decompiled earlier, §1) has no focus check and ends by starting the step machine
+(`sub_43A72BA2`), and the two intermittent `EnterCap` runs aborted **before** `RawDevInit` — so there are really two
+gated points (S2-event→`CapStart`, and `EnterCap`→`RawDevInit`), both consistent with an AF focus-priority / no-lens
+condition.
+
+**Blocker: Hex-Rays unavailable.** Decoding the exact gate (the capture-task handler of the shutter event, its
+focus/lens/mode branch before `CapStart`, and the `RawDevInit` precondition) needs the decompiler, but IDA on the
+windev host returned **"Failed to initialize IDA as library (error code 4)"** on every attempt over ~6 minutes
+(another agent's session holds the idalib license; it is not file-lock — a fresh copy failed identically, and no
+`idat` process is listed). Local objdump decoded the shutter chain above but a message-passing release-decision trace
+across tasks is impractical by raw disassembly.
+
+**State at stop.** Shutter chain decoded; S2 event confirmed generated; gate localized to the **downstream capture-task
+release decision** (+ the `EnterCap→RawDevInit` precondition), hypothesis AF focus-priority with no lens. Exact gate
+condition / unlock value / Backup propId **not yet determined** (needs Hex-Rays). Gate-3 not reached; sink `[?]`;
+`opd_done()` not implemented. **Next (when IDA frees):** decompile the handler of the shutter event messages
+(`sub_43A51DDA`/`43A5261A`/`43A5264C` targets) and the `CapStart` trigger + `RawDevInit` step precondition to find the
+focus/lens gate, its unlock (FocusMode=MF / release-priority), and its Backup propId for a `loader.sh` boot-set — or
+first fix RE_ENGINE_OOPS to make the Camera-Settings menu usable for setting MF.
