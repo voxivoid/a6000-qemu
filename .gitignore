@@ -32,4 +32,4 @@ __pycache__/
 *.dat
 *.FDAT
 # raw dumps from the owner's A6000 (NAND, NVRAM/backup, RAM, SWD)
-/dumps/
+/dumps
