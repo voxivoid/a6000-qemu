@@ -1,9 +1,9 @@
-# nested QEMU repo (branch sony-a5000); tracked here only as patches/
+# nested QEMU repo (branch sony-a6000); tracked here only as patches/
 /qemu/
 # firmware-derived / generated binaries — never commit
 /re/vmlinux.elf
 /provision/prov.cpio
-/provision/a5kcopy
+/provision/a6kcopy
 *.nand
 *.img
 __pycache__/
@@ -23,8 +23,6 @@ __pycache__/
 /data/wbi/
 # official updater (Sony firmware), unpacked locally
 /firmware/
-/firmware-a6000/
-/data-a6000/
 # build products
 /tools/*.dylib
 /tools/*.so

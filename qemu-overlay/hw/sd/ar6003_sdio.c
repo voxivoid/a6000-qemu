@@ -1,10 +1,10 @@
 /*
- * Atheros AR6003 SDIO card (Wi-Fi module of the Sony a5000, mmc1)
+ * Atheros AR6003 SDIO card (camera Wi-Fi module, mmc1; AR6003 on the reference build, A6000 module unverified)
  *
  * The SD/SDIO side of the module: SD protocol (CMD5/3/7/52/53), CCCR, FBR1,
  * CIS, the function-1 host-interface register file and the four mailboxes.
  * The chip firmware behind the mailboxes (BMI, HTC, WMI) is the HLE in
- * hw/net/ar6003_fw.c.  Spec and evidence: emulator/docs/RE_WIFI.md §3, §7.
+ * hw/net/ar6003_fw.c.  Spec and evidence: emulator/docs/reference/RE_WIFI.md §3, §7.
  *
  * Function 0 (CMD52 fn 0):
  *   0x00 CCCR/SDIO rev 0x32   0x02 IOE  0x03 IOR (= IOE)  0x04 IEN
@@ -652,7 +652,7 @@ static void ar6003_class_init(ObjectClass *klass, const void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     SDCardClass *sc = (SDCardClass *)klass;
 
-    dc->desc = "Atheros AR6003 SDIO Wi-Fi (a5000 module)";
+    dc->desc = "Atheros AR6003 SDIO Wi-Fi (camera module)";
     dc->bus_type = TYPE_SD_BUS;
     dc->realize = ar6003_realize;
     device_class_set_legacy_reset(dc, ar6003_reset);

@@ -1,9 +1,9 @@
 /*
- * CXD90014 16-channel memory DMA used by av-cam.bin (a5000).
+ * CXD90014 16-channel memory DMA used by av-cam.bin.
  * Units at PA 0xF0102000 (ch0-7) and 0xF0103000 (ch8-15), GIC 173 + ch.
  * Recovered from av-cam: entry_pre copies its initialised data section
  * with it (ch6 regs +0x1C0..+0x1D0, 25 x 16 KiB), ISR 0x439172b0,
- * status 0x43917994, stop 0x43917bb0 (docs/RE_AVCAM_IRQ_BOOT.md):
+ * status 0x43917994, stop 0x43917bb0 (docs/reference/RE_AVCAM_IRQ_BOOT.md):
  *   unit +0x00  per-channel done/IRQ status (bit ch)     +0x08 W clear
  *        +0x0C  per-channel error status                 +0x10 W clear
  *        +0x1C  busy bits (always 0: transfers finish at once)
@@ -11,7 +11,7 @@
  *        [11:0] = 32-bit word count, 0 = 4096), +0x10 ctl bit0 = start
  * Without this model the engine ran with an all-zero .data section.
  *
- * Peripheral-paced channels (docs/RE_LENS_EMOUNT.md 9.4, lens on UART1):
+ * Peripheral-paced channels (docs/reference/RE_LENS_EMOUNT.md 9.4, lens on UART1):
  * when src or dst equals the FIFO address registered by the board
  * (cxd90014_mdma_set_periph, 0xF2001000 = UART1 DR) the channel does not
  * copy memory.  The driver packs (av-cam 439174D2) cfg bits[11:0] = count

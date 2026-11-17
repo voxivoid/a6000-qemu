@@ -1,7 +1,7 @@
 /*
- * CXD90014 video output: VPH display controller + SYSV frame timer (a5000).
+ * CXD90014 video output: VPH display controller + SYSV frame timer.
  *
- *   VPH  PA 0xF3440000..0xF3446FFF  (docs/RE_DISPLAY_SCANOUT.md)
+ *   VPH  PA 0xF3440000..0xF3446FFF  (docs/reference/RE_DISPLAY_SCANOUT.md)
  *        0x028 = 0x111 clock enable (we start vsync once it is non-zero)
  *        0x144 bit0 panel YUV layer on, bit1 OSD [?]; 0x404 bit0 OSD 4 B/px
  *        AIF DMA ch51..58 @ 0xF3441200 + 0x80*k: +0x00 bit0 start/busy
@@ -10,7 +10,7 @@
  *        +0x48 signed pitch.  ch51 = panel YUV (live view), ch53 = panel OSD.
  *        IRQ 101 / 102 = output vsync (both pulsed; which one is the panel is
  *        unknown), IRQ 79 = status at +0xA0 (not raised).
- *   SYSV PA 0xF3402000 (docs/RE_AVCAM_IRQ_BOOT.md): +0x98 V counter,
+ *   SYSV PA 0xF3402000 (docs/reference/RE_AVCAM_IRQ_BOOT.md): +0x98 V counter,
  *        +0x28 bit0 V phase, +0x3C period (av-cam writes 64800); IRQ 98
  *        every V (33367 us, master clock, drives the evsel engine frame).
  *
@@ -19,7 +19,7 @@
  * (live-view luma plane under the OSD) into QEMU graphic console 0.
  * OSD at 16 bpp = RGBA4444 (A low nibble); ch51 = 8-bit luma plane.
  *
- * HDMI = the VPH line output (docs/RE_HDMI.md §2): while the HDMI TX model
+ * HDMI = the VPH line output (docs/reference/RE_HDMI.md §2): while the HDMI TX model
  * reports TMDS active (GPIO in "hdmi-tmds"), the line layers ch52 (YUV,
  * enable +0x184 bit0) and ch54 (OSD, 4 B/px when +0x414 bit0) are composed
  * into QEMU graphic console 1, sized from +0x454 ([11:0] width, [27:16]
@@ -72,7 +72,7 @@ struct VphState {
  * phase bit against its own V counter every frame (VD_Pre 4376D904) and
  * VDF hands a YC pin to VPH only while +0x98 equals the pin's frame
  * (4367EC50); a 60 Hz SYSV drifted against the engine frame and both
- * failed every frame (docs/RE_LIVEVIEW_PIPELINE.md §5).  The panel vsync
+ * failed every frame (docs/reference/RE_LIVEVIEW_PIPELINE.md §5).  The panel vsync
  * (IRQ 101/102) keeps its own 60 Hz timer [?].
  */
 #define V_US 33367
@@ -139,7 +139,7 @@ static void vph_compose(VphState *s, uint32_t *dst, uint32_t W, uint32_t H,
          * lines - 1 (1024 x 516, pitch 0x480); no C plane in the layer
          * descriptor (438F6CF4), shown as grey.  The YUV-layer scaler at
          * +0x300 maps it to the panel size; here nearest-neighbour
-         * (docs/RE_LIVEVIEW_IMAGE.md).  hypothesis: full-range luma.
+         * (docs/reference/RE_LIVEVIEW_IMAGE.md).  hypothesis: full-range luma.
          */
         uint32_t base = R(AIF(ky) + 0x20), lb = R(AIF(ky) + 0x24);
         uint32_t pitch = lb + R(AIF(ky) + 0x28);
@@ -188,7 +188,7 @@ static void vph_compose(VphState *s, uint32_t *dst, uint32_t W, uint32_t H,
                 } else {
                     /* RGBA4444, A in the low nibble: the UI renders with
                      * P3D colour format 4 and PPF in/out format 4 into
-                     * the panel buffers (docs/RE_GPU_P3D_CMD.md) */
+                     * the panel buffers (docs/reference/RE_GPU_P3D_CMD.md) */
                     uint16_t v = row[2 * x] | row[2 * x + 1] << 8;
                     r = (v >> 12) * 17; g = ((v >> 8) & 15) * 17;
                     b = ((v >> 4) & 15) * 17; a = (v & 15) * 17;
@@ -217,7 +217,7 @@ static void vph_update(void *opaque)
     dpy_gfx_update_full(s->con);
 }
 
-/* HDMI: line output, console 1 (docs/RE_HDMI.md §2, §4.2) */
+/* HDMI: line output, console 1 (docs/reference/RE_HDMI.md §2, §4.2) */
 static void vph_hdmi_update(void *opaque)
 {
     VphState *s = opaque;
@@ -304,7 +304,7 @@ static uint64_t sysv_read(void *opaque, hwaddr off, unsigned size)
          * only hands out module requests on frames with bit0 = 1; a
          * constant 0 stalled the mode sequencer at step 12 whenever the
          * first mode request came after the 2V switch
-         * (docs/RE_ENGINE_STABILITY.md §1).  hypothesis: polarity/phase
+         * (docs/reference/RE_ENGINE_STABILITY.md §1).  hypothesis: polarity/phase
          * relative to the engine frame event.
          */
         return (s->sysv[off / 4] & ~1u) | (s->frame & 1);

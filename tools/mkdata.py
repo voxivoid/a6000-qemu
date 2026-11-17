@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build data/ from the official ILCE-5000 1.10 updater (no camera needed).
+"""Build data/ from the official ILCE-6000 3.21 updater (no camera needed).
 
 The camera resumes from a factory warm-boot image (WBI) that Sony ships in the
 updater as partition nflasha5.  This script decompresses it with fwtool.py
@@ -11,7 +11,7 @@ updater as partition nflasha5.  This script decompresses it with fwtool.py
   data/submicro_frames.bin             sub-micro RX frames, PA 0x8334417C, with
                                        the power-off flag (frame 2 byte 33 bit 6)
                                        cleared and the frame CRC recomputed
-                                       (docs/RE_SUBMICRO_LINK.md section 4)
+                                       (docs/reference/RE_SUBMICRO_LINK.md section 4)
 
 usage: mkdata.py --fwtool <fwtool.py checkout> [--nflasha5 <path>] [--out data]
 """
@@ -32,7 +32,7 @@ def crc16(f):
 
 def main():
     e = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    fw = os.environ.get('A5K_FW') or (e + '/firmware' if os.path.isdir(e + '/firmware')
+    fw = os.environ.get('A6K_FW') or (e + '/firmware' if os.path.isdir(e + '/firmware')
                                       else os.path.dirname(e) + '/firmware')
     ap = argparse.ArgumentParser()
     ap.add_argument('--fwtool', required=True, help='fwtool.py checkout (provides the fwtool package)')

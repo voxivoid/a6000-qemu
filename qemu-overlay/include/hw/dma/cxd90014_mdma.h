@@ -2,7 +2,7 @@
  * CXD90014 av-cam memory DMA: peripheral-paced channels.
  * A channel whose source or destination equals the registered peripheral
  * FIFO address (UART1 DR for the E-mount lens) does not copy memory; the
- * peer device produces / consumes the bytes (docs/RE_LENS_EMOUNT.md 9.4).
+ * peer device produces / consumes the bytes (docs/reference/RE_LENS_EMOUNT.md 9.4).
  */
 #ifndef HW_DMA_CXD90014_MDMA_H
 #define HW_DMA_CXD90014_MDMA_H

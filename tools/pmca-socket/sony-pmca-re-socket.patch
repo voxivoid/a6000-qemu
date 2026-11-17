@@ -1,4 +1,4 @@
-Sony-PMCA-RE: select the A5KU socket backend with "-d socket".
+Sony-PMCA-RE: select the A6KU socket backend with "-d socket".
 Apply in a Sony-PMCA-RE checkout (tested on a82f5ba):
   cp <emulator>/tools/pmca-socket/socket.py pmca/usb/driver/generic/socket.py
   patch -p1 < <emulator>/tools/pmca-socket/sony-pmca-re-socket.patch

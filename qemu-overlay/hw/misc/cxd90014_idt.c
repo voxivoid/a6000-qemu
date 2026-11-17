@@ -1,7 +1,7 @@
 /*
- * CXD90014 IDT develop / FOPD control block (a5000, fw 1.10).
+ * CXD90014 IDT develop / FOPD control block (register analysis: docs/reference/).
  *
- * Spec: docs/RE_RAW_DEVELOP.md §2 and §7.2.  Addresses below are av-cam.bin
+ * Spec: docs/reference/RE_RAW_DEVELOP.md §2 and §7.2.  Addresses below are av-cam.bin
  * VAs (load address 0x43541000, Thumb).
  *
  * PA 0xF3020400..0xF3020FFF (the same 4 KiB page as AIF group 0xF3020000,

@@ -3,7 +3,7 @@
  *
  * Only the part that the kernel's IRAM sleep code needs is modelled
  * (vmlinux 0x4037BFA0..0x4037C174, copied to IRAM 0xC0020000 by the sleep
- * entry 0x4037BEA0; literal 0xF0104000 at 0x4037C160; docs/RE_REBOOT.md
+ * entry 0x4037BEA0; literal 0xF0104000 at 0x4037C160; docs/reference/RE_REBOOT.md
  * sections 1.4 and 4.3).  Register names are guesses [?]:
  *
  *   +0x78 (RW)  bits[31:24] = requested low-power state; the IRAM code
@@ -18,7 +18,7 @@
  *   +0xC4/+0xD8 per-channel "ddr_ctrl" mode bytes (storage only)
  *
  * DDR contents are not touched here: the loss of DDR on the power cycle
- * that follows is modelled by the board (hw/arm/sony_a5000.c reset kinds).
+ * that follows is modelled by the board (hw/arm/sony_a6000.c reset kinds).
  * Every other offset reads back the last value written and is logged with
  * LOG_UNIMP, like the io-f0 register file this block used to fall into.
  */

@@ -54,7 +54,7 @@ main { display: grid; gap: 16px; padding: 0 20px 24px; max-width: 1180px; margin
 .ctl.round { width: clamp(30px, 4.2vw, 46px); aspect-ratio: 1; }
 .ctl::after { content: ""; position: absolute; top: -2px; right: -2px; width: 9px; height: 9px; border-radius: 50%;
   border: 2px solid var(--metal); background: var(--nw); }
-.ctl.ok::after { background: var(--ok); } .ctl.a5k::after { background: var(--warn); }
+.ctl.ok::after { background: var(--ok); } .ctl.a6k::after { background: var(--warn); }
 .ctl.nw { cursor: not-allowed; opacity: .6; }
 .ctl.rec { background: radial-gradient(circle at 40% 30%, #ff7a6e, #c42d2d 70%); width: clamp(14px, 1.9vw, 22px); aspect-ratio: 1; }
 
@@ -189,11 +189,11 @@ main { display: grid; gap: 16px; padding: 0 20px 24px; max-width: 1180px; margin
       <div class="at diopter" title="Diopter-adjustment dial"></div>
       <span class="tag dim" style="left:39%;top:18%">AVCHD · 24.3 MP</span>
 
-      <button class="ctl pill a5k" style="left:50.6%;top:20%" data-tap="h" title="Flash pop-up (H)">ϟ</button>
+      <button class="ctl pill a6k" style="left:50.6%;top:20%" data-tap="h" title="Flash pop-up (H)">ϟ</button>
       <button class="ctl pill ok" style="left:63.2%;top:20%" data-tap="m" title="MENU (M)">MENU</button>
       <button class="ctl round ok" style="left:75.3%;top:19%" data-hold="a" title="AEL (A) · playback zoom when viewing">AEL</button>
       <button class="ctl round ok" style="left:76.7%;top:38%" data-hold="f" title="Fn (F) · Send to Smartphone when viewing">Fn</button>
-      <button class="ctl rec a5k" style="left:97.6%;top:20%" data-hold="r" title="MOVIE (R)"></button>
+      <button class="ctl rec a6k" style="left:97.6%;top:20%" data-hold="r" title="MOVIE (R)"></button>
       <span class="tag" style="left:93.5%;top:27%">MOVIE</span>
 
       <div class="at lcd" id="lcdbox"><canvas id="lcd" width="640" height="480"></canvas><div class="msg" id="lcdmsg">waiting for the emulator…</div></div>
@@ -237,8 +237,8 @@ main { display: grid; gap: 16px; padding: 0 20px 24px; max-width: 1180px; margin
       </div>
       <div class="lensrow">
         <span class="lensname">E PZ 16–50 mm (kit lens) · zoom lever</span>
-        <button class="ctl pill a5k" style="position:relative;transform:none" data-hold="w" title="Zoom wide (W) · needs -M lens=ekit">W</button>
-        <button class="ctl pill a5k" style="position:relative;transform:none" data-hold="t" title="Zoom tele (T) · needs -M lens=ekit">T</button>
+        <button class="ctl pill nw" style="position:relative;transform:none" title="Lens zoom lever: not wired yet (the lens model takes no zoom commands)">W</button>
+        <button class="ctl pill nw" style="position:relative;transform:none" title="Lens zoom lever: not wired yet (the lens model takes no zoom commands)">T</button>
       </div>
       <div style="display:flex;gap:18px;justify-content:center;margin-top:10px;flex-wrap:wrap">
         <span class="note" style="margin:0">Charge · access lamps, USB, HDMI: not modelled in this view</span>
@@ -252,7 +252,7 @@ main { display: grid; gap: 16px; padding: 0 20px 24px; max-width: 1180px; margin
         <li><kbd>C</kbd> C1 · <kbd>F</kbd> Fn · <kbd>A</kbd> AEL · <kbd>H</kbd> flash pop-up</li>
         <li><kbd>R</kbd> MOVIE · <kbd>O</kbd> power</li>
         <li><kbd>S</kbd> shutter half (hold) · <kbd>Space</kbd> full</li>
-        <li><kbd>PgUp</kbd><kbd>PgDn</kbd> mode dial · <kbd>T</kbd><kbd>W</kbd> zoom</li>
+        <li><kbd>PgUp</kbd><kbd>PgDn</kbd> mode dial</li>
       </ul>
       <p class="note">Hold ~0.3 s: the camera samples buttons every ~43 ms and the screen lags about one key behind.</p>
       <pre id="log"></pre>
@@ -325,7 +325,7 @@ $('#wheel').addEventListener('wheel', async e => { e.preventDefault(); if (wheel
 // ---- keyboard ----
 const kmap = { ArrowUp: ['up'], ArrowDown: ['down'], ArrowLeft: ['left'], ArrowRight: ['right'], Enter: ['ret'],
   Delete: ['delete'], Backspace: ['delete'], m: ['m'], p: ['p'], r: ['r'], o: ['o'], s: ['s'], ' ': ['spc'],
-  t: ['t'], w: ['w'], '[': ['bracket_left'], ']': ['bracket_right'], c: ['c'], f: ['f'], a: ['a'], h: ['h'] };
+  '[': ['bracket_left'], ']': ['bracket_right'], c: ['c'], f: ['f'], a: ['a'], h: ['h'] };
 const kname = e => e.key.length === 1 ? e.key.toLowerCase() : e.key;
 const kheld = new Set();
 addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return;

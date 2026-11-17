@@ -1,5 +1,5 @@
 /*
- * Sony CXD90014 NAND subsystem (a5000).
+ * Sony CXD90014 NAND subsystem.
  *
  *   nand_reg  PA 0x00020000  NAND controller registers        IRQ 172
  *   arm7io    PA 0x00011000  ARM7 sub-CPU mailbox (latch/bell) IRQ 170
@@ -10,7 +10,7 @@
  * The ARM7 runs Sony's NAND firmware, which is not part of any firmware
  * image we have (it lives in reserved NAND blocks).  This model therefore
  * implements that firmware at the mailbox level (HLE), exactly as lld.ko
- * uses it; see emulator/docs/NAND_PROTOCOL.md for the full protocol and the
+ * uses it; see emulator/docs/reference/NAND_PROTOCOL.md for the full protocol and the
  * provenance of every field.  Everything above the mailbox — lld.ko, the
  * MUMIN FTL in nand.ko, the block devices — is the unmodified firmware.
  *

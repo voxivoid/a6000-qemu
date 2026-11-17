@@ -16,7 +16,7 @@ void cxd90014_sio_attach(DeviceState *sio, int ch, CXDSioSlaveXfer fn,
 
 /*
  * Same, but the slave also gets the channel's +0x04 word at the start of
- * the transfer (@mode).  Seen on ch2 (av-cam SIO server, docs/RE_NFC.md
+ * the transfer (@mode).  Seen on ch2 (av-cam SIO server, docs/reference/RE_NFC.md
  * section 1.2): bit29 = transmit, bit28 = receive [H, two modes observed].
  * A half-duplex slave needs it: TX and RX share the length range and the
  * FIFO keeps stale bytes.

@@ -2,7 +2,7 @@
  * CXD90014 TPU block 0xF2404000, channel 0: control-wheel (JogTpu) counter.
  *
  * av-cam reads a 16-bit up/down counter at +0x14 and turns the wrap-around
- * delta into dial events (docs/RE_WHEEL_ZOOM_DATE.md section 1).  +0x14
+ * delta into dial events (docs/reference/RE_WHEEL_ZOOM_DATE.md section 1).  +0x14
  * returns the wheel position; every other register echoes what was written
  * (as the io-f0 catch-all regfile underneath would).  Host keys move the
  * counter through cxd90014_jog_step().

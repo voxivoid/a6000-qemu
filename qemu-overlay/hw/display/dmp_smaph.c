@@ -1,9 +1,9 @@
 /*
- * DMP SMAPH-S30 ("SUGILITE"/"GPE") GPU of the CXD90014 (a5000).
+ * DMP SMAPH-S30 ("SUGILITE"/"GPE") GPU of the CXD90014.
  * PA 0xF1000000, 16 KiB, GIC IRQ 76 (level high).
  *
  * Interface from grm_gles.ko (sugilite_interrupt / sugilite_register_init)
- * and libObj.so rm_* (docs/RE_DISPLAY_GPU.md §2):
+ * and libObj.so rm_* (docs/reference/RE_DISPLAY_GPU.md §2):
  *   +0x10/+0x14/+0x18/+0x1C  PSC0 memory fill: start>>3, end>>3, value,
  *                            ctrl (bit0 start, bits8-9 width: 0=16, 1=24,
  *                            2=32 bit) -> status bit26, ack: +0x1C = 0
@@ -15,9 +15,9 @@
  *
  * PSC fill, PPF transfers and P3D command lists are executed.  PPF follows
  * the PICA200 layout (8x8 Morton tiles) with addresses >>2 [hypothesis, see
- * docs/RE_DISPLAY_GPU.md].
+ * docs/reference/RE_DISPLAY_GPU.md].
  *
- * P3D (docs/RE_GPU_P3D_CMD.md): the list at +0x1804 holds +0x1800 8-byte
+ * P3D (docs/reference/RE_GPU_P3D_CMD.md): the list at +0x1804 holds +0x1800 8-byte
  * entries [header][value], built by libObj sub_5FC750 / sub_5FC790 /
  * sub_5FC720:
  *   header bit0       call: value = PA of a sub-list, bits 3-11 = entries
@@ -188,7 +188,7 @@ static void ppf_run(SmaphState *s)
 /*
  * ---------------------------------------------------------------------------
  * P3D: command-list processor and software renderer
- * (register map: docs/RE_GPU_P3D_CMD.md; evidence = libObj.so functions)
+ * (register map: docs/reference/RE_GPU_P3D_CMD.md; evidence = libObj.so functions)
  * ---------------------------------------------------------------------------
  */
 
@@ -752,7 +752,7 @@ static void p3d_zs_write(P3dTarget *t, size_t i, uint32_t v)
 /*
  * Stencil and depth test for the fragment at tiled index i with window
  * depth z (0..1).  Returns false if the fragment is discarded.  Register
- * meanings from sub_600EB0 (see docs/RE_GPU_P3D_CMD.md §3.2):
+ * meanings from sub_600EB0 (see docs/reference/RE_GPU_P3D_CMD.md §3.2):
  *   0x105 bit0 enable, 4-6 func, 8-15 value mask, 16-23 ref, 24-31 write mask
  *   0x106 0-2 sfail, 4-6 zfail, 8-10 zpass
  *   0x107 bit0 depth test, 4-6 func, bit12 depth write

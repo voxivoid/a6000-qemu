@@ -1,14 +1,14 @@
 /*
- * CXD90014 ADC unit (a5000): PA 0xF2406000 + 0x1000*u, GIC 215 + u.
- * From av-cam.bin (docs/RE_AVCAM_IRQ_BOOT.md, 0x4391722c result reader):
+ * CXD90014 ADC unit: PA 0xF2406000 + 0x1000*u, GIC 215 + u.
+ * From av-cam.bin (docs/reference/RE_AVCAM_IRQ_BOOT.md, 0x4391722c result reader):
  *   +0x00 channel mask   +0x04 bit0 start   +0x08 mode (2 = continuous [?])
  *   +0x0C bit0 IRQ status, bit4 ack, bit8 IRQ enable   +0x10 bit0 busy
  *   +0x14 + 4*ch  result (u16, 10 bit), 12 channels
  *   +0x44 (div<<8)|n, +0x48 timing
  * All results read 1023: every resistor-ladder key released, zoom lever in
- * its neutral band (input.ko key table, docs/RE_INPUT_I2C_POWER.md).
+ * its neutral band (input.ko key table, docs/reference/RE_INPUT_I2C_POWER.md).
  * The board drives levels with cxd90014_adc_set() (key front end in
- * hw/arm/sony_a5000.c).
+ * hw/arm/sony_a6000.c).
  */
 #include "qemu/osdep.h"
 #include "hw/sysbus.h"

@@ -1,9 +1,9 @@
 /*
  * CXD90014 camera front end: "Pig" frame/interrupt block of the CamCore
- * front-end units, and the SIF sync-code counters (a5000).
+ * front-end units, and the SIF sync-code counters.
  *
  * cxd90014-campig: first 0x100 bytes of each unit (the rest of each 64 KiB
- * block stays on the catch-all register file).  docs/RE_SENSOR_ISP.md §2.3.
+ * block stays on the catch-all register file).  docs/reference/RE_SENSOR_ISP.md §2.3.
  *   0xF3000000 unit 0, GIC IRQ 36 (ISR 43A465F2)
  *   0xF3100000 unit 1, GIC IRQ 37 (ISR 436A6940)
  *   0xF3120000 input unit, GIC IRQ 35 (ISR 436A6904)
@@ -29,7 +29,7 @@
  *   full 32-bit W1C (ISR 436A6904 writes back what it read, 436A62A4 /
  *   436A62B0, then dispatches 436A6414 / 436A65A8).
  * Model: every engine frame (33367 us, the engine's own constant 0x8257,
- * docs/RE_ENGINE_TICK.md) each armed path completes: its status bit is set,
+ * docs/reference/RE_ENGINE_TICK.md) each armed path completes: its status bit is set,
  * it is disarmed, and the IRQ is asserted while (status & enable) != 0.
  * Frame alignment relative to the 0xF3C30000 event block is arbitrary [?].
  * GPIO out 0 pulses once per frame (frame end); the board connects it to
@@ -44,7 +44,7 @@
  *   +0x210 bit16 reads 0; the rest reads back.
  *
  * Input unit only (property input-unit, 0xF3120000):
- * Sgc1 sync generator, docs/RE_CAPTURE_COMPLETION.md §2/§5.2.  Job
+ * Sgc1 sync generator, docs/reference/RE_CAPTURE_COMPLETION.md §2/§5.2.  Job
  *   programming CamCore::Sgc1 436A7284: +0x220 = (V-1) << 16 | (H-1)
  *   (43A45C46), +0x224 = line of event A, then +0x210 = 1 | cont << 8
  *   (43A4697C; cont = 1 for live modes 0/1/2, 0 for still modes 3/4).
@@ -56,7 +56,7 @@
  *   event B at the frame end sets +0x4C bit 0 (handler 43A46E62: calls
  *   callback 2).  Then the next frame if bit 8 (continuous), else bit 0
  *   is cleared.  Clock 27 MHz: live view programs 819 x 1100 = 900900
- *   clocks = 33367 us, the engine frame (docs/RE_ENGINE_TICK.md).
+ *   clocks = 33367 us, the engine frame (docs/reference/RE_ENGINE_TICK.md).
  *   hypothesis: 27 MHz and the line x H timing also hold for the still
  *   one-shots (1336 x 202 = 10 ms, 1336 x 7868 = 389 ms, RE_CAPTURE_
  *   COMPLETION §2.1); the [1 ms, 2 s] clamp and the 33367 us fallback for
@@ -186,7 +186,7 @@ static void sg_event(void *opaque)
  * B is held while an enabled A is still pending and raised when the guest
  * acks it (W1C of +0x48 bit 0).  hypothesis: on the real camera the ISR
  * runs within that line; this hold only keeps the order A -> B that the
- * firmware relies on (docs/RE_CAPTURE_COMPLETION.md §5.2 "Timing").
+ * firmware relies on (docs/reference/RE_CAPTURE_COMPLETION.md §5.2 "Timing").
  */
 static void sg_frame_end(CamPigState *s)
 {

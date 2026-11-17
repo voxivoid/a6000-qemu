@@ -2,7 +2,7 @@
 """Build the provisioning initramfs (cpio newc, uncompressed).
 
 Contents: Sony's own busybox + glibc (rootfs nflasha7), Sony's NAND kernel
-modules (initrd /kmod), a5kcopy, and init.sh as /init.  Nothing here is
+modules (initrd /kmod), a6kcopy, and init.sh as /init.  Nothing here is
 modified firmware: it is a factory-style programming environment that lets
 Sony's MUMIN FTL format the emulated NAND and receive the logical image.
 
@@ -14,8 +14,8 @@ import os, sys, stat, struct
 def module_core_offset(ko, sym):
     """Offset of `sym` in the module's core image, as Linux 3.0's
     layout_sections() places it (module base from /proc/modules + this = VA).
-    Checked against the a5000 1.10 nand.ko: g_dev at 0x1bd20, the
-    hardcoded 0x3f03ad20 - base 0x3f01f000."""
+    Checked against a reference nand.ko build (fw 1.10 of the platform):
+    g_dev at 0x1bd20 = the then-hardcoded 0x3f03ad20 - base 0x3f01f000."""
     d = open(ko, 'rb').read()
     shoff, = struct.unpack_from('<I', d, 0x20)
     shentsize, shnum, shstrndx = struct.unpack_from('<3H', d, 0x2e)
@@ -45,8 +45,8 @@ def module_core_offset(ko, sym):
 
 
 E =os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-# unpacked official updater: $A5K_FW, else <repo>/firmware, else ../firmware
-FW = os.environ.get('A5K_FW') or (E + '/firmware' if os.path.isdir(E + '/firmware')
+# unpacked official updater: $A6K_FW, else <repo>/firmware, else ../firmware
+FW = os.environ.get('A6K_FW') or (E + '/firmware' if os.path.isdir(E + '/firmware')
                                   else os.path.dirname(E) + '/firmware')
 DEV = FW + '/unpacked/firmware.tar_unpacked/0700_part_image/dev'
 ROOTFS = DEV + '/nflasha7_unpacked_unpacked'
@@ -76,10 +76,10 @@ for k, v in {'ld-linux.so.3': 'ld-2.11.2.so', 'libc.so.6': 'libc-2.11.2.so',
 for ko in ('devno', 'dmac', 'ldec', 'lld', 'nand'):
     f('kmod/%s.ko' % ko, INITRD + '/kmod/%s.ko' % ko, 0o644)
 # nand.ko device struct (MUMIN hand-off): offset in the module image, per
-# build (a5000 1.10 0x1bd20, A6000 3.21 0x1bf38); loader.sh adds the base
+# build (A6000 3.21: 0x1bf38); loader.sh adds the base
 ents.append(('kmod/nand.g_dev', stat.S_IFREG | 0o644,
              b'0x%x\n' % module_core_offset(INITRD + '/kmod/nand.ko', 'g_dev')))
-f('bin/a5kcopy', HERE + '/a5kcopy')
+f('bin/a6kcopy', HERE + '/a6kcopy')
 f('init', HERE + '/' + (sys.argv[2] if len(sys.argv) > 2 else 'init.sh'))
 n('dev/console', stat.S_IFCHR, 5, 1)
 n('dev/mem', stat.S_IFCHR, 1, 1)

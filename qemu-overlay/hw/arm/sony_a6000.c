@@ -1,12 +1,16 @@
 /*
- * Sony ILCE-5000 (a5000) — CXD90014 "BIONZ X" SoC machine model.
+ * Sony ILCE-6000 (A6000) — CXD90014 "BIONZ X" SoC machine model.
  *
- * Goal: run the unmodified official firmware (1.10) exactly like the
- * real camera.  Every address below was recovered from the firmware
- * itself; see emulator/docs/HARDWARE.md for provenance and status.
+ * Goal: run the unmodified official firmware (3.21) exactly like the
+ * real camera.  Hardware addresses were recovered from the firmware
+ * itself; provenance and status: docs/reference/HARDWARE.md and
+ * docs/A6000_ROADMAP.md.  Firmware code addresses quoted in comments
+ * (av-cam, kernel, libObj, ...) come from the reference analysis in
+ * docs/reference/ (an earlier firmware build of the same platform) unless
+ * marked "3.21"; they must be re-found before relying on them.
  *
- *   0x80000000  DDR, 512 MiB (kernel cmdline: mem=200M@0x80000000,
- *               mem=312M@0x8C800000)
+ *   0x80000000  DDR, 1 GiB (kernel cmdline: mem=256M@0x80000000,
+ *               mem=576M@0x9C000000, secgrp sections in between)
  *   0xC0000000  on-chip memory, 16 MiB (SMP mailbox at +0x5000)
  *   0xF2000000  PL011 UART0 (ttyAM0, GIC 150)  +0x1000 UART1 (151)
  *               +0x2000 UART2 (152)
@@ -42,7 +46,7 @@
 #include "hw/misc/cxd90014_jog.h"
 #include "ui/input.h"
 #include "hw/misc/cxd90014_sio.h"
-#include "hw/misc/a5k_nfc.h"
+#include "hw/misc/a6k_nfc.h"
 #include "hw/qdev-properties.h"
 #include "hw/qdev-properties-system.h"
 #include "net/net.h"
@@ -57,67 +61,38 @@
 #include "monitor/qdev.h"
 #include "qom/object.h"
 
-#define A5K_DDR_BASE        0x80000000ULL
-#define A5K_DDR_SIZE        (a5k_model->ddr_size)
-#define A5K_KERNEL_ADDR     0x80038000ULL
-#define A5K_INITRD_ADDR     (a5k_model->initrd_addr)
+#define A6K_DDR_BASE        0x80000000ULL
+#define A6K_DDR_SIZE        (1024 * MiB)
+#define A6K_KERNEL_ADDR     0x80038000ULL
+#define A6K_INITRD_ADDR     0x80628000ULL
 /* boot scratch inside memrsv 0x28000@0x80000000, clear of the MUMIN
  * hand-off (0x80000000+0x20000) and the wbimem page at 0x80021000 */
-#define A5K_ATAG_ADDR       0x80024000ULL
-#define A5K_STUB_ADDR       0x80025000ULL
-#define A5K_STUB_ENTRY      22  /* word: ldr pc literal (kernel entry) */
-#define A5K_STUB_TABLE      23  /* word: ITARGETSR table */
-#define A5K_HANDOFF_RTC_LOST 0x800210E4ULL  /* docs/RE_RTC.md section 2 */
-/* hand-off page (wbimem=0x1000@0x80021000), docs/RE_WARM_RESUME.md 1.2 */
-#define A5K_HANDOFF_PAGE    0x80021000ULL
-#define A5K_HANDOFF_SIZE    0x1000
-#define A5K_HANDOFF_RESUME  0x80021054ULL   /* pm.resume= (resume vector) */
-#define A5K_HANDOFF_SUS_ERR 0x80021060ULL   /* pm.sus_error= */
-#define A5K_HOT_SP          0xC0020000u     /* HOT entry sp, see a5k_boot_reset */
-#define A5K_MACH_ID         0xDA8
-#define A5K_PERIPH_BASE     0xF8000000ULL
-#define A5K_L2C_BASE        0xF8002000ULL
-#define A5K_UART_BASE       0xF2000000ULL
-#define A5K_TIMER_BASE      0xF2403000ULL
-#define A5K_NUM_IRQ         256
+#define A6K_ATAG_ADDR       0x80024000ULL
+#define A6K_STUB_ADDR       0x80025000ULL
+#define A6K_STUB_ENTRY      22  /* word: ldr pc literal (kernel entry) */
+#define A6K_STUB_TABLE      23  /* word: ITARGETSR table */
+#define A6K_HANDOFF_RTC_LOST 0x800210E4ULL  /* docs/reference/RE_RTC.md section 2 */
+/* hand-off page (wbimem=0x1000@0x80021000), docs/reference/RE_WARM_RESUME.md 1.2 */
+#define A6K_HANDOFF_PAGE    0x80021000ULL
+#define A6K_HANDOFF_SIZE    0x1000
+#define A6K_HANDOFF_RESUME  0x80021054ULL   /* pm.resume= (resume vector) */
+#define A6K_HANDOFF_SUS_ERR 0x80021060ULL   /* pm.sus_error= */
+#define A6K_HOT_SP          0xC0020000u     /* HOT entry sp, see a6k_boot_reset */
+#define A6K_MACH_ID         0xDA8
+#define A6K_PERIPH_BASE     0xF8000000ULL
+#define A6K_L2C_BASE        0xF8002000ULL
+#define A6K_UART_BASE       0xF2000000ULL
+#define A6K_TIMER_BASE      0xF2403000ULL
+#define A6K_NUM_IRQ         256
 
 #define GIC_ID(n)           ((n) - 32)
 
-/* Exact command line passed by the real bootloader (recovered from the
- * WBI RAM snapshot; byte-identical to the updater's /setting/kemco.txt).
- * "-M sony-a5000,console=ttyAM1|ttyAM0" swaps only the console=ttynull
- * token (see a5k_console_token); the Sony PL011 driver additionally needs
- * amba2.console=1 to emit anything.  Override completely with -append. */
-static const char a5k_default_cmdline[] =
-    "ramdisk_size=8192 rw noatime noalign lpj=1671168 "
-    "heap_profile.records=0 dma_mapping.l2th=0x80000 "
-    "snsc_workqueue.kipid=130 manage.irqd=129 softirq.sirqd=128 "
-    "exception.reboot=1 softlockup_panic=0 softlockup_thresh=30 cfg.uart=5 "
-    "wdt.timeout=500 warm.mode=2 warm.tmo=50000 warm.resume_drop=0 "
-    "warm.boot_drop=0 warm.ignore_drop=1 basic.prof_path=/log/ssbi_prof.bin "
-    "cfg.poff=0,10 error.led=0,0 page_alloc.minkb=256 console=ttynull "
-    "xrstreq=1 wdt.mode=1 stack_usage=n cxd90014.bam=N ip=off "
-    "cmpr.path=/system/sabin/ssboot.bin "
-    "cmpr.path2=/system/sabin/ssboot_any.bin tmonitor.addr=0x82000000 "
-    "tmonitor.size=0x500000 tmonitor.mask=0 rootfstype=ext2 root=/dev/ram0 "
-    "init=/sbin/init initrd=0x80428000,8M pm.resume=0x80021054 "
-    "pm.sus_error=0x80021060 wbi_memclr=0x800210e8 "
-    "wbimem=0x1000@0x80021000 wbimem=0xE5000@0x82D90000 "
-    "wbimem=0x8000@0x82EAE000 wbimem=0x500000@0x82FC0000 "
-    "wbimem=0x30000@0x9EC00000 wbimem=0x80000@0x8C800000 "
-    "wbimem=0x204E000@0x8D7A0000 wbimem=0x1E000@0x8FE3F000 "
-    "wbimem=0x2000@0x8FE73000 wbimem=0xEC000@0x91883000 "
-    "wbimem=0x200000@0x91E00000 cmpr.mem=0x8000@0x9A000000 "
-    "warm.mem_dst=0xC00000@0x9B000000 warm.mem_work=0x600000@0x9C000000 "
-    "wbi_cmpr.waddr=0x5D000000 wbi_cmpr.wsize=0x100000 wbi_cmpr.nbuf=12 "
-    "boottime=0x20000@0x834C0000 klog.addr=0x834E0000 klog.size=0x20000 "
-    "alog.addr=0x8345ffc0 alog.size=0x60040 alog.clock=cpu "
-    "mem=200M@0x80000000@0 mem=312M@0x8C800000@2 "
-    "memrsv=0x28000@0x80000000 memrsv=0x13A7000@0x82D90000 "
-    "memrsv=0x13800000@0x8C800000";
-
-/* ILCE-6000 fw 3.21: /setting/kemco.txt of the official updater (identical
- * in the owner's NAND dump), converted like the a5000 string above.  DDR:
+/* Exact command line passed by the real bootloader: /setting/kemco.txt of
+ * the official 3.21 updater (identical in the owner's NAND dump), "kemco"
+ * header and the closing "*" line dropped, newlines -> spaces.
+ * "-M sony-a6000,console=ttyAM1|ttyAM0" swaps only the console=ttynull
+ * token (see a6k_console_token); the Sony PL011 driver additionally needs
+ * amba2.console=1 to emit anything.  Override completely with -append.  DDR:
  * mem=256M@0x80000000 + mem=576M@0x9C000000 with 24 x 8 MiB secgrp
  * sections (offline at boot) in between = 0x80000000..0xBFFFFFFF, 1 GiB.
  * Bootloader load table (Backup 0xFA0080) matches: initrd 0x80628000,
@@ -178,35 +153,10 @@ static const char a6k_default_cmdline[] =
     "secgrp=8M@0x9b000000@1:offline:0x9b000000 "
     "secgrp=8M@0x9b800000@1:offline:0x9b800000 memrsv=576M@0x9C000000";
 
-/* Per-model boot contract (what the Sony bootloader hands over).  One
- * machine per process: a5k_init selects the profile from the QOM type. */
-typedef struct A5KModel {
-    const char *name;
-    uint64_t ddr_size;
-    uint64_t initrd_addr;
-    const char *cmdline;
-    uint32_t atag_mem[2][2];    /* {size, start}: the cmdline's mem= banks */
-} A5KModel;
-
-static const A5KModel a5k_model_a5000 = {
-    .name = "sony-a5000", .ddr_size = 512 * MiB, .initrd_addr = 0x80428000,
-    .cmdline = a5k_default_cmdline,
-    .atag_mem = { { 200 * MiB, 0x80000000 }, { 312 * MiB, 0x8C800000 } },
-};
-
-static const A5KModel a5k_model_a6000 = {
-    .name = "sony-a6000", .ddr_size = 1024 * MiB, .initrd_addr = 0x80628000,
-    .cmdline = a6k_default_cmdline,
-    .atag_mem = { { 256 * MiB, 0x80000000 }, { 576 * MiB, 0x9C000000 } },
-};
-
-static const A5KModel *a5k_model = &a5k_model_a5000;
-
-#define TYPE_A5K_MACHINE MACHINE_TYPE_NAME("sony-a5000")
 #define TYPE_A6K_MACHINE MACHINE_TYPE_NAME("sony-a6000")
-OBJECT_DECLARE_SIMPLE_TYPE(A5KMachineState, A5K_MACHINE)
+OBJECT_DECLARE_SIMPLE_TYPE(A6KMachineState, A6K_MACHINE)
 
-struct A5KMachineState {
+struct A6KMachineState {
     MachineState parent;
     ARMCPU *cpu[4];
     hwaddr entry;
@@ -218,7 +168,7 @@ struct A5KMachineState {
     char *preload;
     char *loader;
     char *fb;
-    char *usb_socket;               /* A5KU server address HOST:PORT */
+    char *usb_socket;               /* A6KU server address HOST:PORT */
     char *nfc;                      /* NFC "virtual phone" chardev id */
     DeviceState *gpio;
     QEMUTimer *submicro_t;
@@ -232,19 +182,19 @@ struct A5KMachineState {
     DeviceState *adc[2];
     DeviceState *jog;               /* control-wheel counter */
     char *submicro_file;
-    /* sub-micro RTC (docs/RE_RTC.md section 7) */
+    /* sub-micro RTC (docs/reference/RE_RTC.md section 7) */
     time_t rtc_offset;              /* seconds added to qemu_get_timedate */
     uint8_t rtc_set[6];             /* last applied TX clock write */
     bool rtc_set_valid;
     int rtc_ack;                    /* replies that still echo rtc_set */
     bool rtc_lost;
     bool wifi_off;                  /* wifi=off: mmc1 bus left empty */
-    /* E-mount lens (docs/RE_LENS_EMOUNT.md section 5) */
+    /* E-mount lens (docs/reference/RE_LENS_EMOUNT.md section 5) */
     char *lens;
     bool lens_ekit;
     bool lens_pwr_req;              /* slot-B TX TLV 0x0A data[1] bit0 */
-    DeviceState *lens_dev;          /* a5k-lens (lens=ekit) */
-    /* sub-micro power-off (docs/RE_REBOOT.md section A.5, 4.4) */
+    DeviceState *lens_dev;          /* a6k-lens (lens=ekit) */
+    /* sub-micro power-off (docs/reference/RE_REBOOT.md section A.5, 4.4) */
     uint8_t poff_req;               /* slot-B TX TLV 0x0A data[1] & 0x42 */
     bool poff_ack_logged;
     bool sm_rd_pending;             /* previous slot-A TX was a 0x41 */
@@ -254,17 +204,9 @@ struct A5KMachineState {
     uint8_t sa_tx_boot[128];        /* the first one after reset */
     bool sa_tx_valid, sa_tx_boot_valid;
     int poff_level;                 /* p0.10 latch as last reported */
-    int poff_mode;                  /* A5K_POFF_* from poff= (auto) */
+    int poff_mode;                  /* A6K_POFF_* from poff= (auto) */
     char *poff;
     QEMUTimer *poff_t;
-    /* boot shoot-mode (docs/RE_MODE_DIAL.md): there is no mode-dial hardware
-     * on the a5000 -- the "dial" is a soft dial persisted in Backup.  This
-     * optional machine knob makes the stage-1 loader pre-set it in the RAM
-     * Backup copy so the camera powers up in P/A/S/M/SCN instead of SCN. */
-    char *shoot_mode;               /* -M shoot-mode=p|a|s|m|scn (name) */
-    bool shoot_mode_set;            /* a valid name was parsed */
-    uint8_t shoot_mode_enum;        /* Backup 0x1070009 exposure-mode value */
-    uint8_t shoot_mode_dial;        /* Backup 0x10708BF mode-dial position */
     /* off kinds and the power lever (RE_REBOOT.md B.4, B.5, B.7) */
     uint8_t off_info[0x22];         /* slot-A TX +0x13..+0x21 (frame offs) */
     bool off_info_valid;            /* latched; cleared on power-on */
@@ -272,8 +214,8 @@ struct A5KMachineState {
     bool lever_on;                  /* power slide switch, kept on reset */
     Notifier wakeup;
     Notifier suspend;
-    int reset_kind;                 /* A5K_RESET_* consumed on reset */
-    /* warm off -> HOT resume (docs/RE_WARM_RESUME.md section 3) */
+    int reset_kind;                 /* A6K_RESET_* consumed on reset */
+    /* warm off -> HOT resume (docs/reference/RE_WARM_RESUME.md section 3) */
     bool warm_resume;               /* -M warm-resume=on|off */
     bool hdmi;                      /* -M hdmi=on|off: cable plugged */
     char *hdmi_edid;                /* -M hdmi-edid=FILE */
@@ -299,7 +241,7 @@ struct A5KMachineState {
 #define ATAG_INITRD2 0x54420005
 #define ATAG_CMDLINE 0x54410009
 
-static void a5k_write_atags(const char *cmdline, uint32_t initrd_size)
+static void a6k_write_atags(const char *cmdline, uint32_t initrd_size)
 {
     uint32_t buf[1024];
     int n = 0;
@@ -307,20 +249,20 @@ static void a5k_write_atags(const char *cmdline, uint32_t initrd_size)
     buf[n++] = 5; buf[n++] = ATAG_CORE;
     buf[n++] = 1; buf[n++] = 4096; buf[n++] = 0;
 
-    for (int b = 0; b < 2; b++) {
-        buf[n++] = 4; buf[n++] = ATAG_MEM;
-        buf[n++] = a5k_model->atag_mem[b][0];
-        buf[n++] = a5k_model->atag_mem[b][1];
-    }
+    /* the cmdline's mem= banks (the kernel ignores ATAGs anyway) */
+    buf[n++] = 4; buf[n++] = ATAG_MEM;
+    buf[n++] = 256 * MiB; buf[n++] = 0x80000000;
+    buf[n++] = 4; buf[n++] = ATAG_MEM;
+    buf[n++] = 576 * MiB; buf[n++] = 0x9C000000;
 
     if (initrd_size) {
         buf[n++] = 4; buf[n++] = ATAG_INITRD2;
-        buf[n++] = A5K_INITRD_ADDR; buf[n++] = initrd_size;
+        buf[n++] = A6K_INITRD_ADDR; buf[n++] = initrd_size;
     }
 
     size_t len = strlen(cmdline) + 1;
     if (len > 3000) {
-        error_report("sony-a5000: command line too long");
+        error_report("sony-a6000: command line too long");
         exit(1);
     }
     uint32_t words = (len + 3) / 4;
@@ -334,7 +276,7 @@ static void a5k_write_atags(const char *cmdline, uint32_t initrd_size)
     for (int i = 0; i < n; i++) {
         buf[i] = cpu_to_le32(buf[i]);
     }
-    rom_add_blob_fixed("a5k.atags", buf, n * 4, A5K_ATAG_ADDR);
+    rom_add_blob_fixed("a6k.atags", buf, n * 4, A6K_ATAG_ADDR);
 }
 
 /*
@@ -344,18 +286,18 @@ static void a5k_write_atags(const char *cmdline, uint32_t initrd_size)
  * strncmp(p, "kemco", 5), then copies from p+5, '\n'/'\r' -> ' ').
  * Memory layout then comes from the mem=/memrsv= parameters.
  */
-#define A5K_KEMCO_ADDR      0x80033000ULL
-static void a5k_write_kemco(const char *cmdline)
+#define A6K_KEMCO_ADDR      0x80033000ULL
+static void a6k_write_kemco(const char *cmdline)
 {
     size_t len = strlen(cmdline);
     if (len + 6 > 0x1000) {
-        error_report("sony-a5000: command line too long for kemco block");
+        error_report("sony-a6000: command line too long for kemco block");
         exit(1);
     }
     char *buf = g_malloc0(len + 6);
     memcpy(buf, "kemco", 5);
     memcpy(buf + 5, cmdline, len);
-    address_space_write(&address_space_memory, A5K_KEMCO_ADDR,
+    address_space_write(&address_space_memory, A6K_KEMCO_ADDR,
                         MEMTXATTRS_UNSPECIFIED, buf, len + 6);
     g_free(buf);
 }
@@ -371,7 +313,7 @@ static void a5k_write_kemco(const char *cmdline)
  * Bytes that are 0 (IRQ unused on the real camera) become CPU0 here so a
  * source that is enabled anyway is not lost [deviation, harmless].
  */
-static const uint32_t a5k_gicd_itargetsr[56] = {
+static const uint32_t a6k_gicd_itargetsr[56] = {
     0x04010102, 0x04040404, 0x02020202, 0x02020202,
     0x02020202, 0x02020202, 0x02020202, 0x02020202,
     0x04020202, 0x04040404, 0x04040404, 0x02020201,
@@ -388,20 +330,20 @@ static const uint32_t a5k_gicd_itargetsr[56] = {
     0x01010101, 0x01010101, 0x00000000, 0x01010000,
 };
 
-static void a5k_write_stub(void)
+static void a6k_write_stub(void)
 {
     /*
      * What the Sony bootloader does before entering the kernel:
-     *  - program the SPI targets (a5k_gicd_itargetsr, real-camera values);
+     *  - program the SPI targets (a6k_gicd_itargetsr, real-camera values);
      *  - make the ack-less frame sources edge-triggered: SYSV 98/99 and the
      *    VPH vsyncs 101/102 (their av-cam handlers never touch the device,
      *    as level interrupts they would re-enter endlessly) [hypothesis];
      *  - same for the NFC data-ready IRQ 125 (P0.4, ICFGR7 bit 27): its
      *    ISR nfc_rsrc_irq only posts an event, one reader command must be
-     *    one ISR run (docs/RE_NFC.md section 4.3) [hypothesis];
+     *    one ISR run (docs/reference/RE_NFC.md section 4.3) [hypothesis];
      *  - r0 = 0, r1 = machine id, r2 = tags, jump to the kernel.
      */
-    uint32_t stub[A5K_STUB_TABLE + 56] = {
+    uint32_t stub[A6K_STUB_TABLE + 56] = {
         0xe59f3038,             /* ldr r3, =0xF8001820        */
         0xe59f4038,             /* ldr r4, =0xF8001900        */
         0xe28f604c,             /* add r6, pc, #0x4c (table)  */
@@ -415,35 +357,35 @@ static void a5k_write_stub(void)
         0xe3a05302,             /* mov r5, #0x08000000        */
         0xe5835004,             /* str r5, [r3, #4] (ICFGR7)  */
         0xe3a00000,             /* mov r0, #0                 */
-        0xe59f1014,             /* ldr r1, =A5K_MACH_ID       */
-        0xe59f2014,             /* ldr r2, =A5K_ATAG_ADDR     */
-        0xe59ff014,             /* ldr pc, =A5K_KERNEL_ADDR   */
+        0xe59f1014,             /* ldr r1, =A6K_MACH_ID       */
+        0xe59f2014,             /* ldr r2, =A6K_ATAG_ADDR     */
+        0xe59ff014,             /* ldr pc, =A6K_KERNEL_ADDR   */
         0xf8001820,
         0xf8001900,
         0xf8001c18,
         0x000028a0,             /* IRQ 98, 99, 101, 102 edge-triggered */
-        A5K_MACH_ID,
-        (uint32_t)A5K_ATAG_ADDR,
-        (uint32_t)A5K_KERNEL_ADDR,
+        A6K_MACH_ID,
+        (uint32_t)A6K_ATAG_ADDR,
+        (uint32_t)A6K_KERNEL_ADDR,
     };
     for (int i = 0; i < 56; i++) {
-        uint32_t w = a5k_gicd_itargetsr[i];
+        uint32_t w = a6k_gicd_itargetsr[i];
         for (int b = 0; b < 4; b++) {
             if (!((w >> (8 * b)) & 0xff)) {
                 w |= 1u << (8 * b);
             }
         }
-        stub[A5K_STUB_TABLE + i] = w;
+        stub[A6K_STUB_TABLE + i] = w;
     }
     for (size_t i = 0; i < ARRAY_SIZE(stub); i++) {
         stub[i] = cpu_to_le32(stub[i]);
     }
-    /* the kernel entry literal (word A5K_STUB_ENTRY) is left out of the ROM
-     * blobs: a5k_boot_reset() writes it on every reset (normally
-     * A5K_KERNEL_ADDR; the updater core enters elsewhere) */
-    rom_add_blob_fixed("a5k.stub", stub, A5K_STUB_ENTRY * 4, A5K_STUB_ADDR);
-    rom_add_blob_fixed("a5k.stub-gicd", &stub[A5K_STUB_TABLE], 56 * 4,
-                       A5K_STUB_ADDR + A5K_STUB_TABLE * 4);
+    /* the kernel entry literal (word A6K_STUB_ENTRY) is left out of the ROM
+     * blobs: a6k_boot_reset() writes it on every reset (normally
+     * A6K_KERNEL_ADDR; the updater core enters elsewhere) */
+    rom_add_blob_fixed("a6k.stub", stub, A6K_STUB_ENTRY * 4, A6K_STUB_ADDR);
+    rom_add_blob_fixed("a6k.stub-gicd", &stub[A6K_STUB_TABLE], 56 * 4,
+                       A6K_STUB_ADDR + A6K_STUB_TABLE * 4);
 }
 
 /*
@@ -451,8 +393,8 @@ static void a5k_write_stub(void)
  * address the boot CPU stored at 0xC0005010 + 4*(cpu-1)
  * (cxd90014_smp_init writes cxd90014_secondary_entry there and issues SEV).
  */
-#define A5K_SMP_STUB_ADDR   0x80025200ULL
-static void a5k_write_smp_stub(void)
+#define A6K_SMP_STUB_ADDR   0x80025200ULL
+static void a6k_write_smp_stub(void)
 {
     uint32_t stub[] = {
         0xee103fb0,             /* mrc p15, 0, r3, c0, c0, 5  (MPIDR) */
@@ -470,23 +412,23 @@ static void a5k_write_smp_stub(void)
     for (size_t i = 0; i < ARRAY_SIZE(stub); i++) {
         stub[i] = cpu_to_le32(stub[i]);
     }
-    rom_add_blob_fixed("a5k.smpstub", stub, sizeof(stub), A5K_SMP_STUB_ADDR);
+    rom_add_blob_fixed("a6k.smpstub", stub, sizeof(stub), A6K_SMP_STUB_ADDR);
 }
 
-static void a5k_cpu_reset(void *opaque)
+static void a6k_cpu_reset(void *opaque)
 {
     ARMCPU *cpu = opaque;
     CPUState *cs = CPU(cpu);
 
     cpu_reset(cs);
     if (cs->cpu_index == 0) {
-        cpu_set_pc(cs, A5K_STUB_ADDR);
+        cpu_set_pc(cs, A6K_STUB_ADDR);
     } else {
-        cpu_set_pc(cs, A5K_SMP_STUB_ADDR);
+        cpu_set_pc(cs, A6K_SMP_STUB_ADDR);
     }
 }
 
-static void a5k_regfile_ex(const char *name, hwaddr base, uint64_t size,
+static void a6k_regfile_ex(const char *name, hwaddr base, uint64_t size,
                            const char *init, const char *autoclear, int prio)
 {
     DeviceState *d = qdev_new("cxd90014-regfile");
@@ -503,14 +445,14 @@ static void a5k_regfile_ex(const char *name, hwaddr base, uint64_t size,
     sysbus_mmio_map_overlap(SYS_BUS_DEVICE(d), 0, base, prio);
 }
 
-static void a5k_regfile(const char *name, hwaddr base, uint64_t size)
+static void a6k_regfile(const char *name, hwaddr base, uint64_t size)
 {
-    a5k_regfile_ex(name, base, size, NULL, NULL, -1000);
+    a6k_regfile_ex(name, base, size, NULL, NULL, -1000);
 }
 
 /*
  * Sub-micro (power/front micro) HLE, transport level only
- * (docs/RE_SUBMICRO_LINK.md).  The micro strobes p0.12 (IRQ 133, link event
+ * (docs/reference/RE_SUBMICRO_LINK.md).  The micro strobes p0.12 (IRQ 133, link event
  * 0) while its request line p3.17 stays low; av-cam then runs one 128-byte
  * full-duplex exchange: CPU status frame (type 0x31) out, micro status frame
  * (0x30) in.  On its periodic tick the CPU also clocks a 128-byte slot-A
@@ -520,7 +462,7 @@ static void a5k_regfile(const char *name, hwaddr base, uint64_t size)
  * Contents are replayed as-is, never synthesised.
  */
 /* CRC-16/CCITT-FALSE over bytes 0..125, stored little-endian at 126 */
-static void a5k_submicro_crc(uint8_t *f)
+static void a6k_submicro_crc(uint8_t *f)
 {
     uint16_t c = 0xffff;
     for (int i = 0; i < 126; i++) {
@@ -541,10 +483,10 @@ static void a5k_submicro_crc(uint8_t *f)
  * notify that mcmn_drv forwards to libInfraMediaDetect).  The snapshot frame
  * says "no card"; with an SD drive attached, model the closed switch.
  */
-static void a5k_submicro_card_inserted(uint8_t *frames)
+static void a6k_submicro_card_inserted(uint8_t *frames)
 {
     frames[2] |= 0x10;
-    a5k_submicro_crc(frames);
+    a6k_submicro_crc(frames);
 }
 
 /*
@@ -557,8 +499,8 @@ static void a5k_submicro_card_inserted(uint8_t *frames)
  * 0x0002 POWER "pressed" while it is 0 (RE_REBOOT.md B.5).  The snapshot
  * word is 0x0201.
  */
-#define A5K_LEVER_BIT       0
-static void a5k_submicro_front_key(A5KMachineState *s, int bit, bool down)
+#define A6K_LEVER_BIT       0
+static void a6k_submicro_front_key(A6KMachineState *s, int bit, bool down)
 {
     if (!s->submicro_frames) {
         return;
@@ -570,16 +512,16 @@ static void a5k_submicro_front_key(A5KMachineState *s, int bit, bool down)
     } else {
         s->submicro_frames[i] &= ~(1 << (bit % 8));
     }
-    a5k_submicro_crc(s->submicro_frames);
+    a6k_submicro_crc(s->submicro_frames);
 }
 
 /*
- * Battery-backed clock of the sub-micro (docs/RE_RTC.md sections 1.1, 7).
+ * Battery-backed clock of the sub-micro (docs/reference/RE_RTC.md sections 1.1, 7).
  * RX slot A bytes 6..12 = {status 2 = valid, yy, mon, day, hour, min, sec},
  * binary, UTC, year 2000 + yy (av-cam 43AC65FA).  Time source: the QEMU RTC
  * (-rtc base=...) plus a session offset set by the CPU's clock writes.
  */
-static void a5k_rtc_now(A5KMachineState *s, uint8_t *b)
+static void a6k_rtc_now(A6KMachineState *s, uint8_t *b)
 {
     struct tm tm;
 
@@ -607,9 +549,9 @@ static void a5k_rtc_now(A5KMachineState *s, uint8_t *b)
  * Observed: after the ack the CPU sends TX byte 4 = 0 again, so one request
  * is applied once (on its first packet) and the next write re-arms.
  */
-#define A5K_RTC_ACK_REPLIES 20      /* hypothesis: cap of ~1 s of ticks */
+#define A6K_RTC_ACK_REPLIES 20      /* hypothesis: cap of ~1 s of ticks */
 
-static void a5k_rtc_tx(A5KMachineState *s, const uint8_t *tx)
+static void a6k_rtc_tx(A6KMachineState *s, const uint8_t *tx)
 {
     const uint8_t *w = tx + 5;
     struct tm want = { 0 }, now;
@@ -627,7 +569,7 @@ static void a5k_rtc_tx(A5KMachineState *s, const uint8_t *tx)
     }
     if (w[1] < 1 || w[1] > 12 || w[2] < 1 || w[2] > 31 || w[3] > 23 ||
         w[4] > 59 || w[5] > 59) {
-        qemu_log_mask(LOG_GUEST_ERROR, "sony-a5000: bad RTC write "
+        qemu_log_mask(LOG_GUEST_ERROR, "sony-a6000: bad RTC write "
                       "%02x %02x %02x %02x %02x %02x\n",
                       w[0], w[1], w[2], w[3], w[4], w[5]);
         return;
@@ -642,13 +584,13 @@ static void a5k_rtc_tx(A5KMachineState *s, const uint8_t *tx)
     s->rtc_offset = mktimegm(&want) - mktimegm(&now);
     memcpy(s->rtc_set, w, 6);
     s->rtc_set_valid = true;
-    s->rtc_ack = A5K_RTC_ACK_REPLIES;
-    info_report("sony-a5000: sub-micro RTC set to 20%02u-%02u-%02u "
+    s->rtc_ack = A6K_RTC_ACK_REPLIES;
+    info_report("sony-a6000: sub-micro RTC set to 20%02u-%02u-%02u "
                 "%02u:%02u:%02u UTC", w[0], w[1], w[2], w[3], w[4], w[5]);
 }
 
 /*
- * Micro memory read/written through slot-A packets 0x41 (docs/RE_REBOOT.md
+ * Micro memory read/written through slot-A packets 0x41 (docs/reference/RE_REBOOT.md
  * section A.4): the four regions of av-cam's table 0x43EA797C.  On a cold
  * power-off av-cam reads 0x20000500 and 0x00030100 (256 bytes each) and
  * only commits the micro's power mode 0x0D20 once both reads completed.
@@ -657,23 +599,23 @@ static void a5k_rtc_tx(A5KMachineState *s, const uint8_t *tx)
  */
 static const struct {
     uint32_t addr, len;
-} a5k_sm_regions[4] = {
+} a6k_sm_regions[4] = {
     { 0x00010100, 0x080 },
     { 0x00020280, 0x180 },
     { 0x20000500, 0x100 },
     { 0x00030100, 0x100 },
 };
 
-static uint8_t *a5k_sm_mem(A5KMachineState *s, uint32_t addr, int n)
+static uint8_t *a6k_sm_mem(A6KMachineState *s, uint32_t addr, int n)
 {
-    for (int i = 0; i < ARRAY_SIZE(a5k_sm_regions); i++) {
-        uint32_t off = addr - a5k_sm_regions[i].addr;
-        if (addr >= a5k_sm_regions[i].addr &&
-            off + n <= a5k_sm_regions[i].len) {
+    for (int i = 0; i < ARRAY_SIZE(a6k_sm_regions); i++) {
+        uint32_t off = addr - a6k_sm_regions[i].addr;
+        if (addr >= a6k_sm_regions[i].addr &&
+            off + n <= a6k_sm_regions[i].len) {
             return s->sm_mem[i] + off;
         }
     }
-    qemu_log_mask(LOG_UNIMP, "sony-a5000: sub-micro memory 0x%08x+%d "
+    qemu_log_mask(LOG_UNIMP, "sony-a6000: sub-micro memory 0x%08x+%d "
                   "outside the known regions (zeros)\n", addr, n);
     return NULL;
 }
@@ -687,12 +629,12 @@ static uint8_t *a5k_sm_mem(A5KMachineState *s, uint32_t addr, int n)
  * A write is answered with length 0 [? write ack not decoded; not used on
  * the power-off path].
  */
-static void a5k_submicro_mem_reply(A5KMachineState *s, uint8_t *out)
+static void a6k_submicro_mem_reply(A6KMachineState *s, uint8_t *out)
 {
     uint32_t addr = ldl_le_p(s->sm_rd_hdr);
     bool wr = s->sm_rd_hdr[4] & 0x80;
     int n = wr ? 0 : MIN(s->sm_rd_hdr[4] & 0x7f, 0x78);
-    uint8_t *m = n ? a5k_sm_mem(s, addr, n) : NULL;
+    uint8_t *m = n ? a6k_sm_mem(s, addr, n) : NULL;
 
     memset(out, 0, 128);
     out[0] = 0x40;
@@ -701,10 +643,10 @@ static void a5k_submicro_mem_reply(A5KMachineState *s, uint8_t *out)
     if (m) {
         memcpy(out + 6, m, n);
     }
-    a5k_submicro_crc(out);
+    a6k_submicro_crc(out);
 }
 
-static void a5k_submicro_mem_tx(A5KMachineState *s, const uint8_t *tx)
+static void a6k_submicro_mem_tx(A6KMachineState *s, const uint8_t *tx)
 {
     s->sm_rd_pending = tx[0] == 0x41;
     if (!s->sm_rd_pending) {
@@ -713,7 +655,7 @@ static void a5k_submicro_mem_tx(A5KMachineState *s, const uint8_t *tx)
     memcpy(s->sm_rd_hdr, tx + 1, 5);
     if (tx[5] & 0x80) {
         int n = MIN(tx[5] & 0x7f, 0x78);
-        uint8_t *m = a5k_sm_mem(s, ldl_le_p(tx + 1), n);
+        uint8_t *m = a6k_sm_mem(s, ldl_le_p(tx + 1), n);
         if (m) {
             memcpy(m, tx + 6, n);
         }
@@ -721,7 +663,7 @@ static void a5k_submicro_mem_tx(A5KMachineState *s, const uint8_t *tx)
 }
 
 /*
- * Off data in the slot-A TX frame (docs/RE_REBOOT.md B.1, B.4).  upm
+ * Off data in the slot-A TX frame (docs/reference/RE_REBOOT.md B.1, B.4).  upm
  * k_upm_snd_hcrn_ura sends the end data (factor, warm, restart) to av-cam;
  * av-cam's TX item 38 writer 439126DC fills +0x1B (0x80 | warm), +0x1C..+0x1D
  * (439121A8: restart kind delay, returns next boot 32 / 33), +0x1E = factor,
@@ -731,41 +673,41 @@ static void a5k_submicro_mem_tx(A5KMachineState *s, const uint8_t *tx)
  * (0x20 = power up again, 0x21 = stay off).  The micro acts on the last
  * valid set at the p0.10 drop, so it is latched until power-on.
  */
-#define A5K_OFF_VALID       0x13    /* bit 0 */
-#define A5K_OFF_FACTOR      0x14
-#define A5K_OFF_NEXT        0x15    /* 0x20 restart, 0x21 (0x1F) stay off */
-#define A5K_OFF_WARM        0x1B    /* bit 0: 1 warm (type 27), 0 cold */
-#define A5K_OFF_WAKE        0x1F    /* +0x1F..+0x21 wake masks */
-#define A5K_OFF_NEXT_RESTART 0x20
+#define A6K_OFF_VALID       0x13    /* bit 0 */
+#define A6K_OFF_FACTOR      0x14
+#define A6K_OFF_NEXT        0x15    /* 0x20 restart, 0x21 (0x1F) stay off */
+#define A6K_OFF_WARM        0x1B    /* bit 0: 1 warm (type 27), 0 cold */
+#define A6K_OFF_WAKE        0x1F    /* +0x1F..+0x21 wake masks */
+#define A6K_OFF_NEXT_RESTART 0x20
 
-static void a5k_submicro_off_latch(A5KMachineState *s, const uint8_t *tx)
+static void a6k_submicro_off_latch(A6KMachineState *s, const uint8_t *tx)
 {
     const uint8_t *o = s->off_info;
 
-    if (tx[0] != 0x21 || !(tx[A5K_OFF_VALID] & 1)) {
+    if (tx[0] != 0x21 || !(tx[A6K_OFF_VALID] & 1)) {
         return;
     }
     if (s->off_info_valid &&
-        !memcmp(s->off_info + A5K_OFF_VALID, tx + A5K_OFF_VALID,
-                sizeof(s->off_info) - A5K_OFF_VALID)) {
+        !memcmp(s->off_info + A6K_OFF_VALID, tx + A6K_OFF_VALID,
+                sizeof(s->off_info) - A6K_OFF_VALID)) {
         return;
     }
-    memcpy(s->off_info + A5K_OFF_VALID, tx + A5K_OFF_VALID,
-           sizeof(s->off_info) - A5K_OFF_VALID);
+    memcpy(s->off_info + A6K_OFF_VALID, tx + A6K_OFF_VALID,
+           sizeof(s->off_info) - A6K_OFF_VALID);
     s->off_info_valid = true;
-    info_report("sony-a5000: sub-micro off data: factor %d, next 0x%02x "
-                "(%s), %s, wake %02x %02x %02x", o[A5K_OFF_FACTOR],
-                o[A5K_OFF_NEXT],
-                o[A5K_OFF_NEXT] == A5K_OFF_NEXT_RESTART ? "restart" : "off",
-                (o[A5K_OFF_WARM] & 1) ? "warm" : "cold", o[A5K_OFF_WAKE],
-                o[A5K_OFF_WAKE + 1], o[A5K_OFF_WAKE + 2]);
+    info_report("sony-a6000: sub-micro off data: factor %d, next 0x%02x "
+                "(%s), %s, wake %02x %02x %02x", o[A6K_OFF_FACTOR],
+                o[A6K_OFF_NEXT],
+                o[A6K_OFF_NEXT] == A6K_OFF_NEXT_RESTART ? "restart" : "off",
+                (o[A6K_OFF_WARM] & 1) ? "warm" : "cold", o[A6K_OFF_WAKE],
+                o[A6K_OFF_WAKE + 1], o[A6K_OFF_WAKE + 2]);
 }
 
-static void a5k_submicro_slot_a(A5KMachineState *s, const uint8_t *tx,
+static void a6k_submicro_slot_a(A6KMachineState *s, const uint8_t *tx,
                                 uint8_t *out)
 {
     if (s->sm_rd_pending) {
-        a5k_submicro_mem_reply(s, out);
+        a6k_submicro_mem_reply(s, out);
     } else {
         memcpy(out, s->submicro_frames, 128);
         out[6] = 2;                 /* clock valid (bit 1 = write ack) */
@@ -773,12 +715,12 @@ static void a5k_submicro_slot_a(A5KMachineState *s, const uint8_t *tx,
             s->rtc_ack--;
             memcpy(out + 7, s->rtc_set, 6);
         } else {
-            a5k_rtc_now(s, out + 7);
+            a6k_rtc_now(s, out + 7);
         }
-        a5k_submicro_crc(out);
+        a6k_submicro_crc(out);
     }
-    a5k_submicro_mem_tx(s, tx);
-    a5k_submicro_off_latch(s, tx);
+    a6k_submicro_mem_tx(s, tx);
+    a6k_submicro_off_latch(s, tx);
     if (tx[0] != 0x41) {
         memcpy(s->sa_tx_last, tx, 128);
         s->sa_tx_valid = true;
@@ -790,7 +732,7 @@ static void a5k_submicro_slot_a(A5KMachineState *s, const uint8_t *tx,
 }
 
 /* find TLV @id in a slot-B frame (RE_SUBMICRO_LINK.md section 3.1) */
-static uint8_t *a5k_submicro_tlv(uint8_t *f, int id, int minlen)
+static uint8_t *a6k_submicro_tlv(uint8_t *f, int id, int minlen)
 {
     int end = MIN(4 + f[2], 126);
 
@@ -809,7 +751,7 @@ static uint8_t *a5k_submicro_tlv(uint8_t *f, int id, int minlen)
  * in TLV 0x03 data[3] bit0 (consumer 436B75CC; RE_LENS_EMOUNT.md 2.3).  Only
  * acknowledged with a lens model attached (lens=ekit).
  *
- * Power mode of the link (docs/RE_REBOOT.md sections A.2, A.3): the CPU asks
+ * Power mode of the link (docs/reference/RE_REBOOT.md sections A.2, A.3): the CPU asks
  * for mode 0x0D20 (cold power-off) with TX TLV 0x0A data[1] bit 6 and for
  * 0x0D09 with bit 1 (av-cam 4369C580); the slot-B RX parser 4369B88C only
  * commits the mode once the micro reports RX TLV 0x03 data[1] bit 6 (resp.
@@ -819,12 +761,12 @@ static uint8_t *a5k_submicro_tlv(uint8_t *f, int id, int minlen)
  * the same exchange [? real micro latency unknown; 4369B88C re-checks every
  * frame].
  */
-static void a5k_submicro_slot_b(A5KMachineState *s, uint8_t *tx, uint8_t *out)
+static void a6k_submicro_slot_b(A6KMachineState *s, uint8_t *tx, uint8_t *out)
 {
     uint8_t *t;
     bool dirty = false;
 
-    if (tx[0] == 0x31 && (t = a5k_submicro_tlv(tx, 0x0a, 2))) {
+    if (tx[0] == 0x31 && (t = a6k_submicro_tlv(tx, 0x0a, 2))) {
         s->lens_pwr_req = t[1] & 1;
         if (s->lens_dev) {
             /* the micro switches the lens supply with its ack */
@@ -834,11 +776,11 @@ static void a5k_submicro_slot_b(A5KMachineState *s, uint8_t *tx, uint8_t *out)
     }
     memcpy(out, s->submicro_frames + 128, 128);
     if (s->lens_ekit && s->lens_pwr_req &&
-        (t = a5k_submicro_tlv(out, 0x03, 4))) {
+        (t = a6k_submicro_tlv(out, 0x03, 4))) {
         t[3] |= 1;
         dirty = true;
     }
-    if (s->poff_req && (t = a5k_submicro_tlv(out, 0x03, 2))) {
+    if (s->poff_req && (t = a6k_submicro_tlv(out, 0x03, 2))) {
         if (s->poff_req & 0x40) {
             t[1] |= 0x40;
         }
@@ -848,19 +790,19 @@ static void a5k_submicro_slot_b(A5KMachineState *s, uint8_t *tx, uint8_t *out)
         dirty = true;
         if (!s->poff_ack_logged) {
             s->poff_ack_logged = true;
-            info_report("sony-a5000: sub-micro power-off request "
+            info_report("sony-a6000: sub-micro power-off request "
                         "acknowledged (TLV 0x0a data[1] = 0x%02x)",
                         s->poff_req);
         }
     }
     if (dirty) {
-        a5k_submicro_crc(out);
+        a6k_submicro_crc(out);
     }
 }
 
-static void a5k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
+static void a6k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
 {
-    A5KMachineState *s = opaque;
+    A6KMachineState *s = opaque;
     uint8_t out[256];
 
     if (len < 128 || !s->submicro_frames) {
@@ -869,21 +811,21 @@ static void a5k_submicro_xfer(void *opaque, int ch, uint8_t *buf, int len)
     }
     /* buf holds the CPU's TX packet(s) until it is overwritten below */
     if (buf[0] == 0x31) {
-        a5k_submicro_slot_b(s, buf, out);
+        a6k_submicro_slot_b(s, buf, out);
     } else {
-        a5k_rtc_tx(s, buf);
-        a5k_submicro_slot_a(s, buf, out);
+        a6k_rtc_tx(s, buf);
+        a6k_submicro_slot_a(s, buf, out);
     }
     if (len > 128) {
         /* 256-byte exchange: slot A followed by slot B */
-        a5k_submicro_slot_b(s, buf + 128, out + 128);
+        a6k_submicro_slot_b(s, buf + 128, out + 128);
     }
     memcpy(buf, out, MIN(len, 256));
 }
 
-static void a5k_submicro_tick(void *opaque)
+static void a6k_submicro_tick(void *opaque)
 {
-    A5KMachineState *s = opaque;
+    A6KMachineState *s = opaque;
     if (!s->gpio) {
         return;
     }
@@ -900,7 +842,7 @@ static void a5k_submicro_tick(void *opaque)
 
 /*
  * Camera buttons from the host keyboard (QEMU window or HMP "sendkey").
- * Wiring from input.ko's key table (Backup 0x1120000, docs/RE_INPUT_I2C_POWER.md
+ * Wiring from input.ko's key table (Backup 0x1120000, docs/reference/RE_INPUT_I2C_POWER.md
  * section 7); Sony key codes named by libObj's key-name table (file 0xEE1078:
  * {code, "KEY_TACT_..."}) and mapped to event0 codes by libInputServant
  * (0x3364: 0x03->103, 0x30->108, 0x1AF->106, 0x15->105, 0x1AC->232, ...):
@@ -920,7 +862,7 @@ static void a5k_submicro_tick(void *opaque)
  * Shift held = fast), S = shutter half press, Shift+S or S+Space = full.
  * Band mid-points are used.
  */
-static void a5k_adc_key(A5KMachineState *s, int ch, int qcode, bool down,
+static void a6k_adc_key(A6KMachineState *s, int ch, int qcode, bool down,
                         int level)
 {
     if (!s->adc[1]) {
@@ -966,11 +908,11 @@ static int a6k_mode_dial_index(int value)
     return -1;
 }
 
-static void a6k_apply_mode_dial(A5KMachineState *s)
+static void a6k_apply_mode_dial(A6KMachineState *s)
 {
     int i = a6k_mode_dial_index(s->mode_dial);
 
-    if (!s->adc[1] || a5k_model != &a5k_model_a6000) {
+    if (!s->adc[1]) {
         return;
     }
     cxd90014_adc_set_idle(s->adc[1], 2, 1023);
@@ -984,7 +926,7 @@ static void a6k_apply_mode_dial(A5KMachineState *s)
 }
 
 /* Page Up / Page Down: turn the dial one detent (physical order) */
-static void a6k_step_mode_dial(A5KMachineState *s, int dir)
+static void a6k_step_mode_dial(A6KMachineState *s, int dir)
 {
     int n = ARRAY_SIZE(a6k_mode_dial);
     int i = a6k_mode_dial_index(s->mode_dial);
@@ -999,7 +941,7 @@ static void a6k_step_mode_dial(A5KMachineState *s, int dir)
  * (see hw/gpio/cxd90014_gpio.c reset).  Each switch drives both of its
  * interrupt lines [? two lines per switch inferred from av-cam's IRQ set].
  */
-static void a5k_shutter(A5KMachineState *s, bool s1, bool s2)
+static void a6k_shutter(A6KMachineState *s, bool s1, bool s2)
 {
     if (!s->gpio) {
         return;
@@ -1010,20 +952,20 @@ static void a5k_shutter(A5KMachineState *s, bool s1, bool s2)
     qemu_set_irq(qdev_get_gpio_in(s->gpio, 0 * 32 + 13), !s2);
 }
 
-static void a5k_power_on(A5KMachineState *s, const char *why);
+static void a6k_power_on(A6KMachineState *s, const char *why);
 
 /*
  * Power lever (host key O, RE_REBOOT.md B.5, B.7 step 4): each key-down
  * flips the slide switch; key-up is ignored.  While on, ON -> OFF lets the
  * firmware power off by itself (factor 7); while off, OFF -> ON powers on.
  */
-static void a5k_power_lever(A5KMachineState *s)
+static void a6k_power_lever(A6KMachineState *s)
 {
     s->lever_on = !s->lever_on;
-    a5k_submicro_front_key(s, A5K_LEVER_BIT, s->lever_on);
-    info_report("sony-a5000: power lever %s", s->lever_on ? "ON" : "OFF");
+    a6k_submicro_front_key(s, A6K_LEVER_BIT, s->lever_on);
+    info_report("sony-a6000: power lever %s", s->lever_on ? "ON" : "OFF");
     if (s->powered_off && s->lever_on) {
-        a5k_power_on(s, "power lever");
+        a6k_power_on(s, "power lever");
     }
 }
 
@@ -1037,9 +979,9 @@ static void a5k_power_lever(A5KMachineState *s)
  * (mask 81 81 81) only the lever wakes it.  Returns true when the key is
  * consumed (never forwarded to the unpowered SoC).
  */
-static bool a5k_off_key(A5KMachineState *s, int qcode, bool down)
+static bool a6k_off_key(A6KMachineState *s, int qcode, bool down)
 {
-    int f = s->off_info_valid ? s->off_info[A5K_OFF_FACTOR] : -1;
+    int f = s->off_info_valid ? s->off_info[A6K_OFF_FACTOR] : -1;
 
     if (!s->powered_off) {
         return false;
@@ -1047,23 +989,23 @@ static bool a5k_off_key(A5KMachineState *s, int qcode, bool down)
     if (down && s->lever_on && (f == 8 || f == 9) &&
         (qcode == Q_KEY_CODE_S || qcode == Q_KEY_CODE_M ||
          qcode == Q_KEY_CODE_P)) {
-        a5k_power_on(s, qcode == Q_KEY_CODE_S ? "shutter" :
+        a6k_power_on(s, qcode == Q_KEY_CODE_S ? "shutter" :
                         qcode == Q_KEY_CODE_M ? "MENU" : "PLAY");
     }
     return true;
 }
 
-static void a5k_key_event(DeviceState *dev, QemuConsole *src,
+static void a6k_key_event(DeviceState *dev, QemuConsole *src,
                           InputEvent *evt)
 {
-    A5KMachineState *s = A5K_MACHINE(qdev_get_machine());
+    A6KMachineState *s = A6K_MACHINE(qdev_get_machine());
     InputKeyEvent *key = evt->u.key.data;
     int qcode = qemu_input_key_value_to_qcode(key->key);
     bool down = key->down;
 
     if (qcode == Q_KEY_CODE_O) {
         if (down) {
-            a5k_power_lever(s);
+            a6k_power_lever(s);
         }
         return;
     }
@@ -1071,7 +1013,7 @@ static void a5k_key_event(DeviceState *dev, QemuConsole *src,
         s->key_shift = down;
         return;
     }
-    if (a5k_off_key(s, qcode, down)) {
+    if (a6k_off_key(s, qcode, down)) {
         return;
     }
     switch (qcode) {
@@ -1079,18 +1021,18 @@ static void a5k_key_event(DeviceState *dev, QemuConsole *src,
         /* S = half press, Shift+S = full press (passes through S1) */
         if (down) {
             s->key_s2 = s->key_shift;
-            a5k_shutter(s, true, s->key_s2);
+            a6k_shutter(s, true, s->key_s2);
         } else {
             s->key_s2 = false;
-            a5k_shutter(s, false, false);
+            a6k_shutter(s, false, false);
         }
         break;
     case Q_KEY_CODE_SPC:
         /* Space while S is held = full press */
         s->key_s2 = down;
-        a5k_shutter(s, true, down);
+        a6k_shutter(s, true, down);
         if (!down) {
-            a5k_shutter(s, false, false);
+            a6k_shutter(s, false, false);
         }
         break;
     case Q_KEY_CODE_BRACKET_RIGHT:
@@ -1102,76 +1044,57 @@ static void a5k_key_event(DeviceState *dev, QemuConsole *src,
                               qcode == Q_KEY_CODE_BRACKET_RIGHT ? n : -n);
         }
         break;
-    case Q_KEY_CODE_T:
-        /* tele: ADC value 0x8001/0x8002 -> event0 610 (docs/RE_WHEEL_ZOOM_DATE.md 2.3).
-         * a5000 body lever only: the A6000 has none, its ch 0x0F is the mode dial */
-        if (a5k_model == &a5k_model_a5000) {
-            a5k_adc_key(s, 3, qcode, down, s->key_shift ? 301 : 400);
-        }
-        break;
-    case Q_KEY_CODE_W:
-        /* wide: ADC value 1/2 -> event0 611 */
-        if (a5k_model == &a5k_model_a5000) {
-            a5k_adc_key(s, 3, qcode, down, s->key_shift ? 162 : 478);
-        }
-        break;
     /*
-     * A6000 extra keys on the DELETE ladder, ADC ch 0x0C (A6000 Backup.bin key
+     * C1 / Fn / AEL on the DELETE ladder, ADC ch 0x0C (A6000 Backup.bin key
      * table; names from libObj's KEY_ table): 92..273 AEL (0x7090),
      * 274..439 Fn (0x7095), 440..599 C1 = KEY_TACT_CUSTOM (0x66).
      * Host keys A / F / C.
      */
     case Q_KEY_CODE_A:
-        if (a5k_model == &a5k_model_a6000) {
-            a5k_adc_key(s, 0, qcode, down, 182);
-        }
+        a6k_adc_key(s, 0, qcode, down, 182);
         break;
     case Q_KEY_CODE_F:
-        if (a5k_model == &a5k_model_a6000) {
-            a5k_adc_key(s, 0, qcode, down, 356);
-        }
+        a6k_adc_key(s, 0, qcode, down, 356);
         break;
     case Q_KEY_CODE_C:
-        if (a5k_model == &a5k_model_a6000) {
-            a5k_adc_key(s, 0, qcode, down, 520);
-        }
+        a6k_adc_key(s, 0, qcode, down, 520);
         break;
     case Q_KEY_CODE_PGUP:
     case Q_KEY_CODE_PGDN:
-        if (down && a5k_model == &a5k_model_a6000) {
+        if (down) {
             a6k_step_mode_dial(s, qcode == Q_KEY_CODE_PGUP ? 1 : -1);
         }
         break;
     /* flash pop-up button: sub-micro CAkey1 bit 9, active low (0x7094
-     * KEY_TACT_FLASH_POPUP; same row in the a5000 table).  Host key H. */
+     * KEY_TACT_FLASH_POPUP).  Host key H. */
     case Q_KEY_CODE_H:
-        a5k_submicro_front_key(s, 9, !down);
+        a6k_submicro_front_key(s, 9, !down);
         break;
     case Q_KEY_CODE_RET:
     case Q_KEY_CODE_KP_ENTER:
-        a5k_adc_key(s, 1, qcode, down, 45);
+        a6k_adc_key(s, 1, qcode, down, 45);
         break;
     case Q_KEY_CODE_UP:
-        a5k_adc_key(s, 1, qcode, down, 182);
+        a6k_adc_key(s, 1, qcode, down, 182);
         break;
     case Q_KEY_CODE_LEFT:
-        a5k_adc_key(s, 1, qcode, down, 356);
+        a6k_adc_key(s, 1, qcode, down, 356);
         break;
     case Q_KEY_CODE_DOWN:
-        a5k_adc_key(s, 1, qcode, down, 520);
+        a6k_adc_key(s, 1, qcode, down, 520);
         break;
     case Q_KEY_CODE_RIGHT:
-        a5k_adc_key(s, 1, qcode, down, 686);
+        a6k_adc_key(s, 1, qcode, down, 686);
         break;
     case Q_KEY_CODE_DELETE:
     case Q_KEY_CODE_BACKSPACE:
-        a5k_adc_key(s, 0, qcode, down, 45);
+        a6k_adc_key(s, 0, qcode, down, 45);
         break;
     case Q_KEY_CODE_M:
-        a5k_submicro_front_key(s, 2, down);
+        a6k_submicro_front_key(s, 2, down);
         break;
     case Q_KEY_CODE_P:
-        a5k_submicro_front_key(s, 1, down);
+        a6k_submicro_front_key(s, 1, down);
         break;
     case Q_KEY_CODE_R:
         if (s->gpio) {
@@ -1183,53 +1106,53 @@ static void a5k_key_event(DeviceState *dev, QemuConsole *src,
     }
 }
 
-static const QemuInputHandler a5k_key_handler = {
-    .name  = "sony-a5000 buttons",
+static const QemuInputHandler a6k_key_handler = {
+    .name  = "sony-a6000 buttons",
     .mask  = INPUT_EVENT_MASK_KEY,
-    .event = a5k_key_event,
+    .event = a6k_key_event,
 };
 
 /* ---- per-reset boot (a legacy reset handler; it is registered before
  * rom_reset, so it must not write into ROM blobs) ---- */
 
-#define A5K_LOADER_DESC     0x80027000ULL
-#define A5K_DESC_MAGIC      0x424b3541      /* "A5KB" */
+#define A6K_LOADER_DESC     0x80027000ULL
+#define A6K_DESC_MAGIC      0x424b3641      /* "A6KB" */
 /*
- * Optional descriptor extension (words 5..7): {"A5KX", kdst, idst}.
+ * Optional descriptor extension (words 5..7): {"A6KX", kdst, idst}.
  * Stage 1 writes it when it boots an image whose load addresses are not
  * the normal ones -- the updater core on nflasha1 (/boot/loadaddr.txt
  * "0x81528000,0x80628000": a zImage entered at its load address, cramfs
- * initrd at 0x80628000).  See docs/RE_UPDATER_BOOT.md.
+ * initrd at 0x80628000).  See docs/reference/RE_UPDATER_BOOT.md.
  */
-#define A5K_DESC_XMAGIC     0x584b3541      /* "A5KX" */
-#define A5K_STUB_ENTRY_LIT  (A5K_STUB_ADDR + A5K_STUB_ENTRY * 4)
-#define A5K_SMP_MBOX        0xC0005010ULL
+#define A6K_DESC_XMAGIC     0x584b3641      /* "A6KX" */
+#define A6K_STUB_ENTRY_LIT  (A6K_STUB_ADDR + A6K_STUB_ENTRY * 4)
+#define A6K_SMP_MBOX        0xC0005010ULL
 
 /*
- * Reset kinds (docs/RE_REBOOT.md section 4.1, docs/RE_WARM_RESUME.md 3).
+ * Reset kinds (docs/reference/RE_REBOOT.md section 4.1, docs/reference/RE_WARM_RESUME.md 3).
  * A SoC reset (SYSCTL +0x44, WDT, HMP system_reset) keeps the DDR contents.
  * A cold power-on by the sub-micro (power cycle, or power-on after a cold
- * off) loses them, so a5k_boot_reset clears all of DDR and IRAM before
+ * off) loses them, so a6k_boot_reset clears all of DDR and IRAM before
  * rom_reset restores the ROM blobs (zero stands in for the undefined
  * content after power loss).  A HOT power-on after a warm off keeps DDR
  * (self-refresh) and only loses IRAM.
  */
 enum {
-    A5K_RESET_SOC = 0,
-    A5K_RESET_POWER,
-    A5K_RESET_HOT,      /* power-on after a warm off: DDR kept (RE_WARM_RESUME) */
+    A6K_RESET_SOC = 0,
+    A6K_RESET_POWER,
+    A6K_RESET_HOT,      /* power-on after a warm off: DDR kept (RE_WARM_RESUME) */
 };
 
-#define A5K_IRAM_BASE       0xC0000000ULL
-#define A5K_IRAM_SIZE       (16 * MiB)
-#define A5K_GPIO_BASE       0xF2910000ULL
-#define A5K_POFF_PIN        10      /* p0.10, cfg.poff=0,10 */
-#define A5K_POFF_DELAY_MS   100     /* hypothesis: lets the wfi loop settle */
+#define A6K_IRAM_BASE       0xC0000000ULL
+#define A6K_IRAM_SIZE       (16 * MiB)
+#define A6K_GPIO_BASE       0xF2910000ULL
+#define A6K_POFF_PIN        10      /* p0.10, cfg.poff=0,10 */
+#define A6K_POFF_DELAY_MS   100     /* hypothesis: lets the wfi loop settle */
 
-static void a5k_dump_sa_tx(const char *what, const uint8_t *f)
+static void a6k_dump_sa_tx(const char *what, const uint8_t *f)
 {
     for (int o = 0; o < 64; o += 16) {
-        info_report("sony-a5000: slot-A TX %s +0x%02x: %02x %02x %02x %02x "
+        info_report("sony-a6000: slot-A TX %s +0x%02x: %02x %02x %02x %02x "
                     "%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x "
                     "%02x", what, o, f[o], f[o + 1], f[o + 2], f[o + 3],
                     f[o + 4], f[o + 5], f[o + 6], f[o + 7], f[o + 8],
@@ -1239,7 +1162,7 @@ static void a5k_dump_sa_tx(const char *what, const uint8_t *f)
 }
 
 /*
- * What the sub-micro does on the p0.10 drop (docs/RE_REBOOT.md B.4): with
+ * What the sub-micro does on the p0.10 drop (docs/reference/RE_REBOOT.md B.4): with
  * poff=auto (default) it follows the latched off data, +0x15 == 0x20 = power
  * cycle (SWITCH_MODE factor 13, UI reset factor 20), anything else = stay
  * off (idle power save factor 8, power lever factor 7, battery, heat, ...);
@@ -1247,23 +1170,23 @@ static void a5k_dump_sa_tx(const char *what, const uint8_t *f)
  * poff=restart / poff=off force one of the two.
  */
 enum {
-    A5K_POFF_AUTO = 0,
-    A5K_POFF_RESTART,
-    A5K_POFF_OFF,
+    A6K_POFF_AUTO = 0,
+    A6K_POFF_RESTART,
+    A6K_POFF_OFF,
 };
 
-static int a5k_off_factor(A5KMachineState *s)
+static int a6k_off_factor(A6KMachineState *s)
 {
-    return s->off_info_valid ? s->off_info[A5K_OFF_FACTOR] : -1;
+    return s->off_info_valid ? s->off_info[A6K_OFF_FACTOR] : -1;
 }
 
-static void a5k_poff_cycle(void *opaque)
+static void a6k_poff_cycle(void *opaque)
 {
-    A5KMachineState *s = opaque;
+    A6KMachineState *s = opaque;
 
-    info_report("sony-a5000: sub-micro power cycle (factor %d)",
-                a5k_off_factor(s));
-    s->reset_kind = A5K_RESET_POWER;
+    info_report("sony-a6000: sub-micro power cycle (factor %d)",
+                a6k_off_factor(s));
+    s->reset_kind = A6K_RESET_POWER;
     qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
 }
 
@@ -1272,48 +1195,48 @@ static void a5k_poff_cycle(void *opaque)
  * input layer still delivers key events (ui/input.c accepts RUNNING and
  * SUSPENDED), so the micro model below can watch its wake sources.  A
  * wakeup (power lever, APO wake key, HMP system_wakeup) runs
- * a5k_power_wakeup, which powers the SoC up: after a warm off (type 27,
+ * a6k_power_wakeup, which powers the SoC up: after a warm off (type 27,
  * sus_error 0) with warm-resume=on a HOT resume from the kept DDR image
- * (docs/RE_WARM_RESUME.md 3.1, 3.2), otherwise like the power cycle: DDR and
+ * (docs/reference/RE_WARM_RESUME.md 3.1, 3.2), otherwise like the power cycle: DDR and
  * IRAM cleared, cold boot.
  */
-static void a5k_power_off(A5KMachineState *s)
+static void a6k_power_off(A6KMachineState *s)
 {
     const uint8_t *o = s->off_info;
 
     if (s->off_info_valid) {
-        info_report("sony-a5000: sub-micro power off (factor %d, %s, wake "
-                    "%02x %02x %02x)", o[A5K_OFF_FACTOR],
-                    (o[A5K_OFF_WARM] & 1) ? "warm" : "cold", o[A5K_OFF_WAKE],
-                    o[A5K_OFF_WAKE + 1], o[A5K_OFF_WAKE + 2]);
+        info_report("sony-a6000: sub-micro power off (factor %d, %s, wake "
+                    "%02x %02x %02x)", o[A6K_OFF_FACTOR],
+                    (o[A6K_OFF_WARM] & 1) ? "warm" : "cold", o[A6K_OFF_WAKE],
+                    o[A6K_OFF_WAKE + 1], o[A6K_OFF_WAKE + 2]);
     } else {
-        info_report("sony-a5000: sub-micro power off (factor -1, no off "
+        info_report("sony-a6000: sub-micro power off (factor -1, no off "
                     "data)");
     }
     /*
      * Warm off (+0x1B bit 0) with pm.sus_error == 0: the micro keeps DDR
      * powered (the IRAM code left it in self-refresh) and the bootloader
-     * will resume from it (docs/RE_WARM_RESUME.md 1.3, 3.1).  sus_error is
+     * will resume from it (docs/reference/RE_WARM_RESUME.md 1.3, 3.1).  sus_error is
      * the bootloader's check; it is read here and again at power-on.
      */
     s->dram_retained = false;
-    if (s->warm_resume && s->off_info_valid && (o[A5K_OFF_WARM] & 1)) {
+    if (s->warm_resume && s->off_info_valid && (o[A6K_OFF_WARM] & 1)) {
         uint32_t sus_error = ldl_le_phys(&address_space_memory,
-                                         A5K_HANDOFF_SUS_ERR);
+                                         A6K_HANDOFF_SUS_ERR);
         s->dram_retained = sus_error == 0;
-        info_report("sony-a5000: warm off, sus_error %u: DDR %s", sus_error,
+        info_report("sony-a6000: warm off, sus_error %u: DDR %s", sus_error,
                     s->dram_retained ? "kept (self-refresh)" : "dropped");
     }
     s->powered_off = true;
     qemu_system_suspend_request();
 }
 
-static void a5k_power_on(A5KMachineState *s, const char *why)
+static void a6k_power_on(A6KMachineState *s, const char *why)
 {
     if (!s->powered_off) {
         return;
     }
-    info_report("sony-a5000: sub-micro power on (%s)", why);
+    info_report("sony-a6000: sub-micro power on (%s)", why);
     qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER, NULL);
 }
 
@@ -1326,45 +1249,45 @@ static void a5k_power_on(A5KMachineState *s, const char *why)
  * ever arrive.  Keep the virtual clock running while off; the vCPUs stay
  * paused, and the power-on reset rebuilds every SoC device anyway.
  */
-static void a5k_power_suspended(Notifier *n, void *data)
+static void a6k_power_suspended(Notifier *n, void *data)
 {
-    A5KMachineState *s = container_of(n, A5KMachineState, suspend);
+    A6KMachineState *s = container_of(n, A6KMachineState, suspend);
 
     if (s->powered_off) {
         qemu_clock_enable(QEMU_CLOCK_VIRTUAL, true);
     }
 }
 
-static bool a5k_ddr_range(uint32_t pa, uint32_t len);
+static bool a6k_ddr_range(uint32_t pa, uint32_t len);
 
 /*
  * The hand-off page is the preload= ROM blob, and rom_reset runs after
- * a5k_boot_reset, so a reset would put the factory page back over the live
+ * a6k_boot_reset, so a reset would put the factory page back over the live
  * one (resume vector, sus_error, RTC word).  For a HOT power-on the live page
  * goes into the blob; the factory copy is put back before any other reset
- * (docs/RE_WARM_RESUME.md 3.2 step 3).
+ * (docs/reference/RE_WARM_RESUME.md 3.2 step 3).
  */
-static void a5k_handoff_keep_live(A5KMachineState *s)
+static void a6k_handoff_keep_live(A6KMachineState *s)
 {
-    uint8_t *blob = rom_ptr(A5K_HANDOFF_PAGE, A5K_HANDOFF_SIZE);
+    uint8_t *blob = rom_ptr(A6K_HANDOFF_PAGE, A6K_HANDOFF_SIZE);
 
     if (!blob) {
         return;                 /* no preloaded page: nothing overwrites it */
     }
     if (!s->handoff_pristine) {
-        s->handoff_pristine = g_memdup2(blob, A5K_HANDOFF_SIZE);
+        s->handoff_pristine = g_memdup2(blob, A6K_HANDOFF_SIZE);
     }
-    address_space_read(&address_space_memory, A5K_HANDOFF_PAGE,
-                       MEMTXATTRS_UNSPECIFIED, blob, A5K_HANDOFF_SIZE);
+    address_space_read(&address_space_memory, A6K_HANDOFF_PAGE,
+                       MEMTXATTRS_UNSPECIFIED, blob, A6K_HANDOFF_SIZE);
     s->handoff_live = true;
 }
 
-static void a5k_handoff_restore(A5KMachineState *s)
+static void a6k_handoff_restore(A6KMachineState *s)
 {
-    uint8_t *blob = rom_ptr(A5K_HANDOFF_PAGE, A5K_HANDOFF_SIZE);
+    uint8_t *blob = rom_ptr(A6K_HANDOFF_PAGE, A6K_HANDOFF_SIZE);
 
     if (s->handoff_live && blob && s->handoff_pristine) {
-        memcpy(blob, s->handoff_pristine, A5K_HANDOFF_SIZE);
+        memcpy(blob, s->handoff_pristine, A6K_HANDOFF_SIZE);
     }
     s->handoff_live = false;
 }
@@ -1374,14 +1297,14 @@ static void a5k_handoff_restore(A5KMachineState *s)
  * update package; RE_WARM_RESUME.md 2.1, 2.2]: resume only with sus_error 0
  * and a resume vector inside DDR, else boot cold.
  */
-static bool a5k_hot_resume_ok(A5KMachineState *s)
+static bool a6k_hot_resume_ok(A6KMachineState *s)
 {
-    uint32_t entry = ldl_le_phys(&address_space_memory, A5K_HANDOFF_RESUME);
+    uint32_t entry = ldl_le_phys(&address_space_memory, A6K_HANDOFF_RESUME);
     uint32_t sus_error = ldl_le_phys(&address_space_memory,
-                                     A5K_HANDOFF_SUS_ERR);
+                                     A6K_HANDOFF_SUS_ERR);
 
-    if (sus_error || !a5k_ddr_range(entry, 4) || (entry & 3)) {
-        info_report("sony-a5000: HOT resume refused (resume vector 0x%08x, "
+    if (sus_error || !a6k_ddr_range(entry, 4) || (entry & 3)) {
+        info_report("sony-a6000: HOT resume refused (resume vector 0x%08x, "
                     "sus_error %u), cold boot", entry, sus_error);
         return false;
     }
@@ -1389,19 +1312,19 @@ static bool a5k_hot_resume_ok(A5KMachineState *s)
     return true;
 }
 
-static void a5k_power_wakeup(Notifier *n, void *data)
+static void a6k_power_wakeup(Notifier *n, void *data)
 {
-    A5KMachineState *s = container_of(n, A5KMachineState, wakeup);
+    A6KMachineState *s = container_of(n, A6KMachineState, wakeup);
 
     if (!s->powered_off) {
         return;
     }
     s->powered_off = false;
-    if (s->dram_retained && a5k_hot_resume_ok(s)) {
-        a5k_handoff_keep_live(s);
-        s->reset_kind = A5K_RESET_HOT;
+    if (s->dram_retained && a6k_hot_resume_ok(s)) {
+        a6k_handoff_keep_live(s);
+        s->reset_kind = A6K_RESET_HOT;
     } else {
-        s->reset_kind = A5K_RESET_POWER;
+        s->reset_kind = A6K_RESET_POWER;
     }
     s->dram_retained = false;
     qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
@@ -1414,9 +1337,9 @@ static void a5k_power_wakeup(Notifier *n, void *data)
  * drop and removes power.  With restart requested it powers the SoC up
  * again (power cycle), otherwise it stays off.
  */
-static void a5k_poff_line(void *opaque, int n, int level)
+static void a6k_poff_line(void *opaque, int n, int level)
 {
-    A5KMachineState *s = opaque;
+    A6KMachineState *s = opaque;
     bool fall = s->poff_level && !level;
     bool restart;
 
@@ -1426,39 +1349,39 @@ static void a5k_poff_line(void *opaque, int n, int level)
     }
     /* r15 is only exact to the translation block: enough to tell IRAM */
     uint32_t pc = current_cpu ? ARM_CPU(current_cpu)->env.regs[15] : 0;
-    info_report("sony-a5000: power-off line p0.10 low (pc ~0x%08x, "
+    info_report("sony-a6000: power-off line p0.10 low (pc ~0x%08x, "
                 "off request 0x%02x)", pc, s->poff_req);
     if (s->sa_tx_boot_valid) {
-        a5k_dump_sa_tx("at boot", s->sa_tx_boot);
+        a6k_dump_sa_tx("at boot", s->sa_tx_boot);
     }
     if (s->sa_tx_valid) {
-        a5k_dump_sa_tx("at off", s->sa_tx_last);
+        a6k_dump_sa_tx("at off", s->sa_tx_last);
     }
     switch (s->poff_mode) {
-    case A5K_POFF_RESTART:
+    case A6K_POFF_RESTART:
         restart = true;
         break;
-    case A5K_POFF_OFF:
+    case A6K_POFF_OFF:
         restart = false;
         break;
     default:
         restart = s->off_info_valid &&
-                  s->off_info[A5K_OFF_NEXT] == A5K_OFF_NEXT_RESTART;
+                  s->off_info[A6K_OFF_NEXT] == A6K_OFF_NEXT_RESTART;
         break;
     }
-    info_report("sony-a5000: sub-micro off decision: %s (poff=%s, off data "
+    info_report("sony-a6000: sub-micro off decision: %s (poff=%s, off data "
                 "%s, next 0x%02x, sus_error %u)",
                 restart ? "power cycle" : "stay off",
-                s->poff_mode == A5K_POFF_RESTART ? "restart" :
-                s->poff_mode == A5K_POFF_OFF ? "off" : "auto",
+                s->poff_mode == A6K_POFF_RESTART ? "restart" :
+                s->poff_mode == A6K_POFF_OFF ? "off" : "auto",
                 s->off_info_valid ? "latched" : "none",
-                s->off_info_valid ? s->off_info[A5K_OFF_NEXT] : 0,
-                ldl_le_phys(&address_space_memory, A5K_HANDOFF_SUS_ERR));
+                s->off_info_valid ? s->off_info[A6K_OFF_NEXT] : 0,
+                ldl_le_phys(&address_space_memory, A6K_HANDOFF_SUS_ERR));
     if (restart) {
         timer_mod(s->poff_t, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-                  A5K_POFF_DELAY_MS * SCALE_MS);
+                  A6K_POFF_DELAY_MS * SCALE_MS);
     } else {
-        a5k_power_off(s);
+        a6k_power_off(s);
     }
 }
 
@@ -1469,22 +1392,22 @@ static void a5k_poff_line(void *opaque, int n, int level)
  * must have been driven high before the kernel].  Runs after the device
  * reset cleared the GPIO latch.
  */
-static void a5k_poff_hold(A5KMachineState *s)
+static void a6k_poff_hold(A6KMachineState *s)
 {
-    uint32_t bit = cpu_to_le32(1u << A5K_POFF_PIN);
+    uint32_t bit = cpu_to_le32(1u << A6K_POFF_PIN);
 
     s->poff_level = 0;
     if (!s->gpio) {
         return;
     }
-    address_space_write(&address_space_memory, A5K_GPIO_BASE + 0x44,
+    address_space_write(&address_space_memory, A6K_GPIO_BASE + 0x44,
                         MEMTXATTRS_UNSPECIFIED, &bit, 4);   /* out set */
-    address_space_write(&address_space_memory, A5K_GPIO_BASE + 0x04,
+    address_space_write(&address_space_memory, A6K_GPIO_BASE + 0x04,
                         MEMTXATTRS_UNSPECIFIED, &bit, 4);   /* dir set */
 }
 
 /* sub-micro power-off / memory-read state (micro side, RE_REBOOT.md A.5) */
-static void a5k_submicro_poff_reset(A5KMachineState *s)
+static void a6k_submicro_poff_reset(A6KMachineState *s)
 {
     s->poff_req = 0;
     s->poff_ack_logged = false;
@@ -1496,17 +1419,17 @@ static void a5k_submicro_poff_reset(A5KMachineState *s)
     }
 }
 
-static bool a5k_ddr_range(uint32_t pa, uint32_t len)
+static bool a6k_ddr_range(uint32_t pa, uint32_t len)
 {
-    return pa >= A5K_DDR_BASE && len <= A5K_DDR_SIZE &&
-           pa - A5K_DDR_BASE <= A5K_DDR_SIZE - len;
+    return pa >= A6K_DDR_BASE && len <= A6K_DDR_SIZE &&
+           pa - A6K_DDR_BASE <= A6K_DDR_SIZE - len;
 }
 
 /*
- * Bootloader load table preload (docs/RE_RAW_DEVELOP.md §3.2,
+ * Bootloader load table preload (docs/reference/RE_RAW_DEVELOP.md §3.2,
  * RE_COLD_BOOT_MODE.md §3, §5.4).  Stage 1 copies the load-table rows of
  * Backup prop 0xFA0080 that lie inside a wbimem= region (sa_dfdet.bin ->
- * 0x9EC00000) and records them at A5K_PRELOAD_DESC {"A5KM", n, {start,
+ * 0x9EC00000) and records them at A6K_PRELOAD_DESC {"A6KM", n, {start,
  * end} x n}.  The kernel's wbi_cmdline_parse_mem (0x4033B56C) would clear
  * every wbimem region above 0x80028000 while hand-off wbi_memclr
  * (0x800210E8) == 1, wiping the preloaded file; so for this boot the board
@@ -1514,29 +1437,29 @@ static bool a5k_ddr_range(uint32_t pa, uint32_t len)
  * content must not depend on what stage-1 Linux left in DDR).
  * hypothesis: what the real bootloader presents on a cold boot (no code).
  */
-#define A5K_PRELOAD_DESC    0x80027040ULL
-#define A5K_PRELOAD_MAGIC   0x4d4b3541      /* "A5KM" */
-#define A5K_PRELOAD_MAX     8
-#define A5K_HANDOFF_MEMCLR  0x800210E8ULL
+#define A6K_PRELOAD_DESC    0x80027040ULL
+#define A6K_PRELOAD_MAGIC   0x4d4b3641      /* "A6KM" */
+#define A6K_PRELOAD_MAX     8
+#define A6K_HANDOFF_MEMCLR  0x800210E8ULL
 
-static void a5k_wbimem_preload(A5KMachineState *s)
+static void a6k_wbimem_preload(A6KMachineState *s)
 {
     AddressSpace *as = &address_space_memory;
-    uint32_t d[2 + 2 * A5K_PRELOAD_MAX], zero = 0;
+    uint32_t d[2 + 2 * A6K_PRELOAD_MAX], zero = 0;
     const char *p = s->cmdline;
     uint8_t *blob;
     uint32_t n;
 
-    address_space_read(as, A5K_PRELOAD_DESC, MEMTXATTRS_UNSPECIFIED, d,
+    address_space_read(as, A6K_PRELOAD_DESC, MEMTXATTRS_UNSPECIFIED, d,
                        sizeof(d));
     for (int i = 0; i < ARRAY_SIZE(d); i++) {
         d[i] = le32_to_cpu(d[i]);
     }
     n = d[1];
-    if (d[0] != A5K_PRELOAD_MAGIC || !n || n > A5K_PRELOAD_MAX) {
+    if (d[0] != A6K_PRELOAD_MAGIC || !n || n > A6K_PRELOAD_MAX) {
         return;
     }
-    address_space_write(as, A5K_PRELOAD_DESC, MEMTXATTRS_UNSPECIFIED, &zero,
+    address_space_write(as, A6K_PRELOAD_DESC, MEMTXATTRS_UNSPECIFIED, &zero,
                         4);
     while (p && (p = strstr(p, "wbimem=")) != NULL) {
         char *end;
@@ -1549,7 +1472,7 @@ static void a5k_wbimem_preload(A5KMachineState *s)
         }
         addr = strtoull(end + 1, &end, 0);
         p = end;
-        if (addr <= 0x80028000 || !a5k_ddr_range(addr, size)) {
+        if (addr <= 0x80028000 || !a6k_ddr_range(addr, size)) {
             continue;               /* the kernel skips these as well */
         }
         for (uint32_t i = 0; i < n; i++) {
@@ -1558,76 +1481,80 @@ static void a5k_wbimem_preload(A5KMachineState *s)
             }
         }
         if (keep) {
-            info_report("sony-a5000: wbimem 0x%" PRIx64 "@0x%" PRIx64
+            info_report("sony-a6000: wbimem 0x%" PRIx64 "@0x%" PRIx64
                         " preloaded by stage 1, kept", size, addr);
         } else {
             address_space_set(as, addr, 0, size, MEMTXATTRS_UNSPECIFIED);
         }
     }
     /* the hand-off page is a ROM blob (rom_reset runs after this handler):
-     * patch the blob, a5k_handoff_restore puts the factory page back on
+     * patch the blob, a6k_handoff_restore puts the factory page back on
      * the next reset */
-    blob = rom_ptr(A5K_HANDOFF_PAGE, A5K_HANDOFF_SIZE);
+    blob = rom_ptr(A6K_HANDOFF_PAGE, A6K_HANDOFF_SIZE);
     if (blob) {
         if (!s->handoff_pristine) {
-            s->handoff_pristine = g_memdup2(blob, A5K_HANDOFF_SIZE);
+            s->handoff_pristine = g_memdup2(blob, A6K_HANDOFF_SIZE);
         }
-        stl_le_p(blob + (A5K_HANDOFF_MEMCLR - A5K_HANDOFF_PAGE), 0);
+        stl_le_p(blob + (A6K_HANDOFF_MEMCLR - A6K_HANDOFF_PAGE), 0);
         s->handoff_live = true;
     } else {
-        address_space_write(as, A5K_HANDOFF_MEMCLR, MEMTXATTRS_UNSPECIFIED,
+        address_space_write(as, A6K_HANDOFF_MEMCLR, MEMTXATTRS_UNSPECIFIED,
                             &zero, 4);
     }
-    info_report("sony-a5000: stage 2 — wbi_memclr = 0, other wbimem "
+    info_report("sony-a6000: stage 2 — wbi_memclr = 0, other wbimem "
                 "regions cleared by the board");
 }
 
-static void a5k_boot_reset(void *opaque)
+static void a6k_boot_reset(void *opaque)
 {
-    A5KMachineState *s = opaque;
+    A6KMachineState *s = opaque;
     AddressSpace *as = &address_space_memory;
     uint32_t d[8];
     bool ext;
 
-    bool hot = s->reset_kind == A5K_RESET_HOT;
+    bool hot = s->reset_kind == A6K_RESET_HOT;
 
     if (hot) {
         /*
-         * HOT power-on (docs/RE_WARM_RESUME.md 3.2): DDR stayed in
+         * HOT power-on (docs/reference/RE_WARM_RESUME.md 3.2): DDR stayed in
          * self-refresh, only the SoC lost power.  IRAM is gone (rom_reset
          * then restores the bootloader's IRAM/SRAM data as on every
          * power-on); kernel, initrd, kemco and the loader descriptor are
          * not touched (the live kernel owns that memory).
          */
-        address_space_set(as, A5K_IRAM_BASE, 0, A5K_IRAM_SIZE,
+        address_space_set(as, A6K_IRAM_BASE, 0, A6K_IRAM_SIZE,
                           MEMTXATTRS_UNSPECIFIED);
-        info_report("sony-a5000: power-on, HOT resume (DDR kept) -> "
+        info_report("sony-a6000: power-on, HOT resume (DDR kept) -> "
                     "0x%08x", s->hot_entry);
         s->off_info_valid = false;          /* micro: off data consumed */
     } else {
-        a5k_handoff_restore(s);             /* factory page for this boot */
+        a6k_handoff_restore(s);             /* factory page for this boot */
     }
-    if (s->reset_kind == A5K_RESET_POWER) {
+    if (s->reset_kind == A6K_RESET_POWER) {
         /* power loss: DDR and IRAM content gone, ROM blobs come back next */
-        address_space_set(as, A5K_DDR_BASE, 0, A5K_DDR_SIZE,
+        address_space_set(as, A6K_DDR_BASE, 0, A6K_DDR_SIZE,
                           MEMTXATTRS_UNSPECIFIED);
-        address_space_set(as, A5K_IRAM_BASE, 0, A5K_IRAM_SIZE,
+        address_space_set(as, A6K_IRAM_BASE, 0, A6K_IRAM_SIZE,
                           MEMTXATTRS_UNSPECIFIED);
-        info_report("sony-a5000: power-on (DDR and IRAM cleared)");
+        info_report("sony-a6000: power-on (DDR and IRAM cleared)");
         s->off_info_valid = false;          /* micro: off data consumed */
     }
-    s->reset_kind = A5K_RESET_SOC;
-    a5k_poff_hold(s);
-    a5k_submicro_poff_reset(s);
+    s->reset_kind = A6K_RESET_SOC;
+    /* any reset powers the SoC: a host system_reset while off (not via the
+     * wakeup path) would otherwise leave powered_off set and a6k_off_key
+     * would swallow every key */
+    s->powered_off = false;
+    a6k_poff_hold(s);
+    a6k_submicro_poff_reset(s);
 
-    address_space_read(as, A5K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED, d,
+    address_space_read(as, A6K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED, d,
                        sizeof(d));
     for (int i = 0; i < 8; i++) {
         d[i] = le32_to_cpu(d[i]);
     }
     /*
      * A reset sends the secondaries back to the boot-ROM wait loop
-     * (a5k_write_smp_stub); the release mailbox written by the previous
+     * (a6k_write_smp_stub); the release mailbox written by the previous
      * kernel's cxd90014_smp_init must not survive it, or they jump into
      * that kernel's (now stale) secondary entry before the new kernel
      * releases them.  On power-on the IRAM is zero, which is the state
@@ -1636,11 +1563,11 @@ static void a5k_boot_reset(void *opaque)
      * kernel at the same address].
      */
     uint32_t mbox[3] = { 0 };
-    address_space_write(as, A5K_SMP_MBOX, MEMTXATTRS_UNSPECIFIED, mbox,
+    address_space_write(as, A6K_SMP_MBOX, MEMTXATTRS_UNSPECIFIED, mbox,
                         sizeof(mbox));
 
-    uint32_t entry = cpu_to_le32(hot ? s->hot_entry : A5K_KERNEL_ADDR);
-    address_space_write(as, A5K_STUB_ENTRY_LIT, MEMTXATTRS_UNSPECIFIED,
+    uint32_t entry = cpu_to_le32(hot ? s->hot_entry : A6K_KERNEL_ADDR);
+    address_space_write(as, A6K_STUB_ENTRY_LIT, MEMTXATTRS_UNSPECIFIED,
                         &entry, 4);
     if (hot) {
         /*
@@ -1651,22 +1578,22 @@ static void a5k_boot_reset(void *opaque)
          * without one (sp = 0 after the CPU reset) the first push faults
          * (DFAR 0xffffffe4).  hypothesis: IRAM top of the sleep-code area,
          * 0xC0020000 (the sp the IRAM sleep code itself ran on at the off,
-         * RE_WARM_RESUME.md 1.2); the a5k_cpu_reset handlers ran before
+         * RE_WARM_RESUME.md 1.2); the a6k_cpu_reset handlers ran before
          * this one, so the value sticks.
          */
-        s->cpu[0]->env.regs[13] = A5K_HOT_SP;
+        s->cpu[0]->env.regs[13] = A6K_HOT_SP;
         goto out;
     }
 
-    ext = d[0] == A5K_DESC_MAGIC && d[5] == A5K_DESC_XMAGIC &&
-          a5k_ddr_range(d[6], d[2]) && a5k_ddr_range(d[7], d[4]) &&
+    ext = d[0] == A6K_DESC_MAGIC && d[5] == A6K_DESC_XMAGIC &&
+          a6k_ddr_range(d[6], d[2]) && a6k_ddr_range(d[7], d[4]) &&
           (d[6] >= d[7] + d[4] || d[7] >= d[6] + d[2]);
-    if (d[0] == A5K_DESC_MAGIC && d[2] &&
-        (ext || (d[2] <= A5K_INITRD_ADDR - A5K_KERNEL_ADDR &&
+    if (d[0] == A6K_DESC_MAGIC && d[2] &&
+        (ext || (d[2] <= A6K_INITRD_ADDR - A6K_KERNEL_ADDR &&
                  d[4] <= 8 * MiB))) {
         /* stage 2: kernel + initrd read from NAND by stage 1 */
-        uint32_t kdst = ext ? d[6] : A5K_KERNEL_ADDR;
-        uint32_t idst = ext ? d[7] : A5K_INITRD_ADDR;
+        uint32_t kdst = ext ? d[6] : A6K_KERNEL_ADDR;
+        uint32_t idst = ext ? d[7] : A6K_INITRD_ADDR;
         g_autofree uint8_t *k = g_malloc(d[2]);
         g_autofree uint8_t *r = g_malloc(MAX(d[4], 1));
         address_space_read(as, d[1], MEMTXATTRS_UNSPECIFIED, k, d[2]);
@@ -1674,28 +1601,28 @@ static void a5k_boot_reset(void *opaque)
         address_space_write(as, kdst, MEMTXATTRS_UNSPECIFIED, k, d[2]);
         address_space_write(as, idst, MEMTXATTRS_UNSPECIFIED, r, d[4]);
         uint32_t zero[6] = { 0 };
-        address_space_write(as, A5K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED,
+        address_space_write(as, A6K_LOADER_DESC, MEMTXATTRS_UNSPECIFIED,
                             zero, sizeof(zero));
         if (ext) {
             /* enter the image at its load address (boot stub literal) */
             entry = cpu_to_le32(kdst);
-            address_space_write(as, A5K_STUB_ENTRY_LIT,
+            address_space_write(as, A6K_STUB_ENTRY_LIT,
                                 MEMTXATTRS_UNSPECIFIED, &entry, 4);
-            info_report("sony-a5000: stage 2 — kernel %u B @0x%08x, "
+            info_report("sony-a6000: stage 2 — kernel %u B @0x%08x, "
                         "initrd %u B @0x%08x from NAND", d[2], kdst, d[4],
                         idst);
             /* this kernel carries its own built-in command line and has
              * no kemco parser: no kemco block */
             goto out;
         }
-        info_report("sony-a5000: stage 2 — kernel %u B, initrd %u B from NAND",
+        info_report("sony-a6000: stage 2 — kernel %u B, initrd %u B from NAND",
                     d[2], d[4]);
-        a5k_wbimem_preload(s);
+        a6k_wbimem_preload(s);
     } else {
-        address_space_write(as, A5K_KERNEL_ADDR, MEMTXATTRS_UNSPECIFIED,
+        address_space_write(as, A6K_KERNEL_ADDR, MEMTXATTRS_UNSPECIFIED,
                             s->kernel, s->kernel_len);
         if (s->initrd_len) {
-            address_space_write(as, A5K_INITRD_ADDR, MEMTXATTRS_UNSPECIFIED,
+            address_space_write(as, A6K_INITRD_ADDR, MEMTXATTRS_UNSPECIFIED,
                                 s->initrd, s->initrd_len);
             /*
              * The cmdline declares an 8 MiB initrd window and the kernel
@@ -1703,19 +1630,19 @@ static void a5k_boot_reset(void *opaque)
              * the previous kernel's data ("junk in compressed archive",
              * then a panic in mount_block_root).  The real bootloader's
              * ext2 initrd ignores trailing bytes; ours is a cpio, so clear
-             * the remainder of the window (docs/RE_REBOOT.md).
+             * the remainder of the window (docs/reference/RE_REBOOT.md).
              */
             if (s->initrd_len < 8 * MiB) {
-                address_space_set(as, A5K_INITRD_ADDR + s->initrd_len, 0,
+                address_space_set(as, A6K_INITRD_ADDR + s->initrd_len, 0,
                                   8 * MiB - s->initrd_len,
                                   MEMTXATTRS_UNSPECIFIED);
             }
         }
         if (s->loader) {
-            info_report("sony-a5000: stage 1 (loader)");
+            info_report("sony-a6000: stage 1 (loader)");
         }
     }
-    a5k_write_kemco(s->cmdline);
+    a6k_write_kemco(s->cmdline);
 out:
     s->lens_pwr_req = false;
     s->rtc_ack = 0;
@@ -1726,18 +1653,18 @@ out:
     }
 }
 
-static void a5k_init_done(Notifier *n, void *data)
+static void a6k_init_done(Notifier *n, void *data)
 {
-    A5KMachineState *s = container_of(n, A5KMachineState, init_done);
-    qemu_register_reset(a5k_boot_reset, s);   /* before rom_reset */
+    A6KMachineState *s = container_of(n, A6KMachineState, init_done);
+    qemu_register_reset(a6k_boot_reset, s);   /* before rom_reset */
 }
 
 /* ---- machine ---- */
 
 /*
- * Kernel console selection (docs/RE_GUEST_SHELL.md sections 2, 4, 6.1).
+ * Kernel console selection (docs/reference/RE_GUEST_SHELL.md sections 2, 4, 6.1).
  * Only the console=ttynull token of the stock cmdline is replaced:
- * - ttynull: stock, the cmdline stays exactly a5k_default_cmdline.
+ * - ttynull: stock, the cmdline stays exactly a6k_default_cmdline.
  * - ttyAM1 (UART2, 0xF2002000, GIC 152): nobody else uses this port
  *   (/proc/interrupts 152 = cxd90014-uart, 150 = liro-150).  Stock init
  *   reopens fds 0-2 on /dev/console and runs its own root shell there
@@ -1748,7 +1675,7 @@ static void a5k_init_done(Notifier *n, void *data)
  *   exception monitor at ~70 s.  Early-boot logs only, no UI.
  * Returns the replacement text, or NULL for the stock token.
  */
-static const char *a5k_console_token(A5KMachineState *s)
+static const char *a6k_console_token(A6KMachineState *s)
 {
     const char *con = s->console;
 
@@ -1762,7 +1689,7 @@ static const char *a5k_console_token(A5KMachineState *s)
         }
     }
     if (s->shell_socket && strcmp(con, "ttyAM1") != 0) {
-        error_report("sony-a5000: shell-socket needs console=ttyAM1 "
+        error_report("sony-a6000: shell-socket needs console=ttyAM1 "
                      "(got console=%s)", con);
         exit(1);
     }
@@ -1776,25 +1703,25 @@ static const char *a5k_console_token(A5KMachineState *s)
          * to the same console and re-takes the lock (BUG in
          * rt_spin_lock_slowlock) when warnings are queued, as after a HOT
          * resume.  Levels 0-3 still reach the shell console
-         * (docs/RE_UART_RESUME.md).  Debug console only.
+         * (docs/reference/RE_UART_RESUME.md).  Debug console only.
          */
         return "console=ttyAM1 amba2.console=1 loglevel=4";
     }
-    warn_report("sony-a5000: console=ttyAM0 conflicts with av-cam's "
+    warn_report("sony-a6000: console=ttyAM0 conflicts with av-cam's "
                 "monitor on UART0; the stock UI will not start "
-                "(docs/RE_GUEST_SHELL.md section 2)");
+                "(docs/reference/RE_GUEST_SHELL.md section 2)");
     return "console=ttyAM0 amba2.console=1";
 }
 
 /*
- * Wi-Fi (docs/RE_WIFI.md section 7.1): mmc1 = F_SDH30 #1 (SDHCI v3,
+ * Wi-Fi (docs/reference/RE_WIFI.md section 7.1): mmc1 = F_SDH30 #1 (SDHCI v3,
  * vendor window 0x100+ in the io-f0 register file like mmc0) at 0xF0301000,
  * GIC 221 (RE_STORAGE_USB section 3; mmcioWrapper channel = Backup
  * 0x013E000C & 0xF = 1), with the soldered AR6003 SDIO module on its bus.
  * Module power: p1.4 = CHIP_PWD_L, p6.2/p6.3 = supplies [?]
  * (libWlanResource setPortToStartWlan_Stamina, RE_WIFI section 1.3).
  */
-static void a5k_wifi_init(A5KMachineState *s, qemu_irq *pic)
+static void a6k_wifi_init(A6KMachineState *s, qemu_irq *pic)
 {
     DeviceState *h = qdev_new("generic-sdhci");
 
@@ -1820,43 +1747,39 @@ static void a5k_wifi_init(A5KMachineState *s, qemu_irq *pic)
                                 qdev_get_gpio_in_named(card, "vdd", 1));
 }
 
-static void a5k_init(MachineState *ms)
+static void a6k_init(MachineState *ms)
 {
-    A5KMachineState *s = A5K_MACHINE(ms);
+    A6KMachineState *s = A6K_MACHINE(ms);
     MemoryRegion *sysmem = get_system_memory();
     unsigned int ncpu = ms->smp.cpus;
     DeviceState *mp, *dev;
-    qemu_irq pic[A5K_NUM_IRQ - 32];
+    qemu_irq pic[A6K_NUM_IRQ - 32];
 
-    if (object_dynamic_cast(OBJECT(ms), TYPE_A6K_MACHINE)) {
-        a5k_model = &a5k_model_a6000;
-    }
-    if (ms->ram_size != A5K_DDR_SIZE) {
-        error_report("%s: RAM is fixed at %" PRIu64 "M", a5k_model->name,
-                     A5K_DDR_SIZE / MiB);
+    if (ms->ram_size != A6K_DDR_SIZE) {
+        error_report("sony-a6000: RAM is fixed at 1G");
         exit(1);
     }
-    memory_region_add_subregion(sysmem, A5K_DDR_BASE, ms->ram);
+    memory_region_add_subregion(sysmem, A6K_DDR_BASE, ms->ram);
 
     /* 16 MiB on-chip memory at PA 0xC0000000 (kernel map_io maps it at
      * VA 0xC0000000 cached and 0xC1000000 uncached).  0xC0005000 is the
      * secondary-CPU release mailbox written by cxd90014_smp_init. */
-    memory_region_init_ram(&s->iram, NULL, "a5k.iram", 16 * MiB, &error_fatal);
+    memory_region_init_ram(&s->iram, NULL, "a6k.iram", 16 * MiB, &error_fatal);
     memory_region_add_subregion(sysmem, 0xC0000000, &s->iram);
 
     for (unsigned i = 0; i < ncpu; i++) {
         Object *o = object_new(ms->cpu_type);
-        object_property_set_int(o, "reset-cbar", A5K_PERIPH_BASE,
+        object_property_set_int(o, "reset-cbar", A6K_PERIPH_BASE,
                                 &error_abort);
         /* cxd90014_cpu_resume runs two instructions after its MMU enable
-         * from an XN identity section (docs/RE_WARM_RESUME.md 3.3) */
+         * from an XN identity section (docs/reference/RE_WARM_RESUME.md 3.3) */
         object_property_set_bool(o, "sctlr-fetch-delay", true,
                                  &error_abort);
         /* The kernel enters in SVC mode from a non-secure-agnostic
          * bootloader; keep EL3 so secure CP15 accesses behave. */
         qdev_realize(DEVICE(o), NULL, &error_fatal);
         s->cpu[i] = ARM_CPU(o);
-        qemu_register_reset(a5k_cpu_reset, s->cpu[i]);
+        qemu_register_reset(a6k_cpu_reset, s->cpu[i]);
     }
 
     /* ARM7 sub-CPU SRAM (UDIF "arm7_sram", 16 KiB at PA 0).  The Sony
@@ -1864,7 +1787,7 @@ static void a5k_init(MachineState *ms)
      * (boss_lld_direct_get_dev_info_save_sram).  The 13 words below are the
      * real camera's copy, recovered from lld's .bss (VA 0x3f018b78) in the
      * WBI RAM snapshot via its page tables. */
-    memory_region_init_ram(&s->arm7_sram, NULL, "a5k.arm7-sram", 16 * KiB,
+    memory_region_init_ram(&s->arm7_sram, NULL, "a6k.arm7-sram", 16 * KiB,
                            &error_fatal);
     memory_region_add_subregion(sysmem, 0x00000000, &s->arm7_sram);
     {
@@ -1876,12 +1799,12 @@ static void a5k_init(MachineState *ms)
         for (int i = 0; i < 13; i++) {
             le[i] = cpu_to_le32(nand_devinfo[i]);
         }
-        rom_add_blob_fixed("a5k.nand-devinfo", le, sizeof(le), 0x3F00);
+        rom_add_blob_fixed("a6k.nand-devinfo", le, sizeof(le), 0x3F00);
 
         /* ARM7 NAND firmware already running (SRAM+0x3F40 firm_status = 2):
          * on a cold boot lld.ko never (re)starts the ARM7. */
         uint32_t two = cpu_to_le32(2);
-        rom_add_blob_fixed("a5k.arm7-status", &two, 4, 0x3F40);
+        rom_add_blob_fixed("a6k.arm7-status", &two, 4, 0x3F40);
 
         /* On-chip RAM left by the bootloader: initial bad-block list and
          * init_param + init_reg_param for nand.ko boot_mode=1/resume.
@@ -1892,7 +1815,7 @@ static void a5k_init(MachineState *ms)
             0x0010, 0, 1, 2, 3, 4, 5, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
             0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
         };
-        rom_add_blob_fixed("a5k.nand-ibt", ibt, sizeof(ibt), 0xC0000C00);
+        rom_add_blob_fixed("a6k.nand-ibt", ibt, sizeof(ibt), 0xC0000C00);
         static const uint32_t ip[5 + 50] = {
             0x00000000, 0xC0000C00, 0x00000007, 0x00000004, 0xC0001514,
             0x00000000, 0x000001f4, 0x000001f4, 0x000001f4, 0x000001f4,
@@ -1906,15 +1829,15 @@ static void a5k_init(MachineState *ms)
             0x001f013b, 0x0000ffff, 0x000000ec, 0x00000000, 0x00000010,
             0x00000001, 0x00000800, 0x0000002e, 0x00000005, 0x0000c350,
         };
-        rom_add_blob_fixed("a5k.nand-initparam", ip, sizeof(ip), 0xC0001500);
+        rom_add_blob_fixed("a6k.nand-initparam", ip, sizeof(ip), 0xC0001500);
     }
 
     /* Cortex-A5 MPCore private peripherals: same map as A9 MPCore. */
     mp = qdev_new(TYPE_A9MPCORE_PRIV);
     qdev_prop_set_uint32(mp, "num-cpu", ncpu);
-    qdev_prop_set_uint32(mp, "num-irq", A5K_NUM_IRQ);
+    qdev_prop_set_uint32(mp, "num-irq", A6K_NUM_IRQ);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(mp), &error_fatal);
-    sysbus_mmio_map(SYS_BUS_DEVICE(mp), 0, A5K_PERIPH_BASE);
+    sysbus_mmio_map(SYS_BUS_DEVICE(mp), 0, A6K_PERIPH_BASE);
     for (unsigned i = 0; i < ncpu; i++) {
         DeviceState *cd = DEVICE(s->cpu[i]);
         sysbus_connect_irq(SYS_BUS_DEVICE(mp), i,
@@ -1922,11 +1845,11 @@ static void a5k_init(MachineState *ms)
         sysbus_connect_irq(SYS_BUS_DEVICE(mp), i + ncpu,
                            qdev_get_gpio_in(cd, ARM_CPU_FIQ));
     }
-    for (int i = 0; i < A5K_NUM_IRQ - 32; i++) {
+    for (int i = 0; i < A6K_NUM_IRQ - 32; i++) {
         pic[i] = qdev_get_gpio_in(mp, i);
     }
 
-    sysbus_create_varargs("l2x0", A5K_L2C_BASE, NULL);
+    sysbus_create_varargs("l2x0", A6K_L2C_BASE, NULL);
 
     /* UART0..2 = -serial #1..#3.  UART2 can also be a TCP server
      * (shell-socket=HOST:PORT) for the init shell on ttyAM1. */
@@ -1934,25 +1857,25 @@ static void a5k_init(MachineState *ms)
         Chardev *chr = serial_hd(i);
         if (i == 2 && s->shell_socket) {
             if (chr) {
-                error_report("sony-a5000: shell-socket and a third -serial "
+                error_report("sony-a6000: shell-socket and a third -serial "
                              "both claim UART2");
                 exit(1);
             }
             g_autofree char *spec = g_strdup_printf(
                 "tcp:%s,server=on,wait=off", s->shell_socket);
-            chr = qemu_chr_new("a5k-shell", spec, NULL);
+            chr = qemu_chr_new("a6k-shell", spec, NULL);
             if (!chr) {
                 error_report("shell-socket=%s: cannot create the chardev",
                              s->shell_socket);
                 exit(1);
             }
         }
-        pl011_create(A5K_UART_BASE + i * 0x1000, pic[GIC_ID(150 + i)], chr);
+        pl011_create(A6K_UART_BASE + i * 0x1000, pic[GIC_ID(150 + i)], chr);
     }
 
     dev = qdev_new("cxd4115-timer");
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, A5K_TIMER_BASE);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, A6K_TIMER_BASE);
     for (int i = 0; i < 16; i++) {
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), i, pic[GIC_ID(153 + i)]);
     }
@@ -1997,12 +1920,12 @@ static void a5k_init(MachineState *ms)
     } else if (!strcmp(s->lens, "ekit")) {
         s->lens_ekit = true;
     } else {
-        error_report("sony-a5000: lens=%s: expected none or ekit", s->lens);
+        error_report("sony-a6000: lens=%s: expected none or ekit", s->lens);
         exit(1);
     }
     qdev_prop_set_bit(dev, "lens-attached", s->lens_ekit);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
-    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, A5K_GPIO_BASE);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, A6K_GPIO_BASE);
     for (int pn = 0; pn <= 16; pn++) {
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), pn,
                            pic[GIC_ID(pn < 16 ? 121 + pn : 144)]);
@@ -2011,28 +1934,28 @@ static void a5k_init(MachineState *ms)
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), 17 + pn, pic[GIC_ID(137 + pn)]);
     }
     s->gpio = dev;
-    s->submicro_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_submicro_tick, s);
+    s->submicro_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a6k_submicro_tick, s);
     /* power-off line p0.10 -> sub-micro (power cycle / power off) */
     if (!s->poff || !strcmp(s->poff, "auto")) {
-        s->poff_mode = A5K_POFF_AUTO;
+        s->poff_mode = A6K_POFF_AUTO;
     } else if (!strcmp(s->poff, "restart")) {
-        s->poff_mode = A5K_POFF_RESTART;
+        s->poff_mode = A6K_POFF_RESTART;
     } else if (!strcmp(s->poff, "off")) {
-        s->poff_mode = A5K_POFF_OFF;
+        s->poff_mode = A6K_POFF_OFF;
     } else {
-        error_report("sony-a5000: poff=%s: expected auto, restart or off",
+        error_report("sony-a6000: poff=%s: expected auto, restart or off",
                      s->poff);
         exit(1);
     }
     /* camera off = suspended VM; power-on through the wakeup path */
     qemu_register_wakeup_support();
-    s->wakeup.notify = a5k_power_wakeup;
+    s->wakeup.notify = a6k_power_wakeup;
     qemu_register_wakeup_notifier(&s->wakeup);
-    s->suspend.notify = a5k_power_suspended;
+    s->suspend.notify = a6k_power_suspended;
     qemu_register_suspend_notifier(&s->suspend);
-    s->poff_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a5k_poff_cycle, s);
-    qdev_connect_gpio_out_named(dev, "out", 0 * 32 + A5K_POFF_PIN,
-                                qemu_allocate_irq(a5k_poff_line, s, 0));
+    s->poff_t = timer_new_ns(QEMU_CLOCK_VIRTUAL, a6k_poff_cycle, s);
+    qdev_connect_gpio_out_named(dev, "out", 0 * 32 + A6K_POFF_PIN,
+                                qemu_allocate_irq(a6k_poff_line, s, 0));
 
     /* ADC units 0/1 (resistor-ladder keys, zoom lever), GIC 215/216 */
     for (int u = 0; u < 2; u++) {
@@ -2042,14 +1965,14 @@ static void a5k_init(MachineState *ms)
     }
     a6k_apply_mode_dial(s);
 
-    /* control-wheel TPU counter (docs/RE_WHEEL_ZOOM_DATE.md 1) */
+    /* control-wheel TPU counter (docs/reference/RE_WHEEL_ZOOM_DATE.md 1) */
     s->jog = qdev_new(TYPE_CXD90014_JOG);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s->jog), &error_fatal);
     sysbus_mmio_map_overlap(SYS_BUS_DEVICE(s->jog), 0, 0xF2404000, 0);
 
     /* camera buttons from the host keyboard (after GPIO and ADC exist) */
     qemu_input_handler_activate(
-        qemu_input_handler_register(NULL, &a5k_key_handler));
+        qemu_input_handler_register(NULL, &a6k_key_handler));
 
     /* SIO ch0..4, GIC 201..205; sub-micro link on ch0 (frames) / ch3 */
     dev = qdev_new("cxd90014-sio");
@@ -2060,17 +1983,17 @@ static void a5k_init(MachineState *ms)
                          "emulator/data/submicro_frames.bin";
         if (!g_file_get_contents(fn, (gchar **)&s->submicro_frames, &flen,
                                  NULL) || flen < 256) {
-            error_report("sony-a5000: submicro frames %s missing", fn);
+            error_report("sony-a6000: submicro frames %s missing", fn);
             exit(1);
         }
         if (sd) {
-            a5k_submicro_card_inserted(s->submicro_frames);
+            a6k_submicro_card_inserted(s->submicro_frames);
         }
         /* the power lever starts ON (snapshot byte 28 bit 0 = 1) */
         s->lever_on = true;
-        a5k_submicro_front_key(s, A5K_LEVER_BIT, true);
-        cxd90014_sio_attach(dev, 0, a5k_submicro_xfer, s);
-        cxd90014_sio_attach(dev, 3, a5k_submicro_xfer, s);
+        a6k_submicro_front_key(s, A6K_LEVER_BIT, true);
+        cxd90014_sio_attach(dev, 0, a6k_submicro_xfer, s);
+        cxd90014_sio_attach(dev, 3, a6k_submicro_xfer, s);
     }
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF2405000);
     for (int c = 0; c < 5; c++) {
@@ -2078,17 +2001,17 @@ static void a5k_init(MachineState *ms)
     }
 
     /* NFC dynamic tag: SIO2, SW P7.10, SEL P7.14, RFDET P0.8, data-ready
-     * IRQ GIC 125 (docs/RE_NFC.md section 4); nfc=ID = virtual phone */
+     * IRQ GIC 125 (docs/reference/RE_NFC.md section 4); nfc=ID = virtual phone */
     {
         Chardev *nfc_chr = NULL;
         if (s->nfc) {
             nfc_chr = qemu_chr_find(s->nfc);
             if (!nfc_chr) {
-                error_report("sony-a5000: nfc=%s: no such -chardev", s->nfc);
+                error_report("sony-a6000: nfc=%s: no such -chardev", s->nfc);
                 exit(1);
             }
         }
-        a5k_nfc_create(dev, s->gpio, pic[GIC_ID(125)], nfc_chr);
+        a6k_nfc_create(dev, s->gpio, pic[GIC_ID(125)], nfc_chr);
     }
 
     /* VPH display controller + SYSV frame timer: panel = console 0, HDMI
@@ -2113,7 +2036,7 @@ static void a5k_init(MachineState *ms)
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, pic[GIC_ID(83)]);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1, pic[GIC_ID(84)]);
 
-    /* ---- camera front end (docs/RE_SENSOR_ISP.md §4.a) ---- */
+    /* ---- camera front end (docs/reference/RE_SENSOR_ISP.md §4.a) ---- */
     {
         /* P2S sensor register writer, IRQ 38 */
         dev = qdev_new("cxd90014-p2s");
@@ -2130,7 +2053,7 @@ static void a5k_init(MachineState *ms)
          * {base, channels}; the CamCore unit groups follow their unit's
          * frame end, the others complete after a delay.  irq1/irq3 = GIC
          * line of channel 1 / 3 (0 = none): ISRs 438CB804.. watch these
-         * channels' status nibbles (RC objects, docs/RE_SENSOR_ISP.md §7.1) */
+         * channels' status nibbles (RC objects, docs/reference/RE_SENSOR_ISP.md §7.1) */
         static const struct { hwaddr base; int nch, irq1, irq3; } aifg[] = {
             { 0xF3002000, 6 }, { 0xF3102000, 6 }, { 0xF3131000, 1 },
             { 0xF3020000, 4 }, { 0xF3041000, 2 },
@@ -2150,7 +2073,7 @@ static void a5k_init(MachineState *ms)
             if (aifg[i].base == 0xF3881000) {
                 /* RC output ch26 = nibble 3 writes the ch51 live-view
                  * buffer; debug lv-source frames go there only
-                 * (docs/RE_LIVEVIEW_IMAGE.md §2.1, §4) */
+                 * (docs/reference/RE_LIVEVIEW_IMAGE.md §2.1, §4) */
                 qdev_prop_set_int32(aif[i], "lv-ch", 3);
             }
             sysbus_realize_and_unref(SYS_BUS_DEVICE(aif[i]), &error_fatal);
@@ -2167,7 +2090,7 @@ static void a5k_init(MachineState *ms)
 
         /* IDT develop/FOPD control 0xF3020400 (IRQ 72), its frame ends on
          * the completion of AIF group 0xF3020000 = aif[3]; OPD units
-         * 0xF3030000 (IRQs 67-70).  docs/RE_RAW_DEVELOP.md §7.2-§7.3 */
+         * 0xF3030000 (IRQs 67-70).  docs/reference/RE_RAW_DEVELOP.md §7.2-§7.3 */
         dev = qdev_new("cxd90014-idt");
         sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3020400);
@@ -2189,7 +2112,7 @@ static void a5k_init(MachineState *ms)
         for (int i = 0; i < ARRAY_SIZE(pig); i++) {
             dev = qdev_new("cxd90014-campig");
             qdev_prop_set_uint64(dev, "base", pig[i].base);
-            /* Sgc1 SG + Iif, docs/RE_CAPTURE_COMPLETION.md §5 */
+            /* Sgc1 SG + Iif, docs/reference/RE_CAPTURE_COMPLETION.md §5 */
             qdev_prop_set_bit(dev, "input-unit", pig[i].irq == 35);
             sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
             sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, pig[i].base);
@@ -2201,7 +2124,7 @@ static void a5k_init(MachineState *ms)
         }
     }
 
-    /* ---- SA DSP cores, "null SA" (docs/RE_SA_DSP.md §5) ----
+    /* ---- SA DSP cores, "null SA" (docs/reference/RE_SA_DSP.md §5) ----
      * Four cores (av-cam accessors 43923E74..43924660), each with source
      * A/B/C interrupts.  A GO completes on source A with factor 0x01; B and
      * C are wired but never raised.  ID strings from the task-44 compare
@@ -2233,7 +2156,7 @@ static void a5k_init(MachineState *ms)
     /* Debug view of guest frame buffers in a QEMU window (no MMIO; the
      * firmware cannot see it).  -M ...,fb=addr,w,h,stride,fmt[;...] or at
      * run time: qom-set /machine/fbview fb "..." */
-    dev = qdev_new("a5k-fbview");
+    dev = qdev_new("a6k-fbview");
     object_property_add_child(OBJECT(ms), "fbview", OBJECT(dev));
     object_property_set_str(OBJECT(dev), "fb", s->fb ? s->fb :
                             "0x8F758000,640,480,1280,rgb565", &error_fatal);
@@ -2250,11 +2173,11 @@ static void a5k_init(MachineState *ms)
         }
         if (u == 0 && s->lens_ekit) {
             /*
-             * E-mount lens HLE (docs/RE_LENS_EMOUNT.md 9.7): UART1 bytes
+             * E-mount lens HLE (docs/reference/RE_LENS_EMOUNT.md 9.7): UART1 bytes
              * through mdma ch0/ch1, handshake P5.4 -> P0.5, P2.11 -> P2.10
              */
             DeviceState *mdma = dev;
-            s->lens_dev = qdev_new("a5k-lens");
+            s->lens_dev = qdev_new("a6k-lens");
             object_property_set_link(OBJECT(s->lens_dev), "mdma", OBJECT(mdma),
                                      &error_fatal);
             sysbus_realize_and_unref(SYS_BUS_DEVICE(s->lens_dev), &error_fatal);
@@ -2269,7 +2192,7 @@ static void a5k_init(MachineState *ms)
         }
     }
 
-    /* DDR controller (IRAM sleep code, docs/RE_REBOOT.md 4.3) */
+    /* DDR controller (IRAM sleep code, docs/reference/RE_REBOOT.md 4.3) */
     sysbus_create_simple("cxd90014-ddrc", 0xF0104000, NULL);
 
     /* DMP SMAPH-S30 GPU (grm_gles.ko + libObj rm_*), GIC 76 */
@@ -2296,15 +2219,15 @@ static void a5k_init(MachineState *ms)
     /* Everything not yet modelled: a logging register file (reads back
      * the last value written, -d unimp shows every access), underneath the
      * real models at priority -1000. */
-    a5k_regfile("io-f0", 0xF0000000, 0x08000000);
-    a5k_regfile("io-f8", 0xF8000000, 0x00100000);
-    a5k_regfile("io-fa", 0xFA000000, 0x04000000);
-    a5k_regfile("io-38", 0x38000000, 0x00100000);
-    create_unimplemented_device("a5k.nandc", 0x10000000, 0x10000);
+    a6k_regfile("io-f0", 0xF0000000, 0x08000000);
+    a6k_regfile("io-f8", 0xF8000000, 0x00100000);
+    a6k_regfile("io-fa", 0xFA000000, 0x04000000);
+    a6k_regfile("io-38", 0x38000000, 0x00100000);
+    create_unimplemented_device("a6k.nandc", 0x10000000, 0x10000);
 
-    /* USB device side (docs/RE_USB_DEVICE_CONTROLLER.md): F_USB20HDC UDC
+    /* USB device side (docs/reference/RE_USB_DEVICE_CONTROLLER.md): F_USB20HDC UDC
      * 0xF0210000 (GIC 227), its HDMAC 0xF0204000 (GIC 228/229, error only)
-     * and the VBUS/ID glue 0xF2920000 (+0x10, GIC 232/233).  The A5KU
+     * and the VBUS/ID glue 0xF2920000 (+0x10, GIC 232/233).  The A6KU
      * virtual cable is the device's "chardev" (usb-socket=HOST:PORT, or
      * -global cxd90014-usbhdc.chardev=ID); no client = no cable. */
     dev = qdev_new("cxd90014-usbhdc");
@@ -2312,7 +2235,7 @@ static void a5k_init(MachineState *ms)
     if (s->usb_socket) {
         g_autofree char *spec = g_strdup_printf(
             "tcp:%s,server=on,wait=off", s->usb_socket);
-        Chardev *chr = qemu_chr_new("a5k-usb", spec, NULL);
+        Chardev *chr = qemu_chr_new("a6k-usb", spec, NULL);
         if (!chr) {
             error_report("usb-socket=%s: cannot create the chardev",
                          s->usb_socket);
@@ -2333,7 +2256,7 @@ static void a5k_init(MachineState *ms)
     /* HDMI TX core 0xF2A24000 (hdmi.ko, polled, no IRQ) and CEC
      * 0xF3C10000 (cec.ko); -M hdmi=on plugs the cable (default off = no
      * cable, stock).  TMDS active drives the VPH line output, shown on
-     * QEMU console 1 (docs/RE_HDMI.md section 4.2). */
+     * QEMU console 1 (docs/reference/RE_HDMI.md section 4.2). */
     dev = qdev_new("cxd90014-hdmi");
     object_property_add_child(OBJECT(ms), "hdmi-tx", OBJECT(dev));
     if (s->hdmi_edid) {
@@ -2351,7 +2274,7 @@ static void a5k_init(MachineState *ms)
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, 0xF3C10000);
     s->cec = dev;
 
-    a5k_wifi_init(s, pic);
+    a6k_wifi_init(s, pic);
 
     /* clock generators (PLL lock / self-clearing update request) */
     static const hwaddr clkgen[] = {
@@ -2386,38 +2309,38 @@ static void a5k_init(MachineState *ms)
     if (s->provision) {
         prov_len = get_image_size(s->provision);
         if (prov_len <= 0 || prov_len > 0x3F000000) {
-            error_report("sony-a5000: bad provision image %s", s->provision);
+            error_report("sony-a6000: bad provision image %s", s->provision);
             exit(1);
         }
-        /* layout: +0 "A5KP" magic, +4 image length, +0x1000 image */
-        memory_region_init_rom(&s->prov_rom, NULL, "a5k.provision",
+        /* layout: +0 "A6KP" magic, +4 image length, +0x1000 image */
+        memory_region_init_rom(&s->prov_rom, NULL, "a6k.provision",
                                ROUND_UP(prov_len, 4096) + 0x1000,
                                &error_fatal);
         memory_region_add_subregion(sysmem, 0x40000000, &s->prov_rom);
         uint8_t *rp = memory_region_get_ram_ptr(&s->prov_rom);
-        memcpy(rp, "A5KP", 4);
+        memcpy(rp, "A6KP", 4);
         stl_le_p(rp + 4, prov_len);
         if (load_image_size(s->provision, rp + 0x1000,
                             prov_len) != prov_len) {
-            error_report("sony-a5000: cannot read %s", s->provision);
+            error_report("sony-a6000: cannot read %s", s->provision);
             exit(1);
         }
     }
 
     /* preload=FILE@ADDR[;FILE@ADDR...]: raw images placed in RAM before
-     * the kernel starts (bootloader duties, see docs/BOOT.md) */
+     * the kernel starts (bootloader duties, see docs/reference/BOOT.md) */
     if (s->preload) {
         g_auto(GStrv) items = g_strsplit(s->preload, ";", -1);
         for (int i = 0; items[i]; i++) {
             char *at = strrchr(items[i], '@');
             uint64_t addr;
             if (!at || qemu_strtou64(at + 1, NULL, 0, &addr) < 0) {
-                error_report("sony-a5000: bad preload item '%s'", items[i]);
+                error_report("sony-a6000: bad preload item '%s'", items[i]);
                 exit(1);
             }
             *at = 0;
             if (load_image_targphys(items[i], addr, 64 * MiB) < 0) {
-                error_report("sony-a5000: cannot preload %s", items[i]);
+                error_report("sony-a6000: cannot preload %s", items[i]);
                 exit(1);
             }
         }
@@ -2425,7 +2348,7 @@ static void a5k_init(MachineState *ms)
 
     /*
      * Hand-off word 0x800210E4 (read by udate_init_clock through Backup
-     * 0x00FA00A5; docs/RE_RTC.md sections 2, 5, 7.3).  The factory page in
+     * 0x00FA00A5; docs/reference/RE_RTC.md sections 2, 5, 7.3).  The factory page in
      * data/handoff_80021000.bin has 1, which makes udate mark the clock
      * UNSET and libObj start the first-boot area/date/time setup on every
      * boot.  A normal power-on with a retained clock presents 0
@@ -2434,11 +2357,11 @@ static void a5k_init(MachineState *ms)
      * ROM blob is patched, so every reset presents the same value.
      */
     {
-        uint32_t *w = rom_ptr(A5K_HANDOFF_RTC_LOST, 4);
+        uint32_t *w = rom_ptr(A6K_HANDOFF_RTC_LOST, 4);
         if (w) {
             *w = cpu_to_le32(s->rtc_lost ? 1 : 0);
         } else if (s->rtc_lost) {
-            error_report("sony-a5000: rtc-lost=on needs the hand-off page "
+            error_report("sony-a6000: rtc-lost=on needs the hand-off page "
                          "(preload=...@0x80021000)");
             exit(1);
         }
@@ -2446,20 +2369,20 @@ static void a5k_init(MachineState *ms)
 
     /* ---- load firmware images ----
      * Kernel, initrd and the kemco command line are (re)written on every
-     * reset by a5k_boot_reset() (none of them lies in a ROM blob):
-     *  - stage 2: the loader descriptor "A5KB" at PA 0x80027000 is valid ->
+     * reset by a6k_boot_reset() (none of them lies in a ROM blob):
+     *  - stage 2: the loader descriptor "A6KB" at PA 0x80027000 is valid ->
      *    the kernel/initrd that stage 1 read from the emulated NAND are
      *    moved into place (what the Sony bootloader does);
      *  - otherwise (power-on, reboot): boot -kernel with the stage-1 loader
      *    initramfs (-M ...,loader=) or the -initrd given. */
     if (!ms->kernel_filename) {
-        error_report("sony-a5000: -kernel vmlinux.bin is required");
+        error_report("sony-a6000: -kernel vmlinux.bin is required");
         exit(1);
     }
     gsize len;
     if (!g_file_get_contents(ms->kernel_filename, (gchar **)&s->kernel,
                              &len, NULL)) {
-        error_report("sony-a5000: cannot load kernel %s", ms->kernel_filename);
+        error_report("sony-a6000: cannot load kernel %s", ms->kernel_filename);
         exit(1);
     }
     s->kernel_len = len;
@@ -2467,95 +2390,79 @@ static void a5k_init(MachineState *ms)
     if (ird) {
         if (!g_file_get_contents(ird, (gchar **)&s->initrd, &len, NULL) ||
             len > 8 * MiB) {
-            error_report("sony-a5000: cannot load initrd %s", ird);
+            error_report("sony-a6000: cannot load initrd %s", ird);
             exit(1);
         }
         s->initrd_len = len;
     }
     g_autofree char *dbg = NULL;
-    const char *cmd = a5k_model->cmdline;
-    const char *con = a5k_console_token(s);
+    const char *cmd = a6k_default_cmdline;
+    const char *con = a6k_console_token(s);
     if (ms->kernel_cmdline && *ms->kernel_cmdline) {
         cmd = ms->kernel_cmdline;
     } else if (con) {
         /* g_string_replace() needs GLib 2.68; QEMU caps the API at 2.66 */
         const char *tok = "console=ttynull";
-        const char *at = strstr(a5k_model->cmdline, tok);
+        const char *at = strstr(a6k_default_cmdline, tok);
         if (at) {
             dbg = g_strdup_printf("%.*s%s%s",
-                                  (int)(at - a5k_model->cmdline),
-                                  a5k_model->cmdline, con, at + strlen(tok));
+                                  (int)(at - a6k_default_cmdline),
+                                  a6k_default_cmdline, con, at + strlen(tok));
         } else {
-            dbg = g_strdup(a5k_model->cmdline);
+            dbg = g_strdup(a6k_default_cmdline);
         }
         cmd = dbg;
     }
     if (prov_len) {
-        s->cmdline = g_strdup_printf("%s a5k.provlen=0x%" PRIx64, cmd, prov_len);
+        s->cmdline = g_strdup_printf("%s a6k.provlen=0x%" PRIx64, cmd, prov_len);
     } else {
         s->cmdline = g_strdup(cmd);
     }
-    /*
-     * shoot-mode=<name>: there is no mode-dial hardware (docs/RE_MODE_DIAL.md);
-     * the shooting mode is a soft dial persisted in Backup (exposure-mode
-     * 0x1070009, dial position 0x10708BF), read live by getRecViewFromDial and
-     * applied by the on-screen mode-dial selector via
-     * requestModelExecute("model/CAMERA", 0x10, {0x12A}).  The board cannot
-     * write Backup, so it passes the values the selector would have written to
-     * the stage-1 loader, which sets them in the RAM Backup copy
-     * (a5kcopy -bkset) exactly like the persisted dial.  Default unset = stock
-     * (token absent, cmdline byte-identical). */
-    if (s->shoot_mode_set) {
-        char *old = s->cmdline;
-        s->cmdline = g_strdup_printf("%s a5kmodeset=%02x%02x", old,
-                                     s->shoot_mode_enum, s->shoot_mode_dial);
-        g_free(old);
-    }
-    a5k_write_atags(s->cmdline, s->initrd_len);
-    s->init_done.notify = a5k_init_done;
+    a6k_write_atags(s->cmdline, s->initrd_len);
+    s->init_done.notify = a6k_init_done;
     qemu_add_machine_init_done_notifier(&s->init_done);
-    a5k_write_stub();
-    a5k_write_smp_stub();
+    a6k_write_stub();
+    a6k_write_smp_stub();
 }
 
-static bool a5k_get_warmres(Object *o, Error **errp)
+static bool a6k_get_warmres(Object *o, Error **errp)
 {
-    return A5K_MACHINE(o)->warm_resume;
+    return A6K_MACHINE(o)->warm_resume;
 }
 
-static void a5k_set_warmres(Object *o, bool v, Error **errp)
+static void a6k_set_warmres(Object *o, bool v, Error **errp)
 {
-    A5K_MACHINE(o)->warm_resume = v;
+    A6K_MACHINE(o)->warm_resume = v;
 }
 
-static bool a5k_get_wifi(Object *o, Error **errp)
+static bool a6k_get_wifi(Object *o, Error **errp)
 {
-    return !A5K_MACHINE(o)->wifi_off;
+    return !A6K_MACHINE(o)->wifi_off;
 }
 
-static void a5k_set_wifi(Object *o, bool v, Error **errp)
+static void a6k_set_wifi(Object *o, bool v, Error **errp)
 {
-    A5K_MACHINE(o)->wifi_off = !v;
+    A6K_MACHINE(o)->wifi_off = !v;
 }
 
-static bool a5k_get_rtclost(Object *o, Error **errp)
+static bool a6k_get_rtclost(Object *o, Error **errp)
 {
-    return A5K_MACHINE(o)->rtc_lost;
+    return A6K_MACHINE(o)->rtc_lost;
 }
 
-static void a5k_set_rtclost(Object *o, bool v, Error **errp)
+static void a6k_set_rtclost(Object *o, bool v, Error **errp)
 {
-    A5K_MACHINE(o)->rtc_lost = v;
+    A6K_MACHINE(o)->rtc_lost = v;
 }
 
 static char *a6k_get_mode_dial(Object *o, Error **errp)
 {
-    return g_strdup_printf("%d", A5K_MACHINE(o)->mode_dial);
+    return g_strdup_printf("%d", A6K_MACHINE(o)->mode_dial);
 }
 
 static void a6k_set_mode_dial(Object *o, const char *v, Error **errp)
 {
-    A5KMachineState *s = A5K_MACHINE(o);
+    A6KMachineState *s = A6K_MACHINE(o);
     int n = atoi(v);
 
     if (a6k_mode_dial_index(n) < 0) {
@@ -2566,86 +2473,86 @@ static void a6k_set_mode_dial(Object *o, const char *v, Error **errp)
     a6k_apply_mode_dial(s);     /* no-op before the ADC exists */
 }
 
-static char *a5k_get_nfc(Object *o, Error **errp)
+static char *a6k_get_nfc(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->nfc);
+    return g_strdup(A6K_MACHINE(o)->nfc);
 }
 
-static void a5k_set_nfc(Object *o, const char *v, Error **errp)
+static void a6k_set_nfc(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->nfc);
-    A5K_MACHINE(o)->nfc = g_strdup(v);
+    g_free(A6K_MACHINE(o)->nfc);
+    A6K_MACHINE(o)->nfc = g_strdup(v);
 }
 
-static char *a5k_get_usbsock(Object *o, Error **errp)
+static char *a6k_get_usbsock(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->usb_socket);
+    return g_strdup(A6K_MACHINE(o)->usb_socket);
 }
 
-static void a5k_set_usbsock(Object *o, const char *v, Error **errp)
+static void a6k_set_usbsock(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->usb_socket);
-    A5K_MACHINE(o)->usb_socket = g_strdup(v);
+    g_free(A6K_MACHINE(o)->usb_socket);
+    A6K_MACHINE(o)->usb_socket = g_strdup(v);
 }
 
-static char *a5k_get_lens(Object *o, Error **errp)
+static char *a6k_get_lens(Object *o, Error **errp)
 {
-    A5KMachineState *s = A5K_MACHINE(o);
+    A6KMachineState *s = A6K_MACHINE(o);
     return g_strdup(s->lens ? s->lens : "none");
 }
 
-static void a5k_set_lens(Object *o, const char *v, Error **errp)
+static void a6k_set_lens(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->lens);
-    A5K_MACHINE(o)->lens = g_strdup(v);
+    g_free(A6K_MACHINE(o)->lens);
+    A6K_MACHINE(o)->lens = g_strdup(v);
 }
 
-static bool a5k_get_dbgcon(Object *o, Error **errp)
+static bool a6k_get_dbgcon(Object *o, Error **errp)
 {
-    return A5K_MACHINE(o)->debug_console;
+    return A6K_MACHINE(o)->debug_console;
 }
 
-static void a5k_set_dbgcon(Object *o, bool v, Error **errp)
+static void a6k_set_dbgcon(Object *o, bool v, Error **errp)
 {
-    A5K_MACHINE(o)->debug_console = v;
+    A6K_MACHINE(o)->debug_console = v;
 }
 
-static char *a5k_get_console(Object *o, Error **errp)
+static char *a6k_get_console(Object *o, Error **errp)
 {
-    A5KMachineState *s = A5K_MACHINE(o);
+    A6KMachineState *s = A6K_MACHINE(o);
     return g_strdup(s->console ? s->console : "ttynull");
 }
 
-static void a5k_set_console(Object *o, const char *v, Error **errp)
+static void a6k_set_console(Object *o, const char *v, Error **errp)
 {
     if (strcmp(v, "ttynull") && strcmp(v, "ttyAM1") && strcmp(v, "ttyAM0")) {
         error_setg(errp, "console=%s: expected ttynull, ttyAM1 or ttyAM0", v);
         return;
     }
-    g_free(A5K_MACHINE(o)->console);
-    A5K_MACHINE(o)->console = g_strdup(v);
+    g_free(A6K_MACHINE(o)->console);
+    A6K_MACHINE(o)->console = g_strdup(v);
 }
 
-static char *a5k_get_shellsock(Object *o, Error **errp)
+static char *a6k_get_shellsock(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->shell_socket);
+    return g_strdup(A6K_MACHINE(o)->shell_socket);
 }
 
-static void a5k_set_shellsock(Object *o, const char *v, Error **errp)
+static void a6k_set_shellsock(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->shell_socket);
-    A5K_MACHINE(o)->shell_socket = g_strdup(v);
+    g_free(A6K_MACHINE(o)->shell_socket);
+    A6K_MACHINE(o)->shell_socket = g_strdup(v);
 }
 
-static char *a5k_get_smcf(Object *o, Error **errp)
+static char *a6k_get_smcf(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->submicro_file);
+    return g_strdup(A6K_MACHINE(o)->submicro_file);
 }
 
-static void a5k_set_smcf(Object *o, const char *v, Error **errp)
+static void a6k_set_smcf(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->submicro_file);
-    A5K_MACHINE(o)->submicro_file = g_strdup(v);
+    g_free(A6K_MACHINE(o)->submicro_file);
+    A6K_MACHINE(o)->submicro_file = g_strdup(v);
 }
 
 /*
@@ -2655,14 +2562,14 @@ static void a5k_set_smcf(Object *o, const char *v, Error **errp)
  * set by default.
  */
 /* "hdmi" can be changed at run time (qom-set /machine hdmi on): hot-plug */
-static bool a5k_get_hdmi(Object *o, Error **errp)
+static bool a6k_get_hdmi(Object *o, Error **errp)
 {
-    return A5K_MACHINE(o)->hdmi;
+    return A6K_MACHINE(o)->hdmi;
 }
 
-static void a5k_set_hdmi(Object *o, bool v, Error **errp)
+static void a6k_set_hdmi(Object *o, bool v, Error **errp)
 {
-    A5KMachineState *s = A5K_MACHINE(o);
+    A6KMachineState *s = A6K_MACHINE(o);
     s->hdmi = v;
     if (s->hdmi_tx) {
         object_property_set_bool(OBJECT(s->hdmi_tx), "hpd", v, errp);
@@ -2670,25 +2577,25 @@ static void a5k_set_hdmi(Object *o, bool v, Error **errp)
     }
 }
 
-static char *a5k_get_hdmiedid(Object *o, Error **errp)
+static char *a6k_get_hdmiedid(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->hdmi_edid);
+    return g_strdup(A6K_MACHINE(o)->hdmi_edid);
 }
 
-static void a5k_set_hdmiedid(Object *o, const char *v, Error **errp)
+static void a6k_set_hdmiedid(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->hdmi_edid);
-    A5K_MACHINE(o)->hdmi_edid = g_strdup(v);
+    g_free(A6K_MACHINE(o)->hdmi_edid);
+    A6K_MACHINE(o)->hdmi_edid = g_strdup(v);
 }
 
-static char *a5k_get_smpoke(Object *o, Error **errp)
+static char *a6k_get_smpoke(Object *o, Error **errp)
 {
     return g_strdup("");
 }
 
-static void a5k_set_smpoke(Object *o, const char *v, Error **errp)
+static void a6k_set_smpoke(Object *o, const char *v, Error **errp)
 {
-    A5KMachineState *s = A5K_MACHINE(o);
+    A6KMachineState *s = A6K_MACHINE(o);
     char *e;
     unsigned long idx = strtoul(v, &e, 0);
     if (*e != '=' || idx >= 126 || !s->submicro_frames) {
@@ -2696,19 +2603,19 @@ static void a5k_set_smpoke(Object *o, const char *v, Error **errp)
         return;
     }
     s->submicro_frames[idx] = strtoul(e + 1, NULL, 0);
-    a5k_submicro_crc(s->submicro_frames);
+    a6k_submicro_crc(s->submicro_frames);
 }
 
 /* Debug only: "gpio-poke" = "PORT.PIN=LEVEL" drives an external GPIO input
  * (qom-set /machine gpio-poke 0.1=1); used to identify unmodelled inputs. */
-static char *a5k_get_gpoke(Object *o, Error **errp)
+static char *a6k_get_gpoke(Object *o, Error **errp)
 {
     return g_strdup("");
 }
 
-static void a5k_set_gpoke(Object *o, const char *v, Error **errp)
+static void a6k_set_gpoke(Object *o, const char *v, Error **errp)
 {
-    A5KMachineState *s = A5K_MACHINE(o);
+    A6KMachineState *s = A6K_MACHINE(o);
     unsigned port, pin, level;
     if (sscanf(v, "%u.%u=%u", &port, &pin, &level) != 3 || port >= 18 ||
         pin >= 32 || !s->gpio) {
@@ -2718,286 +2625,211 @@ static void a5k_set_gpoke(Object *o, const char *v, Error **errp)
     qemu_set_irq(qdev_get_gpio_in(s->gpio, port * 32 + pin), level);
 }
 
-static bool a5k_get_smc(Object *o, Error **errp)
+static bool a6k_get_smc(Object *o, Error **errp)
 {
-    return A5K_MACHINE(o)->submicro;
+    return A6K_MACHINE(o)->submicro;
 }
 
-static void a5k_set_smc(Object *o, bool v, Error **errp)
+static void a6k_set_smc(Object *o, bool v, Error **errp)
 {
-    A5K_MACHINE(o)->submicro = v;
+    A6K_MACHINE(o)->submicro = v;
 }
 
-static char *a5k_get_fb(Object *o, Error **errp)
+static char *a6k_get_fb(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->fb);
+    return g_strdup(A6K_MACHINE(o)->fb);
 }
 
-static void a5k_set_fb(Object *o, const char *v, Error **errp)
+static void a6k_set_fb(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->fb);
-    A5K_MACHINE(o)->fb = g_strdup(v);
+    g_free(A6K_MACHINE(o)->fb);
+    A6K_MACHINE(o)->fb = g_strdup(v);
 }
 
-static char *a5k_get_loader(Object *o, Error **errp)
+static char *a6k_get_loader(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->loader);
+    return g_strdup(A6K_MACHINE(o)->loader);
 }
 
-static void a5k_set_loader(Object *o, const char *v, Error **errp)
+static void a6k_set_loader(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->loader);
-    A5K_MACHINE(o)->loader = g_strdup(v);
+    g_free(A6K_MACHINE(o)->loader);
+    A6K_MACHINE(o)->loader = g_strdup(v);
 }
 
-static char *a5k_get_poff(Object *o, Error **errp)
+static char *a6k_get_poff(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->poff);
+    return g_strdup(A6K_MACHINE(o)->poff);
 }
 
-static void a5k_set_poff(Object *o, const char *v, Error **errp)
+static void a6k_set_poff(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->poff);
-    A5K_MACHINE(o)->poff = g_strdup(v);
+    g_free(A6K_MACHINE(o)->poff);
+    A6K_MACHINE(o)->poff = g_strdup(v);
 }
 
-/*
- * shoot-mode: the a5000 has no physical mode dial; the shooting mode is a soft
- * dial.  Each name maps to the pair the on-screen mode-dial selector
- * (viewUnified8 ViewModeDialGuide / PAS_ModeDial) persists: the exposure-mode
- * enum (Backup 0x1070009, = model/CAMERA param 0x12A) and the dial position
- * (Backup 0x10708BF, mapped to the RecView by getRecViewFromDial).  Values are
- * from the selector's own writes (viewUnified8 sub_2B8C8 cases 0x1C..0x20);
- * p (enum 1) and m (enum 4) are verified on the OSD, a/s inferred from the
- * P-A-S-M case order, scn (enum 6) is the camera's default.  docs/RE_MODE_DIAL.md.
- */
-static const struct {
-    const char *name;
-    uint8_t exp_enum;   /* Backup 0x1070009 */
-    uint8_t dial_pos;   /* Backup 0x10708BF */
-} a5k_shoot_modes[] = {
-    { "p",   1, 2 },    /* Program Auto      (verified: OSD "P")  */
-    { "a",   2, 3 },    /* Aperture Priority (inferred)           */
-    { "s",   3, 4 },    /* Shutter Priority  (inferred)           */
-    { "m",   4, 5 },    /* Manual Exposure   (verified: OSD "M")  */
-    { "scn", 6, 1 },    /* Scene Selection   (verified: default)  */
-};
-
-static char *a5k_get_shootmode(Object *o, Error **errp)
+static char *a6k_get_preload(Object *o, Error **errp)
 {
-    A5KMachineState *s = A5K_MACHINE(o);
-    return g_strdup(s->shoot_mode ? s->shoot_mode : "");
+    return g_strdup(A6K_MACHINE(o)->preload);
 }
 
-static void a5k_set_shootmode(Object *o, const char *v, Error **errp)
+static void a6k_set_preload(Object *o, const char *v, Error **errp)
 {
-    A5KMachineState *s = A5K_MACHINE(o);
-
-    for (size_t i = 0; i < ARRAY_SIZE(a5k_shoot_modes); i++) {
-        if (!strcasecmp(v, a5k_shoot_modes[i].name)) {
-            g_free(s->shoot_mode);
-            s->shoot_mode = g_strdup(a5k_shoot_modes[i].name);
-            s->shoot_mode_enum = a5k_shoot_modes[i].exp_enum;
-            s->shoot_mode_dial = a5k_shoot_modes[i].dial_pos;
-            s->shoot_mode_set = true;
-            return;
-        }
-    }
-    error_setg(errp, "shoot-mode=%s: expected p, a, s, m or scn", v);
+    g_free(A6K_MACHINE(o)->preload);
+    A6K_MACHINE(o)->preload = g_strdup(v);
 }
 
-static char *a5k_get_preload(Object *o, Error **errp)
+static char *a6k_get_nand(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->preload);
+    return g_strdup(A6K_MACHINE(o)->nand_file);
 }
 
-static void a5k_set_preload(Object *o, const char *v, Error **errp)
+static void a6k_set_nand(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->preload);
-    A5K_MACHINE(o)->preload = g_strdup(v);
+    g_free(A6K_MACHINE(o)->nand_file);
+    A6K_MACHINE(o)->nand_file = g_strdup(v);
 }
 
-static char *a5k_get_nand(Object *o, Error **errp)
+static char *a6k_get_prov(Object *o, Error **errp)
 {
-    return g_strdup(A5K_MACHINE(o)->nand_file);
+    return g_strdup(A6K_MACHINE(o)->provision);
 }
 
-static void a5k_set_nand(Object *o, const char *v, Error **errp)
+static void a6k_set_prov(Object *o, const char *v, Error **errp)
 {
-    g_free(A5K_MACHINE(o)->nand_file);
-    A5K_MACHINE(o)->nand_file = g_strdup(v);
+    g_free(A6K_MACHINE(o)->provision);
+    A6K_MACHINE(o)->provision = g_strdup(v);
 }
 
-static char *a5k_get_prov(Object *o, Error **errp)
-{
-    return g_strdup(A5K_MACHINE(o)->provision);
-}
-
-static void a5k_set_prov(Object *o, const char *v, Error **errp)
-{
-    g_free(A5K_MACHINE(o)->provision);
-    A5K_MACHINE(o)->provision = g_strdup(v);
-}
-
-static void a5k_class_init(ObjectClass *oc, const void *data)
+static void a6k_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 
-    object_class_property_add_bool(oc, "submicro", a5k_get_smc, a5k_set_smc);
+    object_class_property_add_bool(oc, "submicro", a6k_get_smc, a6k_set_smc);
     object_class_property_set_description(oc, "submicro",
         "Sub-micro (power micro) HLE replaying the real camera's frames");
-    object_class_property_add_str(oc, "submicro-frames", a5k_get_smcf,
-                                  a5k_set_smcf);
-    object_class_property_add_str(oc, "gpio-poke", a5k_get_gpoke,
-                                  a5k_set_gpoke);
+    object_class_property_add_str(oc, "submicro-frames", a6k_get_smcf,
+                                  a6k_set_smcf);
+    object_class_property_add_str(oc, "gpio-poke", a6k_get_gpoke,
+                                  a6k_set_gpoke);
     object_class_property_set_description(oc, "gpio-poke",
         "Debug: PORT.PIN=LEVEL drives an external GPIO input");
-    object_class_property_add_str(oc, "submicro-poke", a5k_get_smpoke,
-                                  a5k_set_smpoke);
+    object_class_property_add_str(oc, "submicro-poke", a6k_get_smpoke,
+                                  a6k_set_smpoke);
     object_class_property_set_description(oc, "submicro-poke",
         "Debug: IDX=VAL patches a byte of the replayed slot-A frame");
-    object_class_property_add_str(oc, "fb", a5k_get_fb, a5k_set_fb);
+    object_class_property_add_str(oc, "fb", a6k_get_fb, a6k_set_fb);
     object_class_property_set_description(oc, "fb",
         "Debug frame-buffer view: addr,w,h,stride,fmt[;...]");
-    object_class_property_add_str(oc, "loader", a5k_get_loader,
-                                  a5k_set_loader);
+    object_class_property_add_str(oc, "loader", a6k_get_loader,
+                                  a6k_set_loader);
     object_class_property_set_description(oc, "loader",
-        "Stage-1 loader initramfs (bootloader NAND duties), see docs/BOOT.md");
-    object_class_property_add_str(oc, "poff", a5k_get_poff, a5k_set_poff);
+        "Stage-1 loader initramfs (bootloader NAND duties), see docs/reference/BOOT.md");
+    object_class_property_add_str(oc, "poff", a6k_get_poff, a6k_set_poff);
     object_class_property_set_description(oc, "poff",
         "auto|restart|off: what the sub-micro does when the power-off line "
         "p0.10 drops (default auto = follow the off data the CPU sent: "
         "power cycle or stay off)");
-    object_class_property_add_str(oc, "preload", a5k_get_preload,
-                                  a5k_set_preload);
+    object_class_property_add_str(oc, "preload", a6k_get_preload,
+                                  a6k_set_preload);
     object_class_property_set_description(oc, "preload",
         "FILE@ADDR[;FILE@ADDR...] raw images placed in RAM at boot");
-    object_class_property_add_str(oc, "shoot-mode", a5k_get_shootmode,
-                                  a5k_set_shootmode);
-    object_class_property_set_description(oc, "shoot-mode",
-        "Power up in this shooting mode instead of SCN: p|a|s|m|scn.  The "
-        "a5000 has no mode-dial hardware; this pre-sets the soft dial in the "
-        "RAM Backup copy via the loader (docs/RE_MODE_DIAL.md).  Default "
-        "unset = stock (whatever Backup holds)");
-    object_class_property_add_str(oc, "nand", a5k_get_nand, a5k_set_nand);
+    object_class_property_add_str(oc, "nand", a6k_get_nand, a6k_set_nand);
     object_class_property_set_description(oc, "nand",
         "Raw NAND backing file (created erased if missing)");
-    object_class_property_add_str(oc, "provision", a5k_get_prov,
-                                  a5k_set_prov);
+    object_class_property_add_str(oc, "provision", a6k_get_prov,
+                                  a6k_set_prov);
     object_class_property_set_description(oc, "provision",
         "Logical NAND image exposed at PA 0x40000000 for programming");
-    object_class_property_add_bool(oc, "debug-console", a5k_get_dbgcon,
-                                   a5k_set_dbgcon);
+    object_class_property_add_bool(oc, "debug-console", a6k_get_dbgcon,
+                                   a6k_set_dbgcon);
     object_class_property_set_description(oc, "debug-console",
         "Alias for console=ttyAM1 (root shell on UART2, UI still runs)");
-    object_class_property_add_str(oc, "console", a5k_get_console,
-                                  a5k_set_console);
+    object_class_property_add_str(oc, "console", a6k_get_console,
+                                  a6k_set_console);
     object_class_property_set_description(oc, "console",
         "Kernel console: ttynull (stock, default), ttyAM1 (UART2 = third "
         "-serial: stock init root shell, UI runs) or ttyAM0 (UART0: "
         "early-boot log only, conflicts with av-cam, the UI does not "
         "start)");
-    object_class_property_add_str(oc, "shell-socket", a5k_get_shellsock,
-                                  a5k_set_shellsock);
+    object_class_property_add_str(oc, "shell-socket", a6k_get_shellsock,
+                                  a6k_set_shellsock);
     object_class_property_set_description(oc, "shell-socket",
         "HOST:PORT TCP server on UART2 (when no third -serial is given); "
         "implies console=ttyAM1");
 
-    object_class_property_add_bool(oc, "wifi", a5k_get_wifi, a5k_set_wifi);
+    object_class_property_add_bool(oc, "wifi", a6k_get_wifi, a6k_set_wifi);
     object_class_property_set_description(oc, "wifi",
         "AR6003 SDIO Wi-Fi module on mmc1 (default on = stock hardware); "
         "-nic/-netdev + -global ar6003-sdio.netdev=ID give it a network, "
-        "ar6003-sdio.aps= the virtual APs (docs/RE_WIFI.md)");
-    object_class_property_add_bool(oc, "rtc-lost", a5k_get_rtclost,
-                                   a5k_set_rtclost);
+        "ar6003-sdio.aps= the virtual APs (docs/reference/RE_WIFI.md)");
+    object_class_property_add_bool(oc, "rtc-lost", a6k_get_rtclost,
+                                   a6k_set_rtclost);
     object_class_property_set_description(oc, "rtc-lost",
         "Clock backup lost: hand-off word 0x800210E4 = 1 (first-boot "
         "area/date/time setup)");
-    object_class_property_add_bool(oc, "warm-resume", a5k_get_warmres,
-                                   a5k_set_warmres);
+    object_class_property_add_bool(oc, "warm-resume", a6k_get_warmres,
+                                   a6k_set_warmres);
     object_class_property_set_description(oc, "warm-resume",
         "Resume a warm off (idle power save, power lever) from the kept DDR "
         "image like the real camera (HOT boot); off = always cold power-on");
-    object_class_property_add_str(oc, "lens", a5k_get_lens, a5k_set_lens);
+    object_class_property_add_str(oc, "lens", a6k_get_lens, a6k_set_lens);
     object_class_property_set_description(oc, "lens",
         "E-mount lens: none (empty mount, default) or ekit (detect low, "
-        "power ack, handshake and the a5k-lens serial HLE)");
+        "power ack, handshake and the a6k-lens serial HLE)");
 
-    object_class_property_add_bool(oc, "hdmi", a5k_get_hdmi, a5k_set_hdmi);
+    object_class_property_add_bool(oc, "hdmi", a6k_get_hdmi, a6k_set_hdmi);
     object_class_property_set_description(oc, "hdmi",
         "HDMI cable plugged into a virtual 1080p TV (default off = no "
         "cable); settable at run time for hot-plug. Picture on console 1");
-    object_class_property_add_str(oc, "hdmi-edid", a5k_get_hdmiedid,
-                                  a5k_set_hdmiedid);
+    object_class_property_add_str(oc, "hdmi-edid", a6k_get_hdmiedid,
+                                  a6k_set_hdmiedid);
     object_class_property_set_description(oc, "hdmi-edid",
         "128/256-byte EDID file of the virtual TV (default: built-in "
         "generic 1080p60 EDID)");
 
-    object_class_property_add_str(oc, "usb-socket", a5k_get_usbsock,
-                                  a5k_set_usbsock);
+    object_class_property_add_str(oc, "usb-socket", a6k_get_usbsock,
+                                  a6k_set_usbsock);
     object_class_property_set_description(oc, "usb-socket",
-        "HOST:PORT of the A5KU USB cable server (docs/RE_USB_HOST_PATH.md); "
+        "HOST:PORT of the A6KU USB cable server (docs/reference/RE_USB_HOST_PATH.md); "
         "a connected client = cable plugged");
 
-    object_class_property_add_str(oc, "nfc", a5k_get_nfc, a5k_set_nfc);
+    object_class_property_add_str(oc, "nfc", a6k_get_nfc, a6k_set_nfc);
     object_class_property_set_description(oc, "nfc",
         "-chardev id of the NFC virtual phone (line protocol: field on|off, "
-        "cmd <hex>, read, tap [ms], status; docs/RE_NFC.md section 4.4)");
-
-    mc->desc = "Sony ILCE-5000 (CXD90014, Cortex-A5 MPCore)";
-    mc->init = a5k_init;
-    mc->max_cpus = 4;
-    mc->default_cpus = 4;   /* quad Cortex-A5: snapshot log "CPU1..3: shutdown" */
-    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a5");
-    mc->default_ram_size = 512 * MiB;
-    mc->default_ram_id = "a5k.ddr";
-    mc->ignore_memory_transaction_failures = false;
-}
-
-static void a5k_instance_init(Object *o)
-{
-    A5K_MACHINE(o)->warm_resume = true;     /* stock: HOT resume */
-}
-
-static const TypeInfo a5k_info = {
-    .name = TYPE_A5K_MACHINE,
-    .parent = TYPE_MACHINE,
-    .instance_size = sizeof(A5KMachineState),
-    .instance_init = a5k_instance_init,
-    .class_init = a5k_class_init,
-};
-
-/* ILCE-6000: same CXD90014 board, A6000 boot contract (a5k_model_a6000).
- * A6000-only hardware (EVF, mode dial, ...) is not modelled yet
- * (docs/A6000_ROADMAP.md). */
-static void a6k_class_init(ObjectClass *oc, const void *data)
-{
-    MachineClass *mc = MACHINE_CLASS(oc);
+        "cmd <hex>, read, tap [ms], status; docs/reference/RE_NFC.md section 4.4)");
 
     mc->desc = "Sony ILCE-6000 (CXD90014, Cortex-A5 MPCore)";
     object_class_property_add_str(oc, "mode-dial", a6k_get_mode_dial,
                                   a6k_set_mode_dial);
     object_class_property_set_description(oc, "mode-dial",
-        "A6000 mode dial position (KEY_POS_MODE_DIAL value 1..8, 10, 11); "
+        "Mode dial position (KEY_POS_MODE_DIAL value 1..8, 10, 11; 3 = P); "
         "settable at run time with qom-set /machine mode-dial N");
+    mc->init = a6k_init;
+    mc->max_cpus = 4;
+    mc->default_cpus = 4;   /* quad Cortex-A5: snapshot log "CPU1..3: shutdown" */
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a5");
     mc->default_ram_size = 1024 * MiB;
+    mc->default_ram_id = "a6k.ddr";
+    mc->ignore_memory_transaction_failures = false;
 }
 
 static void a6k_instance_init(Object *o)
 {
-    A5K_MACHINE(o)->mode_dial = 3;  /* P: a real dial always rests somewhere */
+    A6K_MACHINE(o)->warm_resume = true;     /* stock: HOT resume */
+    A6K_MACHINE(o)->mode_dial = 3;          /* P: a real dial always rests somewhere */
 }
 
 static const TypeInfo a6k_info = {
     .name = TYPE_A6K_MACHINE,
-    .parent = TYPE_A5K_MACHINE,
+    .parent = TYPE_MACHINE,
+    .instance_size = sizeof(A6KMachineState),
     .instance_init = a6k_instance_init,
     .class_init = a6k_class_init,
 };
 
-static void a5k_register(void)
+static void a6k_register(void)
 {
-    type_register_static(&a5k_info);
     type_register_static(&a6k_info);
 }
-type_init(a5k_register)
+type_init(a6k_register)

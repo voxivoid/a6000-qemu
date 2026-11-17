@@ -1,5 +1,5 @@
 /*
- * CXD90014 P2S ("parallel-to-serial") sensor register writer, unit 0 (a5000).
+ * CXD90014 P2S ("parallel-to-serial") sensor register writer, unit 0.
  *
  * PA 0xF3C00300..0xF3C009FF (the driver's unit table av-cam dword_43B1DC5C
  * = {0xF3C00300, 0xF3C00800, 0xF3C00900}), GIC IRQ 38.  The device covers
@@ -8,7 +8,7 @@
  * collides with the section index), and the guest page size is 1 KiB here.
  * 0xF3C00000..0x2FF and 0xA00..0xFFF read back as written (-d unimp).
  * The IMX156 imager is configured only through this write-only serialiser
- * (docs/RE_SENSOR_ISP.md §1.3).  Register use by av-cam.bin 1.10:
+ * (docs/reference/RE_SENSOR_ISP.md §1.3).  Register use by av-cam.bin 1.10:
  *
  *   0x300 bit0 set at config; 0x304 bit0, 0x308 bits0-2 = sync config;
  *         0x30C low byte = byte count/flags               (436AE62C/436AE684)

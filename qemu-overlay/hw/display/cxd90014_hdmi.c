@@ -1,7 +1,7 @@
 /*
- * CXD90014 HDMI transmitter core (a5000), PA 0xF2A24000, 16 KiB, no IRQ.
+ * CXD90014 HDMI transmitter core, PA 0xF2A24000, 16 KiB, no IRQ.
  *
- * docs/RE_HDMI.md (hdmi.ko, firmware 1.10).  The core is an 8-bit register
+ * docs/reference/RE_HDMI.md (hdmi.ko, firmware 1.10).  The core is an 8-bit register
  * file on a 32-bit stride: page 0 (system / interrupt / DDC) at +0x000,
  * page 1 (audio-video / InfoFrames) at +0x400, TMDS PHY at +0x2000.
  * hdmi.ko polls it from osal_utimer cell programs; nothing is interrupt
@@ -93,7 +93,7 @@ struct CxdHdmiState {
 #define R(o) (s->regs[(o) / 4])
 
 /*
- * Offsets hdmi.ko has descriptors for (docs/RE_HDMI.md §1.2).  Accesses
+ * Offsets hdmi.ko has descriptors for (docs/reference/RE_HDMI.md §1.2).  Accesses
  * outside them are still RAM-backed but logged under -d unimp.
  */
 static bool hdmi_known(hwaddr off)

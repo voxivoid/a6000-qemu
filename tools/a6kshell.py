@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""a5kshell.py - host side of the guest root shell (docs/RE_GUEST_SHELL.md).
+"""a6kshell.py - host side of the guest root shell (docs/reference/RE_GUEST_SHELL.md).
 
 The emulator is started with the stock init shell on UART2 (ttyAM1), served
 as a TCP socket:
 
-    A5K_SHELL=46310 ./run.sh -display none ...
-    (= -M sony-a5000,shell-socket=127.0.0.1:46310 -serial null)
+    A6K_SHELL=46310 ./run.sh -display none ...
+    (= -M sony-a6000,shell-socket=127.0.0.1:46310 -serial null)
 
 Modes:
-    a5kshell.py [--port N] [--job-control]       interactive (Ctrl-] quits)
-    a5kshell.py [--port N] push LOCAL [REMOTE]   upload + md5 check
-    a5kshell.py [--port N] pull REMOTE LOCAL     download + md5 check
-    a5kshell.py [--port N] run CMD...            run one command, print output
+    a6kshell.py [--port N] [--job-control]       interactive (Ctrl-] quits)
+    a6kshell.py [--port N] push LOCAL [REMOTE]   upload + md5 check
+    a6kshell.py [--port N] pull REMOTE LOCAL     download + md5 check
+    a6kshell.py [--port N] run CMD...            run one command, print output
 
-push keeps the executable bit of LOCAL (chmod 755).  REMOTE defaults to /android/a5k/<basename of LOCAL>; a relative REMOTE is
-taken relative to /android/a5k.  /android is a tmpfs mounted by the stock
+push keeps the executable bit of LOCAL (chmod 755).  REMOTE defaults to /android/a6k/<basename of LOCAL>; a relative REMOTE is
+taken relative to /android/a6k.  /android is a tmpfs mounted by the stock
 s_start_android.sh: files there are executable and are lost at power-off.
 Writing outside /android needs --force (never /tmp, /setting or another
 NAND partition by accident).
@@ -41,7 +41,7 @@ import socket
 import sys
 import time
 
-DEFAULT_DIR = "/android/a5k"
+DEFAULT_DIR = "/android/a6k"
 REBOOT_PATTERNS = (b"Linux version ", b"Suspending console", b"Restarting system")
 
 
@@ -71,7 +71,7 @@ class Session:
 
     def log(self, msg):
         if self.verbose:
-            sys.stderr.write("a5kshell: %s\n" % msg)
+            sys.stderr.write("a6kshell: %s\n" % msg)
 
     def recv(self, timeout, until=None, buf=b""):
         """Read for up to `timeout` s, stop early once `until` (bytes or
@@ -104,7 +104,7 @@ class Session:
             if p in buf:
                 raise RebootError("guest rebooted / powered off (saw %r); "
                                   "the shell session and /android are gone "
-                                  "(idle power save? docs/RE_GUEST_SHELL.md "
+                                  "(idle power save? docs/reference/RE_GUEST_SHELL.md "
                                   "section 9)" % p.decode())
 
     def cmd(self, command, timeout=15.0):
@@ -148,7 +148,7 @@ class Session:
             except ShellError:
                 if time.time() >= deadline:
                     raise ShellError("no shell on the socket (is the guest "
-                                     "booted with A5K_SHELL / console=ttyAM1?"
+                                     "booted with A6K_SHELL / console=ttyAM1?"
                                      " use --wait to wait for boot)")
             time.sleep(2)
 
@@ -297,7 +297,7 @@ def do_interactive(sess):
         import tty as ttymod
         old = termios.tcgetattr(stdin)
         ttymod.setraw(stdin)
-        sys.stderr.write("a5kshell: connected, Ctrl-] quits\r\n")
+        sys.stderr.write("a6kshell: connected, Ctrl-] quits\r\n")
     sess.sock.setblocking(False)
     try:
         sess.send("\r")
@@ -309,11 +309,11 @@ def do_interactive(sess):
                 except BlockingIOError:
                     d = None
                 if d == b"":
-                    sys.stderr.write("\r\na5kshell: connection closed\r\n")
+                    sys.stderr.write("\r\na6kshell: connection closed\r\n")
                     return 1
                 if d:
                     if b"Linux version " in d:
-                        sys.stderr.write("\r\na5kshell: guest rebooted\r\n")
+                        sys.stderr.write("\r\na6kshell: guest rebooted\r\n")
                     os.write(sys.stdout.fileno(), d)
             if stdin in r:
                 d = os.read(stdin, 1024)
@@ -341,12 +341,12 @@ def do_interactive(sess):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Guest root shell / file transfer over the a5000 "
-                    "emulator's UART2 socket (docs/RE_GUEST_SHELL.md)")
+        description="Guest root shell / file transfer over the A6000 "
+                    "emulator's UART2 socket (docs/reference/RE_GUEST_SHELL.md)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int,
-                    default=int(os.environ.get("A5K_SHELL", "0") or 0),
-                    help="TCP port of the UART2 socket (default $A5K_SHELL)")
+                    default=int(os.environ.get("A6K_SHELL", "0") or 0),
+                    help="TCP port of the UART2 socket (default $A6K_SHELL)")
     ap.add_argument("--wait", type=float, default=0.0, metavar="SEC",
                     help="wait up to SEC seconds for the shell (boot)")
     ap.add_argument("--job-control", action="store_true",
@@ -365,7 +365,7 @@ def main(argv=None):
     ap.add_argument("args", nargs=argparse.REMAINDER)
     a = ap.parse_args(argv)
     if not a.port:
-        ap.error("no port: use --port N or set A5K_SHELL")
+        ap.error("no port: use --port N or set A6K_SHELL")
     if a.mode == "push" and len(a.args) not in (1, 2):
         ap.error("push LOCAL [REMOTE]")
     if a.mode == "pull" and len(a.args) != 2:
@@ -376,7 +376,7 @@ def main(argv=None):
     try:
         sess = Session(a.host, a.port, a.verbose)
     except OSError as e:
-        sys.stderr.write("a5kshell: cannot connect to %s:%d: %s\n"
+        sys.stderr.write("a6kshell: cannot connect to %s:%d: %s\n"
                          % (a.host, a.port, e))
         return 1
     try:
@@ -396,7 +396,7 @@ def main(argv=None):
             return 0
         return do_run(sess, " ".join(a.args), a.timeout)
     except ShellError as e:
-        sys.stderr.write("a5kshell: %s\n" % e)
+        sys.stderr.write("a6kshell: %s\n" % e)
         return e.status
     finally:
         sess.close()

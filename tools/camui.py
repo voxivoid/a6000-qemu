@@ -7,7 +7,7 @@ running emulator over QMP (input-send-event), so holds (shutter half press,
 movie, wheel) behave like the hardware keys in the README table.
 
   # let camui start the emulator (headless, QMP socket in state/):
-  python3 tools/camui.py --launch [--model a6000] [--port 8642]
+  python3 tools/camui.py --launch [--port 8642]
   # or attach to an emulator started with -qmp unix:<sock>,server,nowait:
   python3 tools/camui.py --qmp state/qmp.sock
 
@@ -158,7 +158,24 @@ class Handler(BaseHTTPRequestHandler):
                 op = req.get('op')
                 if op not in ('stop', 'cont', 'system_reset'):
                     return self._json({'error': 'bad op'}, 400)
+                if op == 'system_reset' and self.qmp.cmd('query-status').get(
+                        'return', {}).get('status') == 'suspended':
+                    # camera off: a plain reset leaves the board's powered_off
+                    # flag set (it then swallows every key). Use the board's own
+                    # power-on path (wakeup notifier clears it, then resets).
+                    op = 'system_wakeup'
                 r = self.qmp.cmd(op)
+                if op in ('system_reset', 'system_wakeup'):
+                    # reset from the suspended (camera off) state leaves the
+                    # VM in 'prelaunch' with the vCPUs stopped -> resume it
+                    for _ in range(20):
+                        st = self.qmp.cmd('query-status').get('return', {})
+                        if st.get('status') == 'prelaunch':
+                            self.qmp.cmd('cont')
+                            break
+                        if st.get('status') == 'running':
+                            break
+                        time.sleep(0.1)
             else:
                 return self._json({'error': 'not found'}, 404)
         except Exception as e:
@@ -171,7 +188,6 @@ def main():
     ap.add_argument('--qmp', default=os.path.join(E, 'state', 'qmp.sock'))
     ap.add_argument('--launch', action='store_true',
                     help='start ./run.sh headless with the QMP socket')
-    ap.add_argument('--model', default='a6000', choices=('a5000', 'a6000'))
     ap.add_argument('--port', type=int, default=8642)
     ap.add_argument('--bind', default='127.0.0.1')
     a, extra = ap.parse_known_args()
@@ -180,8 +196,8 @@ def main():
     if a.launch:
         if os.path.exists(a.qmp):
             os.unlink(a.qmp)
-        log = open(os.path.join(E, 'state', 'camui-%s.log' % a.model), 'wb')
-        env = dict(os.environ, A5K_MODEL=a.model)
+        log = open(os.path.join(E, 'state', 'camui.log'), 'wb')
+        env = dict(os.environ)
         proc = subprocess.Popen(
             [os.path.join(E, 'run.sh'), '-display', 'none',
              '-qmp', 'unix:%s,server=on,wait=off' % a.qmp] + extra,

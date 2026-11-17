@@ -1,5 +1,5 @@
 /*
- * Sony CXD90014 system controller block at 0xF2915000 (a5000).
+ * Sony CXD90014 system controller block at 0xF2915000.
  *
  * Recovered from the 1.10 kernel:
  *   +0x00  chip id (cxd90014_read_cpuid, printed as "CPUID:").  Real value
@@ -90,7 +90,7 @@ static void sc_reset(DeviceState *dev)
     s->rstreq = 0;
     /* +0x10 media detect (active low): bit16 MS in, bit24 SD in, bit25 SD
      * WP (mcmn_drv getmmccddata/getmmcwpdata/getmsindata; values per
-     * docs/RE_STORAGE_USB.md: 0x0C010000 = SD in + writable, 0x0D010000 =
+     * docs/reference/RE_STORAGE_USB.md: 0x0C010000 = SD in + writable, 0x0D010000 =
      * empty slot) */
     s->regs[0x10 / 4] = s->sd_present ? 0x0C010000 : 0x0D010000;
 }

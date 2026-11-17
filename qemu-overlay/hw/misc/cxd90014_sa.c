@@ -1,7 +1,7 @@
 /*
- * CXD90014 SA DSP core, "null SA" model (a5000, fw 1.10).
+ * CXD90014 SA DSP core, "null SA" model (register analysis: docs/reference/).
  *
- * Spec: docs/RE_SA_DSP.md §5 (context: RE_LIVEVIEW_REQUEST.md §3-§4,
+ * Spec: docs/reference/RE_SA_DSP.md §5 (context: RE_LIVEVIEW_REQUEST.md §3-§4,
  * RE_SD_MEDIA_SERVICE.md §3.3 / §7.2).  Addresses below are av-cam.bin
  * VAs (load address 0x43541000).
  *

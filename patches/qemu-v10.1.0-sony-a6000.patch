@@ -7,7 +7,7 @@ index 2aa4b5d..2c503c9 100644
      select SSE_COUNTER
      select SSE_TIMER
 +
-+config SONY_A5000
++config SONY_A6000
 +    bool
 +    default y
 +    depends on TCG && ARM
@@ -20,7 +20,7 @@ index 2aa4b5d..2c503c9 100644
 +    select CXD90014_SYSCTL
 +    select CXD90014_SA
 +    select CXD90014_IDT
-+    select A5K_NFC
++    select A6K_NFC
 +    select CXD90014_DDRC
 +    select CXD90014_NAND
 +    select CXD90014_DMAC
@@ -38,7 +38,7 @@ index dc68391..02fcce7 100644
  
  hw_arch += {'arm': arm_ss}
  hw_common_arch += {'arm': arm_common_ss}
-+arm_common_ss.add(when: 'CONFIG_SONY_A5000', if_true: files('sony_a5000.c'))
++arm_common_ss.add(when: 'CONFIG_SONY_A6000', if_true: files('sony_a6000.c'))
 diff --git a/hw/block/Kconfig b/hw/block/Kconfig
 index 737dbcd..c28b38b 100644
 --- a/hw/block/Kconfig
@@ -110,7 +110,7 @@ index 90e6c04..9c1bae4 100644
  
  modules += { 'hw-display': hw_display_modules }
 +system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('dmp_smaph.c', 'dmp_shader.c'))
-+system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('a5k_fbview.c'))
++system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('a6k_fbview.c'))
 +system_ss.add(when: 'CONFIG_DMP_SMAPH', if_true: files('cxd90014_vph.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_HDMI', if_true: files('cxd90014_hdmi.c'))
 diff --git a/hw/display/trace-events b/hw/display/trace-events
@@ -209,7 +209,7 @@ index 4e35657..7452c9c 100644
 +config CXD90014_IDT
 +    bool
 +
-+config A5K_NFC
++config A6K_NFC
 +    bool
 +
 +config CXD90014_DDRC
@@ -271,7 +271,7 @@ index b1d8d8e..715f1cc 100644
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_p2s.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_campig.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_ldec.c'))
-+system_ss.add(when: 'CONFIG_A5K_NFC', if_true: files('a5k_nfc.c'))
++system_ss.add(when: 'CONFIG_A6K_NFC', if_true: files('a6k_nfc.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SYSCTL', if_true: files('cxd90014_lens.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_SA', if_true: files('cxd90014_sa.c'))
 +system_ss.add(when: 'CONFIG_CXD90014_IDT', if_true: files('cxd90014_idt.c'))
@@ -293,16 +293,16 @@ index e3f64c0..b56e8c2 100644
 +cxd_sio_wr(int ch, uint32_t off, uint64_t v) "ch%d wr +0x%03x = 0x%08" PRIx64
 +cxd_sio_rd(int ch, uint32_t off, uint32_t v) "ch%d rd +0x%03x -> 0x%08x"
 +
-+# a5k_nfc.c
-+a5k_nfc_power(int on) "SW P7.10 = %d"
-+a5k_nfc_sel(int level) "SEL P7.14 = %d"
-+a5k_nfc_rfdet(int level) "RFDET P0.8 = %d"
-+a5k_nfc_setparam(const char *hex) "set parameter %s"
-+a5k_nfc_unpowered_tx(const char *hex) "TX while SW = 0 ignored (first-comm frame): %s"
-+a5k_nfc_cmd(int cmd, int n, int len, int powered) "reader command 0x%02x n=%d len=%d (chip powered %d)"
-+a5k_nfc_xfer(const char *dir, int len, int off) "%s %d bytes (offset %d)"
-+a5k_nfc_resp(int len, const char *hex) "reply %d bytes %s"
-+a5k_nfc_timeout(int rx_off, int resp_len) "no reply (read %d, reply %d bytes)"
++# a6k_nfc.c
++a6k_nfc_power(int on) "SW P7.10 = %d"
++a6k_nfc_sel(int level) "SEL P7.14 = %d"
++a6k_nfc_rfdet(int level) "RFDET P0.8 = %d"
++a6k_nfc_setparam(const char *hex) "set parameter %s"
++a6k_nfc_unpowered_tx(const char *hex) "TX while SW = 0 ignored (first-comm frame): %s"
++a6k_nfc_cmd(int cmd, int n, int len, int powered) "reader command 0x%02x n=%d len=%d (chip powered %d)"
++a6k_nfc_xfer(const char *dir, int len, int off) "%s %d bytes (offset %d)"
++a6k_nfc_resp(int len, const char *hex) "reply %d bytes %s"
++a6k_nfc_timeout(int rx_off, int resp_len) "no reply (read %d, reply %d bytes)"
 +
 +# cxd90014_p2s.c
 +cxd_p2s_start(uint32_t cnt, uint32_t b0, uint32_t b1, uint32_t b2, uint32_t b3) "start cnt 0x%02x payload %08x %08x %08x %08x"
@@ -337,11 +337,11 @@ index e3f64c0..b56e8c2 100644
 +cxd90014_cec_tx_done(unsigned result) "TX done status 0x%x"
 +cxd90014_cec_rx(unsigned len, unsigned hdr, int op) "RX len %u hdr 0x%02x op %d"
 +# cxd90014_lens.c
-+a5k_lens_state(int from, int to) "state %d -> %d (0 off, 1 handshake, 2 uart)"
-+a5k_lens_frame(uint64_t len, int type, int b4, int id, int64_t us) "body frame len %" PRIu64 " type %d b4 0x%02x first block 0x%02x t=%" PRId64
-+a5k_lens_block(int id, uint64_t a, uint64_t b) "request block 0x%02x (A %" PRIu64 ", reply B %" PRIu64 ")"
-+a5k_lens_reply(uint64_t len, uint64_t pos, uint64_t taken, int id, int64_t us) "reply len %" PRIu64 " at %" PRIu64 " taken %" PRIu64 " first block 0x%02x t=%" PRId64
-+a5k_lens_in(int n, int level, int64_t us) "in%d = %d t=%" PRId64
++a6k_lens_state(int from, int to) "state %d -> %d (0 off, 1 handshake, 2 uart)"
++a6k_lens_frame(uint64_t len, int type, int b4, int id, int64_t us) "body frame len %" PRIu64 " type %d b4 0x%02x first block 0x%02x t=%" PRId64
++a6k_lens_block(int id, uint64_t a, uint64_t b) "request block 0x%02x (A %" PRIu64 ", reply B %" PRIu64 ")"
++a6k_lens_reply(uint64_t len, uint64_t pos, uint64_t taken, int id, int64_t us) "reply len %" PRIu64 " at %" PRIu64 " taken %" PRIu64 " first block 0x%02x t=%" PRId64
++a6k_lens_in(int n, int level, int64_t us) "in%d = %d t=%" PRId64
 diff --git a/hw/net/meson.build b/hw/net/meson.build
 index e6759e2..665cf75 100644
 --- a/hw/net/meson.build
@@ -677,7 +677,7 @@ index 17360a5..a8d3150 100644
  
  modules += { 'hw-usb': hw_usb_modules }
 +
-+# Sony a5000 (CXD90014) device controller + HDMAC + VBUS glue
++# Sony A6000 (CXD90014) device controller + HDMAC + VBUS glue
 +system_ss.add(when: 'CONFIG_CXD90014_USBHDC', if_true: files('cxd90014_usbhdc.c'))
 diff --git a/hw/usb/trace-events b/hw/usb/trace-events
 index dd04f14..4351fd0 100644
@@ -698,8 +698,8 @@ index dd04f14..4351fd0 100644
 +cxd_usbhdc_cable(const char *what, uint32_t gen) "%s gen %u"
 +cxd_usbhdc_setup(uint8_t type, uint8_t req, uint16_t value, uint16_t index, uint16_t len) "SETUP %02x %02x %04x %04x %u"
 +cxd_usbhdc_pkt(const char *dir, int n, uint32_t total) "%s EP%d total %u"
-+cxd_usbhdc_au_rx(uint8_t type, uint8_t ep, uint32_t id, uint32_t arg, uint32_t len) "A5KU rx type 0x%x ep 0x%x id %u arg 0x%x len %u"
-+cxd_usbhdc_au_tx(uint8_t type, uint8_t ep, uint32_t id, uint32_t arg, uint32_t len) "A5KU tx type 0x%x ep 0x%x id %u arg 0x%x len %u"
++cxd_usbhdc_au_rx(uint8_t type, uint8_t ep, uint32_t id, uint32_t arg, uint32_t len) "A6KU rx type 0x%x ep 0x%x id %u arg 0x%x len %u"
++cxd_usbhdc_au_tx(uint8_t type, uint8_t ep, uint32_t id, uint32_t arg, uint32_t len) "A6KU tx type 0x%x ep 0x%x id %u arg 0x%x len %u"
 +cxd_usbhdc_req_done(uint8_t type, uint8_t ep, uint32_t id, uint32_t status) "request type 0x%x ep 0x%x id %u status %u"
 diff --git a/include/hw/sd/sd.h b/include/hw/sd/sd.h
 index 55d363f..755bd13 100644
@@ -773,7 +773,7 @@ index dc9b6dc..92689be 100644
 +    /*
 +     * An AArch32 SCTLR write that sets M (0 -> 1) does not end the TB: the
 +     * MMU takes effect for instruction fetch at the next branch (see
-+     * do_coproc_insn).  Board opt-in only (sony-a5000).
++     * do_coproc_insn).  Board opt-in only (sony-a6000).
 +     */
 +    bool sctlr_fetch_delay;
      uint8_t reset_l0gptsz;
@@ -789,7 +789,7 @@ index a2a23ea..6736165 100644
  
 +
 +/*
-+ * Cortex-A5 MPCore (Sony CXD90014 / BIONZ X, a5000).
++ * Cortex-A5 MPCore (Sony CXD90014 / BIONZ X, A6000).
 + * Modelled on the A9 definition with A5 identification and cache geometry
 + * (32KB 4-way L1 I/D, 32-byte lines).  The CXD90014 implements VFPv4-D16
 + * without NEON: the Sony vfp_init BUG()s with "VFP is not D16 type"
@@ -878,7 +878,7 @@ index f7d6d8c..e878498 100644
      }
 +    if (need_exit_tb && sctlr_old && !(tb_cflags(s->base.tb) & CF_USE_ICOUNT)) {
 +        /*
-+         * Board opt-in (sony-a5000): an SCTLR write that turns the MMU on
++         * Board opt-in (sony-a6000): an SCTLR write that turns the MMU on
 +         * (M 0 -> 1) does not end the TB, so the straight-line instructions
 +         * after it are still fetched with the MMU off until the next branch
 +         * ends the TB; hflags were rebuilt above, and data accesses see the
@@ -886,7 +886,7 @@ index f7d6d8c..e878498 100644
 +         * does this from its prefetch: the CXD90014 kernel's resume path
 +         * (cxd90014_cpu_resume -> resume_turn_on_mmu, PA 0x80052480) runs
 +         * "mcr SCTLR; nop; mov pc, r1" from an XN identity section with no
-+         * ISB (sony-a5000 docs/RE_WARM_RESUME.md section 3.3).  Same idea
++         * ISB (sony-a6000 docs/reference/RE_WARM_RESUME.md section 3.3).  Same idea
 +         * as the XScale ARM_CP_SUPPRESS_TB_END case in helper.c, but only
 +         * for this transition; every other SCTLR write ends the TB.
 +         */

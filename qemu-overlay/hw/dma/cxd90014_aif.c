@@ -1,11 +1,11 @@
 /*
- * CXD90014 AIF DMA channel group (camera pipeline instances, a5000).
+ * CXD90014 AIF DMA channel group (camera pipeline instances).
  *
  * The generic AIF driver of av-cam.bin 1.10 (pbl_aif_* at 43895C64..
  * 438967E0) addresses channel k through table 0x43B278D4
  * {group base, channel base, dir | nibble << 8}; a group is
  * base + 0x000 header, channels at base + 0x200 + 0x80 * k
- * (docs/RE_SENSOR_ISP.md §2.4, docs/RE_DISPLAY_SCANOUT.md §2).
+ * (docs/reference/RE_SENSOR_ISP.md §2.4, docs/reference/RE_DISPLAY_SCANOUT.md §2).
  * One instance per group; VPH (0xF3441000) has its own model.
  *
  * Group header:
@@ -40,9 +40,9 @@
  *
  * GPIO out "done" pulses once per completion (after the status nibbles
  * are set): the IDT develop block (cxd90014-idt) ends its frame on the
- * completion of group 0xF3020000 (docs/RE_RAW_DEVELOP.md §7.2).
+ * completion of group 0xF3020000 (docs/reference/RE_RAW_DEVELOP.md §7.2).
  *
- * Debug option (not hardware), docs/RE_LIVEVIEW_IMAGE.md §4 option (a):
+ * Debug option (not hardware), docs/reference/RE_LIVEVIEW_IMAGE.md §4 option (a):
  * lv-source=bars|ramp|file:PATH writes one 8-bit luma frame into guest
  * DRAM when channel lv-ch completes, just before its status nibble / IRQ
  * are raised.  The board sets lv-ch = 3 only on the resize group
@@ -129,13 +129,13 @@ static uint8_t lv_sample(AifState *s, uint32_t x, uint32_t y,
 
 /*
  * Write one luma frame along channel k's address generator.  Address
- * generator (docs/RE_LIVEVIEW_IMAGE.md §1.2): after each transfer of +0x24
+ * generator (docs/reference/RE_LIVEVIEW_IMAGE.md §1.2): after each transfer of +0x24
  * bytes the address advances by +0x24 + ofs0, count0 + 1 times; level n
  * (1..3) repeats level n-1 countn + 1 times and adds ofsn after each
  * repetition.  hypothesis: the outer-loop rule (counts 1..3 are 0 in live
  * view, so only the inner loop is exercised).
  * Bus address A is seen by the CPU at 0x80000000 + A (the RC job gets
- * 0x8CF34000, ch26 is programmed 0x0CF34000; docs/RE_LIVEVIEW_IMAGE.md
+ * 0x8CF34000, ch26 is programmed 0x0CF34000; docs/reference/RE_LIVEVIEW_IMAGE.md
  * §2.2).  hypothesis: the bus -> CPU alias.
  */
 static void aif_lv_inject(AifState *s, int k)

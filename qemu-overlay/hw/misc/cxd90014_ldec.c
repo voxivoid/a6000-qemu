@@ -1,5 +1,5 @@
 /*
- * CXD90014 "BOSS" LDEC hardware LZ77 decoder, memory-to-memory mode (a5000).
+ * CXD90014 "BOSS" LDEC hardware LZ77 decoder, memory-to-memory mode.
  *
  * Used through /dev/ldec (initrd ldec.ko, ioctl 1) by libObj to unpack UI
  * images (libObj sub_5334CC "Decode LZ77 format").  Programming model from

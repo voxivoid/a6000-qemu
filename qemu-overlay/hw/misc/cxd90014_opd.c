@@ -1,7 +1,7 @@
 /*
- * CXD90014 OPD block (a5000, fw 1.10).
+ * CXD90014 OPD block (register analysis: docs/reference/).
  *
- * Spec: docs/RE_RAW_DEVELOP.md §4 and §7.3.  Addresses below are av-cam.bin
+ * Spec: docs/reference/RE_RAW_DEVELOP.md §4 and §7.3.  Addresses below are av-cam.bin
  * VAs (load address 0x43541000, Thumb).
  *
  * PA 0xF3030000..0xF3031FFF.  Four interrupt units share one layout:

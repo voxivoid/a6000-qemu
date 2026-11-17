@@ -1,5 +1,5 @@
 /*
- * a5k-fbview — host window onto guest frame buffers (sony-a5000).
+ * a6k-fbview — host window onto guest frame buffers (sony-a6000).
  *
  * Until the CXD90014 display controller (VDF scan-out, programmed by
  * av-cam.bin) is modelled, this device shows a guest-physical buffer in a
@@ -22,8 +22,8 @@
 #include "system/address-spaces.h"
 #include "qom/object.h"
 
-#define TYPE_A5K_FBVIEW "a5k-fbview"
-OBJECT_DECLARE_SIMPLE_TYPE(FbviewState, A5K_FBVIEW)
+#define TYPE_A6K_FBVIEW "a6k-fbview"
+OBJECT_DECLARE_SIMPLE_TYPE(FbviewState, A6K_FBVIEW)
 
 #define MAXL 4
 typedef struct Layer {
@@ -135,12 +135,12 @@ static const GraphicHwOps fb_ops = {
 
 static char *get_fb(Object *o, Error **errp)
 {
-    return g_strdup(A5K_FBVIEW(o)->spec);
+    return g_strdup(A6K_FBVIEW(o)->spec);
 }
 
 static void set_fb(Object *o, const char *v, Error **errp)
 {
-    FbviewState *s = A5K_FBVIEW(o);
+    FbviewState *s = A6K_FBVIEW(o);
     g_free(s->spec);
     s->spec = g_strdup(v);
     parse(s);
@@ -148,7 +148,7 @@ static void set_fb(Object *o, const char *v, Error **errp)
 
 static void fb_realize(DeviceState *dev, Error **errp)
 {
-    FbviewState *s = A5K_FBVIEW(dev);
+    FbviewState *s = A6K_FBVIEW(dev);
     parse(s);
     s->con = graphic_console_init(dev, 0, &fb_ops, s);
     qemu_console_resize(s->con, s->w, s->h);
@@ -166,7 +166,7 @@ static void fb_class_init(ObjectClass *klass, const void *data)
 }
 
 static const TypeInfo fb_info = {
-    .name = TYPE_A5K_FBVIEW,
+    .name = TYPE_A6K_FBVIEW,
     .parent = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(FbviewState),
     .instance_init = fb_init,

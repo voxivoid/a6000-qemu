@@ -1,5 +1,5 @@
 /*
- * Atheros AR6003 chip-firmware HLE (Sony a5000 Wi-Fi module)
+ * Atheros AR6003 chip-firmware HLE (camera Wi-Fi module; AR6003 on the reference build, A6000 module unverified)
  *
  * HLE boundary (AI_WORKFLOW §1.5): the chip's Xtensa mask ROM (BMI loader)
  * is not in the firmware package, so the downloaded athwlan.bin cannot run.
@@ -7,7 +7,7 @@
  * sees through the SDIO mailbox: the BMI loader protocol, then HTC and the
  * WMI command/event protocol of the "SMARTPHONE" firmware, backed by a
  * "virtual air" (virtual APs, a virtual client) bridged onto one QEMU
- * netdev.  Spec: emulator/docs/RE_WIFI.md §3.4-3.6, §7.4-7.7.
+ * netdev.  Spec: emulator/docs/reference/RE_WIFI.md §3.4-3.6, §7.4-7.7.
  *
  *  BMI  (raw LE u32 words in mailbox 0, polled):
  *       1 DONE, 2 READ_MEMORY, 3 WRITE_MEMORY, 4 EXECUTE, 5 SET_APP_START,
@@ -977,7 +977,7 @@ static void ar6003_dhcp_send(AR6003State *s)
     }
     *o++ = 12;                              /* host name */
     *o++ = 6;
-    memcpy(o, "a5kcli", 6);
+    memcpy(o, "a6kcli", 6);
     o += 6;
     *o++ = 55;
     *o++ = 3;
@@ -1021,7 +1021,7 @@ static void ar6003_dhcp_start(AR6003State *s, int vif)
     s->dhcp_vif = vif;
     s->dhcp_state = 1;
     s->dhcp_tries = 0;
-    s->dhcp_xid = 0xA5000000 | (qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) &
+    s->dhcp_xid = 0xA6000000 | (qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) &
                                 0xFFFFFF);
     timer_mod(s->dhcp_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
               300 * SCALE_MS);

@@ -1,7 +1,7 @@
 /*
- * a5000 board NFC "One-touch" chip: a Sony FeliCa Plug class NFC Dynamic
+ * A6000 board NFC "One-touch" chip: a Sony FeliCa Plug class NFC Dynamic
  * Tag (NFC Forum Type 3) [? part number not in the firmware].  Not an MMIO
- * device; spec and evidence in docs/RE_NFC.md.
+ * device; spec and evidence in docs/reference/RE_NFC.md.
  *
  * Connections (Backup subsystem 0xF9 board config, nfc.ko):
  *   SIO channel 2 (0xF2405400, GIC 203)  3-wire half-duplex host link,
@@ -62,11 +62,11 @@
 #include "hw/resettable.h"
 #include "chardev/char-fe.h"
 #include "hw/misc/cxd90014_sio.h"
-#include "hw/misc/a5k_nfc.h"
+#include "hw/misc/a6k_nfc.h"
 #include "qom/object.h"
 #include "trace.h"
 
-OBJECT_DECLARE_SIMPLE_TYPE(A5KNfcState, A5K_NFC)
+OBJECT_DECLARE_SIMPLE_TYPE(A6KNfcState, A6K_NFC)
 
 #define NFC_SIO_CH      2
 #define NFC_PKT_LEN     230         /* nfc_rsrc_dev_recv_data: 128 + 102 */
@@ -80,7 +80,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(A5KNfcState, A5K_NFC)
 enum { JOB_NONE, JOB_CMD, JOB_READ, JOB_TAP };
 enum { TAP_SETTLE, TAP_READ, TAP_HOLD };
 
-struct A5KNfcState {
+struct A6KNfcState {
     SysBusDevice parent_obj;
     qemu_irq irq;                   /* GIC 125 */
     qemu_irq rfdet;                 /* -> GPIO P0.8 input */
@@ -123,7 +123,7 @@ static void nfc_hex(char *out, const uint8_t *b, int n)
     out[2 * n] = 0;
 }
 
-static void G_GNUC_PRINTF(2, 3) nfc_say(A5KNfcState *s, const char *fmt, ...)
+static void G_GNUC_PRINTF(2, 3) nfc_say(A6KNfcState *s, const char *fmt, ...)
 {
     va_list ap;
     g_autofree char *m = NULL;
@@ -137,18 +137,18 @@ static void G_GNUC_PRINTF(2, 3) nfc_say(A5KNfcState *s, const char *fmt, ...)
     }
 }
 
-static void nfc_set_field(A5KNfcState *s, bool on)
+static void nfc_set_field(A6KNfcState *s, bool on)
 {
     s->field = on;
-    trace_a5k_nfc_rfdet(!on);
+    trace_a6k_nfc_rfdet(!on);
     qemu_set_irq(s->rfdet, !on);    /* active low */
 }
 
 /* ---- reader command / reply (chip side) ---- */
 
-static void nfc_job_resp(A5KNfcState *s, const uint8_t *r, int len);
+static void nfc_job_resp(A6KNfcState *s, const uint8_t *r, int len);
 
-static void nfc_cmd_done(A5KNfcState *s, bool ok)
+static void nfc_cmd_done(A6KNfcState *s, bool ok)
 {
     s->outstanding = false;
     timer_del(s->deadline);
@@ -157,15 +157,15 @@ static void nfc_cmd_done(A5KNfcState *s, bool ok)
 
 static void nfc_deadline_cb(void *opaque)
 {
-    A5KNfcState *s = opaque;
+    A6KNfcState *s = opaque;
     if (s->outstanding) {
-        trace_a5k_nfc_timeout(s->rx_off, s->resp_len);
+        trace_a6k_nfc_timeout(s->rx_off, s->resp_len);
     }
     nfc_cmd_done(s, false);
 }
 
 /* latch a raw command and interrupt the host; the reply comes over SIO */
-static void nfc_send_cmd(A5KNfcState *s, const uint8_t *c, int len)
+static void nfc_send_cmd(A6KNfcState *s, const uint8_t *c, int len)
 {
     int n = len > 1 ? c[1] : 0;
 
@@ -176,7 +176,7 @@ static void nfc_send_cmd(A5KNfcState *s, const uint8_t *c, int len)
     s->expect = (len > 0 && c[0] == 0x06) ? 2 + 16 * n : 2;
     timer_mod(s->deadline,
               qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NFC_REPLY_NS);
-    trace_a5k_nfc_cmd(len > 0 ? c[0] : -1, n, len, s->powered);
+    trace_a6k_nfc_cmd(len > 0 ? c[0] : -1, n, len, s->powered);
     if (!s->powered) {
         /* chip unpowered: the host never sees it; the deadline answers */
         s->outstanding = false;
@@ -191,12 +191,12 @@ static void nfc_send_cmd(A5KNfcState *s, const uint8_t *c, int len)
 static void nfc_xfer(void *opaque, int ch, uint32_t mode, uint8_t *buf,
                      int len)
 {
-    A5KNfcState *s = opaque;
+    A6KNfcState *s = opaque;
     g_autofree char *hx = NULL;
 
     if (mode & NFC_SIO_RX) {
         /* chip -> host: the latched command, then zeros */
-        trace_a5k_nfc_xfer("rx", len, s->rx_off);
+        trace_a6k_nfc_xfer("rx", len, s->rx_off);
         for (int i = 0; i < len; i++) {
             int o = s->rx_off + i;
             buf[i] = (s->outstanding && o < NFC_PKT_LEN) ? s->cmd[o] : 0;
@@ -205,22 +205,22 @@ static void nfc_xfer(void *opaque, int ch, uint32_t mode, uint8_t *buf,
             s->rx_off += len;
         } else {
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "a5k-nfc: %d-byte read with no command pending\n",
+                          "a6k-nfc: %d-byte read with no command pending\n",
                           len);
         }
         return;
     }
     if (!(mode & NFC_SIO_TX)) {
-        qemu_log_mask(LOG_UNIMP, "a5k-nfc: SIO2 mode word 0x%08x "
+        qemu_log_mask(LOG_UNIMP, "a6k-nfc: SIO2 mode word 0x%08x "
                       "(neither TX bit29 nor RX bit28), len %d\n", mode, len);
         return;
     }
     hx = g_malloc(2 * len + 1);
     nfc_hex(hx, buf, len);
-    trace_a5k_nfc_xfer("tx", len, s->resp_len);
+    trace_a6k_nfc_xfer("tx", len, s->resp_len);
     if (!s->powered) {
         /* first-comm set-parameter, sent before SW = 1 (sub 0x688) */
-        trace_a5k_nfc_unpowered_tx(hx);
+        trace_a6k_nfc_unpowered_tx(hx);
         return;
     }
     if (s->outstanding && s->rx_off > 0) {
@@ -231,7 +231,7 @@ static void nfc_xfer(void *opaque, int ch, uint32_t mode, uint8_t *buf,
         if (s->resp_len >= s->expect || s->resp_len == 2) {
             g_autofree char *rh = g_malloc(2 * s->resp_len + 1);
             nfc_hex(rh, s->resp, s->resp_len);
-            trace_a5k_nfc_resp(s->resp_len, rh);
+            trace_a6k_nfc_resp(s->resp_len, rh);
             nfc_cmd_done(s, true);
         }
         return;
@@ -240,24 +240,24 @@ static void nfc_xfer(void *opaque, int ch, uint32_t mode, uint8_t *buf,
         memcpy(s->setparam, buf, NFC_SETPARAM);
         s->have_setparam = true;
         s->setparam_seen++;
-        trace_a5k_nfc_setparam(hx);
+        trace_a6k_nfc_setparam(hx);
         nfc_say(s, "ev setparam %s", hx);
         return;
     }
-    qemu_log_mask(LOG_GUEST_ERROR, "a5k-nfc: unexpected %d-byte TX %s\n",
+    qemu_log_mask(LOG_GUEST_ERROR, "a6k-nfc: unexpected %d-byte TX %s\n",
                   len, hx);
 }
 
 static void nfc_sw(void *opaque, int n, int level)
 {
-    A5KNfcState *s = opaque;
+    A6KNfcState *s = opaque;
     bool on = level;
 
     if (on == s->powered) {
         return;
     }
     s->powered = on;
-    trace_a5k_nfc_power(on);
+    trace_a6k_nfc_power(on);
     if (!on && s->outstanding) {
         s->outstanding = false;     /* dropped; the deadline reports it */
     }
@@ -266,14 +266,14 @@ static void nfc_sw(void *opaque, int n, int level)
 
 static void nfc_sel(void *opaque, int n, int level)
 {
-    A5KNfcState *s = opaque;
+    A6KNfcState *s = opaque;
     s->sel = level;
-    trace_a5k_nfc_sel(level);
+    trace_a6k_nfc_sel(level);
 }
 
 /* ---- host jobs ---- */
 
-static void nfc_job_end(A5KNfcState *s, const char *msg)
+static void nfc_job_end(A6KNfcState *s, const char *msg)
 {
     if (s->job == JOB_TAP && s->tap_step == TAP_READ) {
         /* read finished: hold the phone, then take it away */
@@ -291,7 +291,7 @@ static void nfc_job_end(A5KNfcState *s, const char *msg)
     }
 }
 
-static void nfc_read_next(A5KNfcState *s)
+static void nfc_read_next(A6KNfcState *s)
 {
     uint8_t c[2 + 2 * NFC_MAX_BLOCKS];
     int n = MIN(s->rd_nbr, s->rd_nmaxb - s->rd_next + 1);
@@ -305,7 +305,7 @@ static void nfc_read_next(A5KNfcState *s)
     nfc_send_cmd(s, c, 2 + 2 * n);
 }
 
-static void nfc_decode_pmm(A5KNfcState *s, const uint8_t *p, int len)
+static void nfc_decode_pmm(A6KNfcState *s, const uint8_t *p, int len)
 {
     /* 00 01 00 01 10 | 10 00 <len16> SSID | 10 01 <len16> pass (2.4) */
     g_autofree char *ssid = NULL, *pass = NULL;
@@ -328,7 +328,7 @@ static void nfc_decode_pmm(A5KNfcState *s, const uint8_t *p, int len)
             ssid ? ssid : "?", pass ? pass : "?");
 }
 
-static void nfc_decode_ndef(A5KNfcState *s, const uint8_t *m, int len)
+static void nfc_decode_ndef(A6KNfcState *s, const uint8_t *m, int len)
 {
     int o = 0;
 
@@ -375,7 +375,7 @@ static void nfc_decode_ndef(A5KNfcState *s, const uint8_t *m, int len)
 }
 
 /* one reply (r = NULL: timeout) for the running job */
-static void nfc_job_resp(A5KNfcState *s, const uint8_t *r, int len)
+static void nfc_job_resp(A6KNfcState *s, const uint8_t *r, int len)
 {
     g_autofree char *hx = NULL;
 
@@ -465,7 +465,7 @@ static void nfc_job_resp(A5KNfcState *s, const uint8_t *r, int len)
     nfc_job_end(s, "done");
 }
 
-static void nfc_start_read(A5KNfcState *s)
+static void nfc_start_read(A6KNfcState *s)
 {
     static const uint8_t aib[] = { 0x06, 0x01, 0x80, 0x00 };
     s->rd_next = 0;
@@ -474,7 +474,7 @@ static void nfc_start_read(A5KNfcState *s)
 
 static void nfc_job_cb(void *opaque)
 {
-    A5KNfcState *s = opaque;
+    A6KNfcState *s = opaque;
 
     if (s->job != JOB_TAP) {
         return;
@@ -518,7 +518,7 @@ static int nfc_parse_hex(const char *t, uint8_t *out, int max)
     return hi < 0 ? n : -1;
 }
 
-static void nfc_line(A5KNfcState *s, char *l)
+static void nfc_line(A6KNfcState *s, char *l)
 {
     char *arg;
 
@@ -600,7 +600,7 @@ static int nfc_can_receive(void *opaque)
 
 static void nfc_receive(void *opaque, const uint8_t *buf, int size)
 {
-    A5KNfcState *s = opaque;
+    A6KNfcState *s = opaque;
 
     for (int i = 0; i < size; i++) {
         if (buf[i] == '\n' || buf[i] == '\r') {
@@ -620,7 +620,7 @@ static void nfc_receive(void *opaque, const uint8_t *buf, int size)
  */
 static void nfc_sel_tap(void *opaque, int n, int level)
 {
-    A5KNfcState *s = opaque;
+    A6KNfcState *s = opaque;
     nfc_sel(opaque, n, level);
     if (level && s->job == JOB_TAP && s->tap_step == TAP_SETTLE &&
         s->setparam_seen) {
@@ -633,7 +633,7 @@ static void nfc_sel_tap(void *opaque, int n, int level)
 
 static void nfc_reset_hold(Object *obj, ResetType type)
 {
-    A5KNfcState *s = A5K_NFC(obj);
+    A6KNfcState *s = A6K_NFC(obj);
 
     s->powered = false;
     s->sel = false;
@@ -649,13 +649,13 @@ static void nfc_reset_hold(Object *obj, ResetType type)
 static void nfc_reset_exit(Object *obj, ResetType type)
 {
     /* after the GPIO model's own reset (hold phase) cleared the levels */
-    A5KNfcState *s = A5K_NFC(obj);
+    A6KNfcState *s = A6K_NFC(obj);
     nfc_set_field(s, false);        /* RFDET idle high: no phone */
 }
 
 static void nfc_init(Object *obj)
 {
-    A5KNfcState *s = A5K_NFC(obj);
+    A6KNfcState *s = A6K_NFC(obj);
 
     sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq);
     qdev_init_gpio_out_named(DEVICE(obj), &s->rfdet, "rfdet", 1);
@@ -667,7 +667,7 @@ static void nfc_init(Object *obj)
 
 static void nfc_realize(DeviceState *dev, Error **errp)
 {
-    A5KNfcState *s = A5K_NFC(dev);
+    A6KNfcState *s = A6K_NFC(dev);
 
     if (qemu_chr_fe_backend_connected(&s->chr)) {
         qemu_chr_fe_set_handlers(&s->chr, nfc_can_receive, nfc_receive,
@@ -676,7 +676,7 @@ static void nfc_realize(DeviceState *dev, Error **errp)
 }
 
 static const Property nfc_props[] = {
-    DEFINE_PROP_CHR("chardev", A5KNfcState, chr),
+    DEFINE_PROP_CHR("chardev", A6KNfcState, chr),
 };
 
 static void nfc_class_init(ObjectClass *klass, const void *data)
@@ -685,16 +685,16 @@ static void nfc_class_init(ObjectClass *klass, const void *data)
     ResettableClass *rc = RESETTABLE_CLASS(klass);
 
     dc->realize = nfc_realize;
-    dc->desc = "a5000 NFC dynamic tag (FeliCa Plug class) on SIO2";
+    dc->desc = "NFC dynamic tag (FeliCa Plug class) on SIO2";
     rc->phases.hold = nfc_reset_hold;
     rc->phases.exit = nfc_reset_exit;
     device_class_set_props(dc, nfc_props);
 }
 
-DeviceState *a5k_nfc_create(DeviceState *sio, DeviceState *gpio,
+DeviceState *a6k_nfc_create(DeviceState *sio, DeviceState *gpio,
                             qemu_irq irq, Chardev *chr)
 {
-    DeviceState *dev = qdev_new(TYPE_A5K_NFC);
+    DeviceState *dev = qdev_new(TYPE_A6K_NFC);
 
     if (chr) {
         qdev_prop_set_chr(dev, "chardev", chr);
@@ -710,14 +710,14 @@ DeviceState *a5k_nfc_create(DeviceState *sio, DeviceState *gpio,
     qdev_connect_gpio_out_named(gpio, "out", 7 * 32 + 14,
                                 qdev_get_gpio_in_named(dev, "sel", 0));
     /* Backup 0xF904D2 = 2: SIO channel 2 */
-    cxd90014_sio_attach_dir(sio, NFC_SIO_CH, nfc_xfer, A5K_NFC(dev));
+    cxd90014_sio_attach_dir(sio, NFC_SIO_CH, nfc_xfer, A6K_NFC(dev));
     return dev;
 }
 
 static const TypeInfo nfc_info = {
-    .name = TYPE_A5K_NFC,
+    .name = TYPE_A6K_NFC,
     .parent = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(A5KNfcState),
+    .instance_size = sizeof(A6KNfcState),
     .instance_init = nfc_init,
     .class_init = nfc_class_init,
 };

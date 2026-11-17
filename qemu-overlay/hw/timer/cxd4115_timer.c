@@ -1,7 +1,7 @@
 /*
- * Sony CXD4115-style timer block as found in the CXD90014 (a5000) SoC.
+ * Sony CXD4115-style timer block as found in the CXD90014 SoC.
  *
- * Register layout reverse engineered from the a5000 1.10 kernel
+ * Register layout reverse engineered from the camera kernel (docs/reference/)
  * (cxd90014_timer_early_init / ext_timer_* / cxd4115_read_cycles):
  *
  *   base + 0x100*ch
@@ -21,7 +21,7 @@
  *
  * Linux IRQ (= GIC ID) of channel n is 153 + n.
  *
- * Status of each semantic is tracked in emulator/docs/HARDWARE.md; anything
+ * Status of each semantic is tracked in emulator/docs/reference/HARDWARE.md; anything
  * marked "hypothesis" there must be confirmed on the real camera.
  */
 
@@ -132,7 +132,7 @@ static void chan_tick(void *opaque)
              * A one-shot match ends the run and clears START: av-cam's
              * timer setup (439193f4 / 4391944e) refuses a channel whose
              * START reads 1 (-3 "busy") and nothing in its ISR clears it
-             * (docs/RE_LENS_EMOUNT.md §9.1: lens handshake ch10, imager
+             * (docs/reference/RE_LENS_EMOUNT.md §9.1: lens handshake ch10, imager
              * power wait ch11).
              */
             c->running = false;

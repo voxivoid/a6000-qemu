@@ -1,7 +1,7 @@
 /*
- * CXD90014 HDMI-CEC controller (a5000), PA 0xF3C10000 (UDIF "cec", 0x190
+ * CXD90014 HDMI-CEC controller, PA 0xF3C10000 (UDIF "cec", 0x190
  * bytes used, 4 KiB window), no IRQ: cec.ko polls it through hdmi.ko's
- * executor.  docs/RE_HDMI.md §1.6 (cec.ko cell tables, cec_core_*).
+ * executor.  docs/reference/RE_HDMI.md §1.6 (cec.ko cell tables, cec_core_*).
  *
  *   +0x000..0x03C  TX frame, one byte per word (byte 0 = initiator<<4 | dest)
  *                  (cec_core_write_tx_frame @0x7cdc)

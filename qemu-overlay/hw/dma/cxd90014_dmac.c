@@ -1,5 +1,5 @@
 /*
- * Sony CXD90014 "BOSS" memory-to-memory DMA controller (a5000).
+ * Sony CXD90014 "BOSS" memory-to-memory DMA controller.
  *
  * Two units (UDIF dmac_ch0-3 @ PA 0xF0000000, dmac_ch4-7 @ 0xF0010000),
  * four channels each, GIC IRQ 189 + ch.  Layout from dmac.ko

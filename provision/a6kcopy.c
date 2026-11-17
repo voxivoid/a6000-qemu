@@ -1,30 +1,30 @@
 /*
- * a5kcopy — guest-side helper for the emulator's provisioning and
+ * a6kcopy — guest-side helper for the emulator's provisioning and
  * stage-1 loader environments (freestanding, raw syscalls, no libc).
  *
- *   a5kcopy <phys> <len|auto> <dst-file> [skip]   phys window -> file
- *   a5kcopy -f2p <file> <phys>                    file -> phys RAM
- *   a5kcopy -backup <Backup.bin>                  file -> phys from its
+ *   a6kcopy <phys> <len|auto> <dst-file> [skip]   phys window -> file
+ *   a6kcopy -f2p <file> <phys>                    file -> phys RAM
+ *   a6kcopy -backup <Backup.bin>                  file -> phys from its
  *                                                 header word 0
- *   a5kcopy -mumin <dev_va> [<add>]               MUMIN hand-off: copy the
+ *   a6kcopy -mumin <dev_va> [<add>]               MUMIN hand-off: copy the
  *        mounted muminmem (dev+0x34 / dev+0x38) to PA 0x80000000, with
  *        pointers into itself rebased to VA 0x40000000
- *   a5kcopy -w32 <phys> <val> [<val>...]          write words
- *   a5kcopy -stage2 <kernel> <initrd>             stage kernel @0x90000000,
+ *   a6kcopy -w32 <phys> <val> [<val>...]          write words
+ *   a6kcopy -stage2 <kernel> <initrd>             stage kernel @0x90000000,
  *        initrd @0x90400000 and write the board's loader descriptor
- *        {"A5KB", kpa, klen, ipa, ilen} at PA 0x80027000
- *   a5kcopy -bkset <prop-id> <hexbytes> [Backup.bin]
+ *        {"A6KB", kpa, klen, ipa, ilen} at PA 0x80027000
+ *   a6kcopy -bkset <prop-id> <hexbytes> [Backup.bin]
  *        set one fixed-size property in the RAM copy of Backup.bin that
  *        -backup placed at the PA in the file's header word 0 (file default
  *        /mnt/setting/Backup.bin) and recompute the header checksum
- *        (docs/RE_STILL_CAPTURE.md section 6)
- *   a5kcopy -loadtable <root> [Backup.bin]
+ *        (docs/reference/RE_STILL_CAPTURE.md section 6)
+ *   a6kcopy -loadtable <root> [Backup.bin]
  *        bootloader load table (Backup prop 0xFA0080 in that RAM copy):
  *        copy its \sabin\ rows from <root> to their PAs (see loadtable())
  *
  * Build (from the emulator repository root):
  *   arm-none-eabi-gcc -march=armv7-a -marm -O2 -nostdlib -static \
- *       -ffreestanding -Wl,-Ttext-segment=0x10000 -o provision/a5kcopy provision/a5kcopy.c
+ *       -ffreestanding -Wl,-Ttext-segment=0x10000 -o provision/a6kcopy provision/a6kcopy.c
  *   (-Ttext-segment: some toolchains, e.g. Ubuntu arm-none-eabi 10.3, link at
  *   VA 0; the kernel refuses page 0 and exec dies with SIGKILL "Killed")
  */
@@ -54,7 +54,7 @@ static long sc(long n, long a, long b, long c, long d, long e, long f)
 
 static ul slen(const char *s) { ul n = 0; while (s[n]) n++; return n; }
 static void puts1(const char *s) { sc(SYS_write, 1, (long)s, slen(s), 0, 0, 0); }
-static void die(const char *s) { puts1("a5kcopy: "); puts1(s); puts1("\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
+static void die(const char *s) { puts1("a6kcopy: "); puts1(s); puts1("\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
 static ul hex(const char *s)
 {
     ul v = 0;
@@ -134,11 +134,11 @@ static void phys_to_file(int argc, char **argv)
     ul phys = hex(argv[1]), len = hex(argv[2]), skip = argc > 4 ? hex(argv[4]) : 0;
     if (argv[2][0] == 'a') {
         /* "auto": phys points at an emulator provision header
-         * {"A5KP", u32 length}, image at +0x1000 */
-        if (rd32(phys) != 0x504b3541) die("no A5KP header");
+         * {"A6KP", u32 length}, image at +0x1000 */
+        if (rd32(phys) != 0x504b3641) die("no A6KP header");
         len = rd32(phys + 4);
         phys += 0x1000;
-        puts1("a5kcopy: image length "); puthex(len); puts1("\n");
+        puts1("a6kcopy: image length "); puthex(len); puts1("\n");
     }
     long dst = sc(SYS_open, (long)argv[3], 1 | 0x101000 /* O_WRONLY|O_SYNC */, 0, 0, 0, 0);
     if (dst < 0) die("open dst failed");
@@ -152,22 +152,22 @@ static void phys_to_file(int argc, char **argv)
         unsigned char *p = pmap(phys + off, n, &ml, &b);
         for (ul w = 0; w < n; ) {
             long r = sc(SYS_write, dst, (long)(p + w), n - w, 0, 0, 0);
-            if (r <= 0) { puts1("a5kcopy: write failed at "); puthex(off + w); puts1("\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
+            if (r <= 0) { puts1("a6kcopy: write failed at "); puthex(off + w); puts1("\n"); sc(SYS_exit, 1, 0, 0, 0, 0, 0); }
             w += r;
         }
         punmap(b, ml);
-        if ((off & 0xffffff) == 0) { puts1("a5kcopy: "); puthex(off); puts1("\n"); }
+        if ((off & 0xffffff) == 0) { puts1("a6kcopy: "); puthex(off); puts1("\n"); }
     }
     sc(SYS_fsync, dst, 0, 0, 0, 0, 0);
     sc(SYS_close, dst, 0, 0, 0, 0, 0);
-    puts1("a5kcopy: done\n");
+    puts1("a6kcopy: done\n");
 }
 
 static void mumin_handoff(ul dev_va)
 {
     ul dev = v2p(dev_va);
     ul mva = rd32(dev + 0x34), size = rd32(dev + 0x38);
-    puts1("a5kcopy: muminmem va "); puthex(mva); puts1(" size "); puthex(size); puts1("\n");
+    puts1("a6kcopy: muminmem va "); puthex(mva); puts1(" size "); puthex(size); puts1("\n");
     if (mva < 0x40000000 || mva >= 0x80000000 || size == 0 || size > 0x20000) die("bad muminmem");
     ul ml1, ml2; long b1, b2;
     u32 *src = (u32 *)pmap(mva + 0x40000000, size, &ml1, &b1);
@@ -179,11 +179,11 @@ static void mumin_handoff(ul dev_va)
         dst[i] = v;
     }
     punmap(b1, ml1); punmap(b2, ml2);
-    puts1("a5kcopy: MUMIN hand-off written, rebased "); puthex(n); puts1(" pointers\n");
+    puts1("a6kcopy: MUMIN hand-off written, rebased "); puthex(n); puts1(" pointers\n");
 }
 
 /*
- * Backup.bin RAM image (docs/RE_STILL_CAPTURE.md 6.2, layout as parsed by
+ * Backup.bin RAM image (docs/reference/RE_STILL_CAPTURE.md 6.2, layout as parsed by
  * PMCA BackupFile):
  *   +0x0C "BKn\0" (n = 4: 6-byte property entries {u16 attr, u32 ptr};
  *         n = 2: 5-byte entries {u8 attr, u32 ptr})
@@ -279,7 +279,7 @@ static void bkset(ul id, const char *val, const char *file)
     if (sz != n) die("bkset: size mismatch");
     if (doffp < k.doff || doffp + sz > k.total) die("bkset: property data outside the data area");
 
-    puts1("a5kcopy: bkset "); puthex(id); puts1(" entry "); puthex(eoff);
+    puts1("a6kcopy: bkset "); puthex(id); puts1(" entry "); puthex(eoff);
     puts1(" ptr "); puthex(ptr); puts1(" PA "); puthex(k.pa + doffp);
     puts1(" old "); putbytes(p + doffp, sz);
     u32 ck = ld32(p + 0x20);
@@ -292,7 +292,7 @@ static void bkset(ul id, const char *val, const char *file)
 }
 
 /*
- * Bootloader load table, Backup prop 0x00FA0080 (docs/RE_RAW_DEVELOP.md
+ * Bootloader load table, Backup prop 0x00FA0080 (docs/reference/RE_RAW_DEVELOP.md
  * 3.2).  Oversize property (size code 0xFF): u16 length at the data offset,
  * then the data (in the unit's file 0x2400 bytes, and data offset + 2 +
  * length is exactly the next property's offset).  The data is an array of
@@ -309,9 +309,9 @@ static void bkset(ul id, const char *val, const char *file)
  * PA, refusing files larger than the window.  The other rows are the
  * loader's own lines (av-cam -f2p, kernel/initrd through the stage-2
  * descriptor, kemco by the board).  [? meaning of type and flags]
- * The copied windows are recorded at PA 0x80027040 {"A5KM", n, {start,
+ * The copied windows are recorded at PA 0x80027040 {"A6KM", n, {start,
  * end} x n} for the board, which then keeps the wbimem regions they hit
- * and presents hand-off wbi_memclr = 0 (docs/RE_COLD_BOOT_MODE.md 5.4).
+ * and presents hand-off wbi_memclr = 0 (docs/reference/RE_COLD_BOOT_MODE.md 5.4).
  */
 #define LT_ROW 0x90
 #define LT_MAX 8
@@ -347,14 +347,14 @@ static void loadtable(const char *root, const char *file)
         fn[rl + pl] = 0;
         if (end < start || start < 0x80000000 || end >= 0xA0000000) die("loadtable: bad window");
         long fd = sc(SYS_open, (long)fn, 0, 0, 0, 0, 0);
-        if (fd < 0) { puts1("a5kcopy: loadtable: "); puts1(fn); die(": cannot open"); }
+        if (fd < 0) { puts1("a6kcopy: loadtable: "); puts1(fn); die(": cannot open"); }
         long size = sc(SYS_lseek, fd, 0, 2, 0, 0, 0);
         sc(SYS_close, fd, 0, 0, 0, 0, 0);
-        if (size <= 0 || (ul)size > (ul)end - start + 1) { puts1("a5kcopy: loadtable: "); puts1(fn); die(": larger than its window"); }
+        if (size <= 0 || (ul)size > (ul)end - start + 1) { puts1("a6kcopy: loadtable: "); puts1(fn); die(": larger than its window"); }
         if (nrec == LT_MAX) die("loadtable: too many rows");
         ul n = file_to_phys(fn, start);
         rec[2 + 2 * nrec] = start; rec[3 + 2 * nrec] = end; nrec++;
-        puts1("a5kcopy: loadtable "); puts1(fn); puts1(" "); puthex(n); puts1(" bytes at ");
+        puts1("a6kcopy: loadtable "); puts1(fn); puts1(" "); puthex(n); puts1(" bytes at ");
         puthex(start); puts1(" (window end "); puthex(end); puts1(", flags "); puthex(flags); puts1(")\n");
     }
     punmap(k.b, k.ml);
@@ -362,7 +362,7 @@ static void loadtable(const char *root, const char *file)
     ul ml; long b;
     u32 *d = (u32 *)pmap(0x80027040, 4 * (2 + 2 * nrec), &ml, &b);
     for (ul i = 1; i < 2 + 2 * nrec; i++) d[i] = i == 1 ? nrec : rec[i];
-    d[0] = 0x4d4b3541;      /* "A5KM" written last */
+    d[0] = 0x4d4b3641;      /* "A6KM" written last */
     punmap(b, ml);
 }
 
@@ -370,7 +370,7 @@ void cmain(int argc, char **argv)
 {
     if (argc >= 4 && streq(argv[1], "-f2p")) {
         ul n = file_to_phys(argv[2], hex(argv[3]));
-        puts1("a5kcopy: loaded "); puthex(n); puts1(" bytes at "); puts1(argv[3]); puts1("\n");
+        puts1("a6kcopy: loaded "); puthex(n); puts1(" bytes at "); puts1(argv[3]); puts1("\n");
     } else if (argc >= 3 && streq(argv[1], "-backup")) {
         long fd = sc(SYS_open, (long)argv[2], 0, 0, 0, 0, 0);
         u32 pa = 0;
@@ -378,7 +378,7 @@ void cmain(int argc, char **argv)
         sc(SYS_close, fd, 0, 0, 0, 0, 0);
         if (pa < 0x80000000 || pa >= 0xA0000000) die("bad Backup phys address");
         ul n = file_to_phys(argv[2], pa);
-        puts1("a5kcopy: Backup "); puthex(n); puts1(" bytes at "); puthex(pa); puts1("\n");
+        puts1("a6kcopy: Backup "); puthex(n); puts1(" bytes at "); puthex(pa); puts1("\n");
     } else if (argc >= 4 && streq(argv[1], "-bkset")) {
         bkset(hex(argv[2]), argv[3], argc > 4 ? argv[4] : "/mnt/setting/Backup.bin");
     } else if (argc >= 3 && streq(argv[1], "-loadtable")) {
@@ -398,9 +398,9 @@ void cmain(int argc, char **argv)
         ul ml; long b;
         u32 *p = (u32 *)pmap(0x80027000, 20, &ml, &b);
         p[1] = 0x90000000; p[2] = kl; p[3] = 0x90400000; p[4] = il;
-        p[0] = 0x424b3541;      /* "A5KB" written last */
+        p[0] = 0x424b3641;      /* "A6KB" written last */
         punmap(b, ml);
-        puts1("a5kcopy: stage 2 staged, kernel "); puthex(kl);
+        puts1("a6kcopy: stage 2 staged, kernel "); puthex(kl);
         puts1(" initrd "); puthex(il); puts1("\n");
     } else if (argc >= 4) {
         phys_to_file(argc, argv);

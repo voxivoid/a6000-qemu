@@ -26,7 +26,7 @@ static unsigned long g_lib,g_evctor;
 static volatile int g_menu, g_hl, g_confirm;
 static unsigned char g_sv_ce[8], g_sv_dirty[4];
 static unsigned long g_ce_t, g_dirty_t; static int g_ce_p,g_dirty_p;
-static void lg(const char*s){int fd=open("/android/a5k/ui.log",O_WRONLY|O_CREAT|O_APPEND,0644);if(fd>=0){(void)!write(fd,s,strlen(s));close(fd);}}
+static void lg(const char*s){int fd=open("/android/a6k/ui.log",O_WRONLY|O_CREAT|O_APPEND,0644);if(fd>=0){(void)!write(fd,s,strlen(s));close(fd);}}
 typedef void(*evctor_fn)(void*,unsigned int,unsigned char,unsigned char);
 __attribute__((used)) static void* my_createEvent(void* self,unsigned int id,unsigned char type){
   (void)self;

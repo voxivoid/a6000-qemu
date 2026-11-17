@@ -1,22 +1,22 @@
-"""USB over TCP ("A5KU") to the sony-a5000 QEMU emulator.
+"""USB over TCP ("A6KU") to the sony-a6000 QEMU emulator.
 
 Backend for Sony-PMCA-RE, file pmca/usb/driver/generic/socket.py, selected
 with `pmca-console.py <command> -d socket`.  The emulator's USB device model
-(cxd90014-usbhdc) is the server; see docs/RE_USB_HOST_PATH.md section 5 of
-the a5000 emulator for the protocol.  Connecting plugs the virtual cable,
+(cxd90014-usbhdc) is the server; see docs/reference/RE_USB_HOST_PATH.md section 5 of
+the emulator for the protocol.  Connecting plugs the virtual cable,
 closing the connection (process exit) pulls it.
 
 Environment:
-  A5K_USB=host:port        server address (default 127.0.0.1:7643)
-  A5K_USB_TIMEOUT=ms       transfer timeout (default 30000)
-  A5K_USB_ATTACH_WAIT=s    how long the first connection waits for the
+  A6K_USB=host:port        server address (default 127.0.0.1:7643)
+  A6K_USB_TIMEOUT=ms       transfer timeout (default 30000)
+  A6K_USB_ATTACH_WAIT=s    how long the first connection waits for the
                            camera to pull up its gadget (default 180)
-  A5K_USB_REATTACH_WAIT=s  after the camera dropped its gadget (switch to
+  A6K_USB_REATTACH_WAIT=s  after the camera dropped its gadget (switch to
                            app-install or updater mode, reboot), how long
                            the next device lookup waits for it to come
                            back (default 300; PMCA's own loops wait 5-30 s,
                            too short for an emulated re-enumeration)
-  A5K_USB_DEBUG=1          print every A5KU message
+  A6K_USB_DEBUG=1          print every A6KU message
 
 Copyright (c) 2026 the a5000 emulator authors.  MIT license, like
 Sony-PMCA-RE (see LICENSE next to this file in the emulator repository).
@@ -47,13 +47,13 @@ Interface = collections.namedtuple('Interface', 'bInterfaceNumber, bInterfaceCla
 
 
 def _env_addr():
- host, _, port = os.environ.get('A5K_USB', '127.0.0.1:7643').rpartition(':')
+ host, _, port = os.environ.get('A6K_USB', '127.0.0.1:7643').rpartition(':')
  return host or '127.0.0.1', int(port)
 
-TIMEOUT = int(os.environ.get('A5K_USB_TIMEOUT', '30000')) / 1000.
-ATTACH_WAIT = float(os.environ.get('A5K_USB_ATTACH_WAIT', '180'))
-REATTACH_WAIT = float(os.environ.get('A5K_USB_REATTACH_WAIT', '300'))
-DEBUG = os.environ.get('A5K_USB_DEBUG', '') not in ('', '0')
+TIMEOUT = int(os.environ.get('A6K_USB_TIMEOUT', '30000')) / 1000.
+ATTACH_WAIT = float(os.environ.get('A6K_USB_ATTACH_WAIT', '180'))
+REATTACH_WAIT = float(os.environ.get('A6K_USB_REATTACH_WAIT', '300'))
+DEBUG = os.environ.get('A6K_USB_DEBUG', '') not in ('', '0')
 
 
 class _Device(object):
@@ -131,7 +131,7 @@ class _Connection(object):
     if magic != MAGIC:
      raise EOFError()
     if DEBUG:
-     print('[a5ku] <- type 0x%x ep 0x%x id %d arg %d len %d' % (type, ep, id, arg, length), file=sys.stderr)
+     print('[a6ku] <- type 0x%x ep 0x%x id %d arg %d len %d' % (type, ep, id, arg, length), file=sys.stderr)
     with self.cond:
      if type == T_EVENT:
       gen, speed = struct.unpack('<II', data[:8])
@@ -154,7 +154,7 @@ class _Connection(object):
 
  def _send(self, type, ep, id, payload, arg):
   if DEBUG:
-   print('[a5ku] -> type 0x%x ep 0x%x id %d arg %d len %d' % (type, ep, id, arg, len(payload)), file=sys.stderr)
+   print('[a6ku] -> type 0x%x ep 0x%x id %d arg %d len %d' % (type, ep, id, arg, len(payload)), file=sys.stderr)
   with self.lock:
    self.sock.sendall(HDR.pack(MAGIC, type, ep, id, len(payload), arg) + payload)
 
@@ -164,7 +164,7 @@ class _Connection(object):
    timeout = TIMEOUT
   with self.cond:
    if self.closed:
-    raise GenericUsbException('A5KU connection closed')
+    raise GenericUsbException('A6KU connection closed')
    id = self.nextId
    self.nextId = self.nextId % 0x7fffffff + 1
    self.pending[id] = None
@@ -180,7 +180,7 @@ class _Connection(object):
     if self.pending[id] is not None:
      return self.pending[id]
     if self.closed:
-     raise GenericUsbException('A5KU connection closed')
+     raise GenericUsbException('A6KU connection closed')
    # timeout: cancel, then wait for the CANCELLED (or a late) completion
    self._send(T_CANCEL, 0, 0, b'', id)
    with self.cond:
@@ -239,7 +239,7 @@ class _Connection(object):
   dev = _Device(gen, desc, config)
   self.control(0x00, 9, dev.bConfigurationValue, 0)
   if DEBUG:
-   print('[a5ku] enumerated %04x:%04x gen %d, interface 0 class %d' % (dev.idVendor, dev.idProduct, gen, dev.interfaces[0].bInterfaceClass if dev.interfaces else -1), file=sys.stderr)
+   print('[a6ku] enumerated %04x:%04x gen %d, interface 0 class %d' % (dev.idVendor, dev.idProduct, gen, dev.interfaces[0].bInterfaceClass if dev.interfaces else -1), file=sys.stderr)
   with self.cond:
    if self.gen != gen:
     return None

@@ -1,13 +1,13 @@
 /*
- * a5ktrace — QEMU TCG plugin: log guest state when given addresses execute.
- * Debug tool for the sony-a5000 machine (not hardware; the guest cannot see it).
+ * a6ktrace — QEMU TCG plugin: log guest state when given addresses execute.
+ * Debug tool for the sony-a6000 machine (not hardware; the guest cannot see it).
  *
  * Unlike gdb breakpoint commands it never loses events when several vCPUs hit
  * at once.  For each hit it prints the vCPU, pc, r0-r3, lr, the Linux task
  * name (thread_info = sp & ~0x1FFF, task = ti+12, comm = task+0x1E8 on this
  * 3.0 kernel) and the first 4 words at r1.
  *
- *   -plugin emulator/tools/liba5ktrace.dylib,pc=0x3f04cbd4,r0=0x920021,pc=...
+ *   -plugin emulator/tools/liba6ktrace.dylib,pc=0x3f04cbd4,r0=0x920021,pc=...
  * "words=N" (<=20) words dumped at r1.
  * "x=V" (repeatable) drops hits with r0 == V at every probe.
  * "comm=NAME" (repeatable) keeps only hits from tasks whose name starts NAME.
@@ -15,7 +15,7 @@
  * probes that follow; "s=N" after a "pc=" sets it for that probe only.
  * "r0=" after a "pc=" filters that address on r0 (repeatable per pc: any match).
  * "ts=1" puts the host wall clock (g_get_real_time(), us) right after the
- * "A5KT" / "A5KF" tag of every hit line (latency analysis, RE_ENGINE_OOPS).
+ * "A6KT" / "A6KF" tag of every hit line (latency analysis, RE_ENGINE_OOPS).
  * "user=0x<base>" is not supported: user-space addresses must be passed resolved.
  * Output goes to the QEMU log (-D file).
  */
@@ -42,14 +42,14 @@ static int ncomms;
  * line, optional second column = label).  The file is re-read when its mtime
  * changes (checked at most every 500 ms from the translator); the plugin then
  * resets itself so that already translated blocks are instrumented again.
- * Each address logs at most "fncap=N" hits (default 4) as one "A5KF" line.
+ * Each address logs at most "fncap=N" hits (default 4) as one "A6KF" line.
  * Meant for user-space code whose load address is only known at run time.
  * "fnwords=N" adds N words at r0, "fnstr=K" the C string at *(r0 + 4K),
  * "fnr1s=1" the C string at r1; "fnr1w=N" / "fnr2w=N" up to 16 words at r1 / r2.
- * Every A5KF line also carries the current task's comm in [brackets].
+ * Every A6KF line also carries the current task's comm in [brackets].
  * More fn= line forms: "LIB.so+OFF label" = offset into a user library of
  * the traced process (bases from its VMAs, rescanned when im.elf's mm is
- * found); "#m TEXT" prints an "A5KMARK TEXT" line (to mark phases).
+ * found); "#m TEXT" prints an "A6KMARK TEXT" line (to mark phases).
  */
 static char *fnpath;
 static int fncap = 4;
@@ -60,7 +60,7 @@ static int fnr1w;             /* "fnr1w=N": print N words at r1 */
 static int fnr2w;             /* "fnr2w=N": print N words at r2 */
 static bool tstamp;           /* "ts=1": host wall clock (us) on hit lines */
 
-/* "" or "<host us> " after the A5KT / A5KF tag */
+/* "" or "<host us> " after the A6KT / A6KF tag */
 static char *ts_str(void)
 {
     return tstamp ? g_strdup_printf("%" PRId64 " ", g_get_real_time())
@@ -144,7 +144,7 @@ static void scan_libs(void)
         if (dup) { continue; }
         g_strlcpy(libn[nlib], nm, sizeof(libn[0])); libb[nlib++] = rd32(v + 4);
     }
-    g_autofree char *t = g_strdup_printf("A5KB %d libs scanned\n", nlib);
+    g_autofree char *t = g_strdup_printf("A6KB %d libs scanned\n", nlib);
     qemu_plugin_outs(t);
 }
 static uint32_t lib_base(const char *name)
@@ -175,7 +175,7 @@ static void find_libobj(unsigned int cpu)
         uint32_t a = rd32(v + 4), e = rd32(v + 8);
         if (want_libobj > 1 && rd32(v + 72) == 0 && rd32(v + 76)) {
             /* "libobj=2": list every file mapping at offset 0 */
-            g_autofree char *t = g_strdup_printf("A5KB vma %08x size %x\n",
+            g_autofree char *t = g_strdup_printf("A6KB vma %08x size %x\n",
                                                  a, e - a);
             qemu_plugin_outs(t);
         }
@@ -189,7 +189,7 @@ static void find_libobj(unsigned int cpu)
     if (!libobj_base) {
         return;
     }
-    g_autofree char *m = g_strdup_printf("A5KB libObj base %08x\n",
+    g_autofree char *m = g_strdup_printf("A6KB libObj base %08x\n",
                                          libobj_base);
     qemu_plugin_outs(m);
     pokes_pending = npokes > 0;
@@ -217,7 +217,7 @@ static void do_pokes(unsigned int cpu)
         g_byte_array_append(b, &val, 1);
         bool ok = qemu_plugin_write_memory_vaddr(libobj_base + pokes[k][0], b);
         g_byte_array_free(b, TRUE);
-        g_autofree char *t = g_strdup_printf("A5KB poke +%x = %02x %s\n",
+        g_autofree char *t = g_strdup_printf("A6KB poke +%x = %02x %s\n",
                                              pokes[k][0], val, ok ? "ok" : "FAILED");
         qemu_plugin_outs(t);
     }
@@ -288,7 +288,7 @@ static void hit(unsigned int cpu, void *udata)
     }
     g_autofree char *tsv = ts_str();
     g_autofree char *s = g_strdup_printf(
-        "A5KT %scpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
+        "A6KT %scpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
         "[%s] t=%08x m=", tsv, cpu, probes[i].pc, r[0], r[1], r[2], r[3], lr, comm,
         task);
     GString *g = g_string_new(s);
@@ -321,7 +321,7 @@ static void fn_hit(unsigned int cpu, void *udata)
     GString *g = g_string_new(NULL);
     g_autofree char *tsv = ts_str();
     g_string_printf(g,
-        "A5KF %scpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
+        "A6KF %scpu%u pc=%08" PRIx64 " r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x "
         "n=%d %s", tsv, cpu, f->pc, r0, rd_reg(cpu, 1),
         rd_reg(cpu, 2), rd_reg(cpu, 3), rd_reg(cpu, 14), f->hits, f->label);
     if (r0 >= 0x1000) {
@@ -405,7 +405,7 @@ static bool fn_reload(void)
             continue;
         }
         if (!strncmp(l, "#m ", 3)) {
-            g_autofree char *mk = g_strdup_printf("A5KMARK %s\n", l + 3);
+            g_autofree char *mk = g_strdup_printf("A6KMARK %s\n", l + 3);
             qemu_plugin_outs(mk);
             continue;
         }
@@ -452,7 +452,7 @@ static bool fn_reload(void)
     }
     /* old table is leaked on purpose: callbacks may still point into it */
     fnset = t;
-    g_autofree char *m = g_strdup_printf("A5KF loaded %u probes from %s\n",
+    g_autofree char *m = g_strdup_printf("A6KF loaded %u probes from %s\n",
                                          g_hash_table_size(t), fnpath);
     qemu_plugin_outs(m);
     qemu_plugin_reset(self_id, fn_reset_done);

@@ -1,10 +1,10 @@
 /*
- * Atheros AR6003 (hw 2.1.1) SDIO Wi-Fi module of the Sony a5000.
+ * Atheros AR6003 (hw 2.1.1) SDIO Wi-Fi module (reference build; A6000 module unverified).
  *
  * Shared state of the SDIO card (hw/sd/ar6003_sdio.c: SD protocol, CCCR,
  * CIS, host-interface registers, mailboxes) and of the chip-firmware HLE
  * (hw/net/ar6003_fw.c: BMI, HTC, WMI, virtual air, WPA2-PSK).
- * Spec: emulator/docs/RE_WIFI.md.
+ * Spec: emulator/docs/reference/RE_WIFI.md.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */

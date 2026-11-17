@@ -26,7 +26,7 @@ static unsigned char *img;
 static size_t img_len;
 static int nfail, npass;
 
-/* ---- program-binary reader (layout: docs/RE_GPU_P3D_SHADER.md §3) ---- */
+/* ---- program-binary reader (layout: docs/reference/RE_GPU_P3D_SHADER.md §3) ---- */
 
 typedef struct Rd { const unsigned char *b; size_t o; } Rd;
 static unsigned u8(Rd *r) { return r->b[r->o++]; }

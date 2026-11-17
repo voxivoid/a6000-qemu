@@ -1,12 +1,12 @@
 /*
- * a5k-lens: HLE of an E-mount lens MCU on the a5000 mount (lens=ekit).
+ * a6k-lens: HLE of an E-mount lens MCU on the E-mount (lens=ekit).
  *
  * Reason for HLE: no lens firmware is available.  The boundary is the
  * mount: the handshake GPIOs and the UART1 byte stream (750 kbaud) that
- * av-cam moves with the 0xF0102000 memory DMA (docs/RE_LENS_EMOUNT.md
+ * av-cam moves with the 0xF0102000 memory DMA (docs/reference/RE_LENS_EMOUNT.md
  * sections 2.4, 9.2-9.7).  No MMIO of its own.
  *
- * Lines (wired by hw/arm/sony_a5000.c):
+ * Lines (wired by hw/arm/sony_a6000.c):
  *   in  0  P5.4  output latch, body "H1" (handshake, then high while the
  *              body transmits; av-cam 43993AD4)
  *   in  1  P2.11 output latch, body "H2" (handshake; later UART1 TXD)
@@ -63,7 +63,7 @@
  * class-1 word read by 436B7E5C as 100*value), but populating it does not
  * light the OSD F-number either (stays "F--").
  *
- * Decoded trigger (section 11.8, IDA + a5ktrace, 2026-11-16): the 5/6
+ * Decoded trigger (section 11.8, IDA + a6ktrace, 2026-11-16): the 5/6
  * request is built by sub_436CFB70 -> sub_43A4C60E -> sub_436B5188, reached
  * only from sub_4380C5A8 (the AE-result -> lens-aperture driver), which runs
  * only via the AE "control/apply" job sub_43853DA8.  That job is dispatched
@@ -92,8 +92,8 @@
 #include "hw/dma/cxd90014_mdma.h"
 #include "trace.h"
 
-#define TYPE_A5K_LENS "a5k-lens"
-OBJECT_DECLARE_SIMPLE_TYPE(LensState, A5K_LENS)
+#define TYPE_A6K_LENS "a6k-lens"
+OBJECT_DECLARE_SIMPLE_TYPE(LensState, A6K_LENS)
 
 #define LENS_UART_DR        0xF2001000u     /* UART1 DR (1.2) */
 #define LENS_NS_PER_BYTE    13333           /* 10 bits at 750 kbaud */
@@ -190,7 +190,7 @@ static void lens_echo_cb(void *opaque)
 static void lens_set_state(LensState *s, int st)
 {
     if (s->state != st) {
-        trace_a5k_lens_state(s->state, st);
+        trace_a6k_lens_state(s->state, st);
         s->state = st;
     }
 }
@@ -223,7 +223,7 @@ static void lens_rx_pull(void *opaque)
     }
     n = cxd90014_mdma_periph_rx(s->mdma, s->reply + s->reply_pos,
                                 s->reply_len - s->reply_pos);
-    trace_a5k_lens_reply(s->reply_len, s->reply_pos, n, s->reply[5],
+    trace_a6k_lens_reply(s->reply_len, s->reply_pos, n, s->reply[5],
                          qemu_clock_get_us(QEMU_CLOCK_VIRTUAL));
     s->reply_pos += n;
     if (s->reply_pos >= s->reply_len) {
@@ -241,7 +241,7 @@ static void lens_in(void *opaque, int n, int level)
     if (level == old) {
         return;
     }
-    trace_a5k_lens_in(n, level, now / 1000);
+    trace_a6k_lens_in(n, level, now / 1000);
     s->in[n] = level;
     if (n == 2) {
         /* the supply: the lens MCU starts in the handshake state */
@@ -297,17 +297,17 @@ static void lens_rx_frame(void *opaque, const uint8_t *b, size_t len)
     uint8_t *r = s->reply;
 
     if (s->state != LENS_UART) {
-        qemu_log_mask(LOG_GUEST_ERROR, "a5k-lens: %zu bytes while not in "
+        qemu_log_mask(LOG_GUEST_ERROR, "a6k-lens: %zu bytes while not in "
                       "UART mode (state %d)\n", len, s->state);
         return;
     }
     if (len < 8 || b[0] != 0xF0) {
-        qemu_log_mask(LOG_GUEST_ERROR, "a5k-lens: bad header\n");
+        qemu_log_mask(LOG_GUEST_ERROR, "a6k-lens: bad header\n");
         return;
     }
     n = b[1] | b[2] << 8;
     if (n < 8 || n > len || b[n - 1] != 0x55) {
-        qemu_log_mask(LOG_GUEST_ERROR, "a5k-lens: bad length/footer "
+        qemu_log_mask(LOG_GUEST_ERROR, "a6k-lens: bad length/footer "
                       "(len %zu, got %zu)\n", n, len);
         return;
     }
@@ -315,14 +315,14 @@ static void lens_rx_frame(void *opaque, const uint8_t *b, size_t len)
         sum += b[i];
     }
     if (sum != (b[n - 3] | b[n - 2] << 8)) {
-        qemu_log_mask(LOG_GUEST_ERROR, "a5k-lens: checksum NG\n");
+        qemu_log_mask(LOG_GUEST_ERROR, "a6k-lens: checksum NG\n");
         return;
     }
     s->frames++;
-    trace_a5k_lens_frame(n, b[3], b[4], b[5],
+    trace_a6k_lens_frame(n, b[3], b[4], b[5],
                          qemu_clock_get_us(QEMU_CLOCK_VIRTUAL));
     if ((b[3] & 7) != 2) {
-        qemu_log_mask(LOG_UNIMP, "a5k-lens: body frame type %d, id 0x%02x "
+        qemu_log_mask(LOG_UNIMP, "a6k-lens: body frame type %d, id 0x%02x "
                       "not answered\n", b[3] & 7, b[5]);
         return;
     }
@@ -334,15 +334,15 @@ static void lens_rx_frame(void *opaque, const uint8_t *b, size_t len)
         size_t bl = id < ARRAY_SIZE(lens_blk) ? lens_blk[id][1] : 0;
 
         if (!a || pos + a > n - 3) {
-            qemu_log_mask(LOG_UNIMP, "a5k-lens: request block 0x%02x "
+            qemu_log_mask(LOG_UNIMP, "a6k-lens: request block 0x%02x "
                           "(A %zu) at %zu: cannot parse\n", id, a, pos);
             break;
         }
-        trace_a5k_lens_block(id, a, bl);
+        trace_a6k_lens_block(id, a, bl);
         if (bl && o + bl + 3 <= LENS_MAXF) {
             o += lens_put_block(s, r + o, id);
         } else if (!bl) {
-            qemu_log_mask(LOG_UNIMP, "a5k-lens: block 0x%02x has no lens "
+            qemu_log_mask(LOG_UNIMP, "a6k-lens: block 0x%02x has no lens "
                           "reply length\n", id);
         }
         pos += a;
@@ -377,7 +377,7 @@ static void lens_rx_frame(void *opaque, const uint8_t *b, size_t len)
 
 static void lens_realize(DeviceState *dev, Error **errp)
 {
-    LensState *s = A5K_LENS(dev);
+    LensState *s = A6K_LENS(dev);
 
     if (s->mdma) {
         cxd90014_mdma_set_periph(s->mdma, LENS_UART_DR, LENS_NS_PER_BYTE,
@@ -387,7 +387,7 @@ static void lens_realize(DeviceState *dev, Error **errp)
 
 static void lens_reset(DeviceState *dev)
 {
-    LensState *s = A5K_LENS(dev);
+    LensState *s = A6K_LENS(dev);
 
     memset(s->in, 0, sizeof(s->in));
     memset(s->echo, 0, sizeof(s->echo));
@@ -401,7 +401,7 @@ static void lens_reset(DeviceState *dev)
 
 static void lens_init(Object *obj)
 {
-    LensState *s = A5K_LENS(obj);
+    LensState *s = A6K_LENS(obj);
 
     qdev_init_gpio_in(DEVICE(obj), lens_in, 3);
     qdev_init_gpio_out(DEVICE(obj), s->out, 2);
@@ -418,7 +418,7 @@ static const Property lens_props[] = {
      * current behaviour).  Declared as the stable knob for a future
      * live-view integration; NOT emitted on the wire yet, see the
      * "Aperture not yet reported" note in the file header and
-     * docs/RE_LENS_EMOUNT.md section 11.7.  Setting them today has no
+     * docs/reference/RE_LENS_EMOUNT.md section 11.7.  Setting them today has no
      * effect because av-cam never polls the virtual lens for the live
      * aperture in the emulator (no live-view VD; measured 2026-11-16).
      */
@@ -436,7 +436,7 @@ static void lens_class_init(ObjectClass *klass, const void *data)
 }
 
 static const TypeInfo lens_info = {
-    .name = TYPE_A5K_LENS,
+    .name = TYPE_A6K_LENS,
     .parent = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(LensState),
     .instance_init = lens_init,

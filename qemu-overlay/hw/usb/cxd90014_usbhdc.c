@@ -1,10 +1,10 @@
 /*
- * Sony CXD90014 (a5000) USB device side: Fujitsu/Socionext F_USB20HDC
- * device controller, its HDMAC and the SoC VBUS/ID glue, plus the "A5KU"
+ * Sony CXD90014 USB device side: Fujitsu/Socionext F_USB20HDC
+ * device controller, its HDMAC and the SoC VBUS/ID glue, plus the "A6KU"
  * virtual cable (USB over a TCP chardev).
  *
- * Spec: docs/RE_USB_DEVICE_CONTROLLER.md (registers, events, DMA) and
- * docs/RE_USB_HOST_PATH.md section 5 (A5KU protocol).  Everything here is
+ * Spec: docs/reference/RE_USB_DEVICE_CONTROLLER.md (registers, events, DMA) and
+ * docs/reference/RE_USB_HOST_PATH.md section 5 (A6KU protocol).  Everything here is
  * S/H (static analysis of the firmware 1.10 kernel driver f_usb20hdc_udc and
  * fusb_otg); section numbers below refer to RE_USB_DEVICE_CONTROLLER.md
  * unless "HP" (host path) is given.
@@ -47,7 +47,7 @@
  *
  * Endpoint engine (section 3): at most one packet in flight per EP.  OUT
  * packets are only accepted when the firmware armed the EP (DMA running for
- * it, or the READY IE enabled for PIO), so NAK = the A5KU request stays
+ * it, or the READY IE enabled for PIO), so NAK = the A6KU request stays
  * pending.  Behaviour the spec flags as hang-critical:
  *   - the status-stage ZLP that the firmware pre-loads into the EP0 IN
  *     buffer at SETUP time is only taken after the OUT data stage;
@@ -55,7 +55,7 @@
  *   - INTS / DEVS event bits are write-0-to-clear;
  *   - EPCMD strobes are one-shot (EPCMD reads back 0 = never busy).
  *
- * Virtual cable: the chardev property ("chardev") is the A5KU server.  The
+ * Virtual cable: the chardev property ("chardev") is the A6KU server.  The
  * cable follows the TCP client: client connected = VBUS on (otg+0x10 = 2,
  * GIC 232 pulse), client gone = VBUS off.  This deviates from HP 5.1
  * ("the connection is not the cable"), as asked by the task.  Without a
@@ -117,7 +117,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(CXDUsbHdcState, CXD_USBHDC)
 #define HD_DE           (1u << 31)
 #define HD_EB           (1u << 31)
 
-/* A5KU (HP section 5) */
+/* A6KU (HP section 5) */
 #define AU_MAGIC        0x5541
 #define AU_HDR          16
 #define AU_MAXLEN       (64 * 1024 * 1024)
@@ -189,7 +189,7 @@ struct CXDUsbHdcState {
     uint32_t otg[0x400];
     bool vbus;
 
-    /* A5KU */
+    /* A6KU */
     bool connected, hello, attached;
     uint32_t gen;
     GByteArray *rx;
@@ -314,7 +314,7 @@ static uint32_t cur_speed(CXDUsbHdcState *s)
     return (s->devc & DEV_FS) ? 2 : 3;
 }
 
-/* ----------------------------------------------------------- A5KU output */
+/* ----------------------------------------------------------- A6KU output */
 
 static void au_send(CXDUsbHdcState *s, uint8_t type, uint8_t ep, uint32_t id,
                     uint32_t arg, const uint8_t *p, uint32_t len)
@@ -1249,7 +1249,7 @@ static void set_vbus(CXDUsbHdcState *s, bool on)
     kick(s);
 }
 
-/* ----------------------------------------------------------- A5KU input */
+/* ----------------------------------------------------------- A6KU input */
 
 static void au_handle(CXDUsbHdcState *s, const uint8_t *h, const uint8_t *p,
                       uint32_t len)
@@ -1351,7 +1351,7 @@ static void au_receive(void *opaque, const uint8_t *buf, int size)
         const uint8_t *h = s->rx->data;
         uint32_t len = ldl_le_p(h + 8);
         if (lduw_le_p(h) != AU_MAGIC || len > AU_MAXLEN) {
-            qemu_log_mask(LOG_GUEST_ERROR, "usbhdc: bad A5KU header, "
+            qemu_log_mask(LOG_GUEST_ERROR, "usbhdc: bad A6KU header, "
                           "dropping %u buffered bytes\n", s->rx->len);
             g_byte_array_set_size(s->rx, 0);
             return;
@@ -1463,7 +1463,7 @@ static void usbhdc_class_init(ObjectClass *oc, const void *data)
     dc->realize = usbhdc_realize;
     device_class_set_legacy_reset(dc, usbhdc_reset);
     device_class_set_props(dc, usbhdc_props);
-    dc->desc = "CXD90014 F_USB20HDC USB device + HDMAC + VBUS glue (A5KU)";
+    dc->desc = "CXD90014 F_USB20HDC USB device + HDMAC + VBUS glue (A6KU)";
 }
 
 static const TypeInfo usbhdc_info = {

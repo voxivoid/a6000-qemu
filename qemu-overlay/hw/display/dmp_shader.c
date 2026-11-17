@@ -1,5 +1,5 @@
 /*
- * DMP SMAPH-S30 ("SUGILITE") programmable shader unit -- interpreter (a5000).
+ * DMP SMAPH-S30 ("SUGILITE") programmable shader unit -- interpreter.
  *
  * One unified core runs both the vertex and the fragment program out of a
  * single instruction memory (P3D reg 0x458 = load address in instructions,
@@ -7,7 +7,7 @@
  * descriptor table (0x460 index / 0x461 data, 128 entries) and one float
  * constant file (0x450 index / 0x451..0x454 x,y,z,w as IEEE f32).  VS entry
  * = reg 0x442, FS entry = reg 0x443 (the caller puts it in prog->entry).
- * Evidence, field table and what is hypothesis: docs/RE_GPU_P3D_SHADER.md.
+ * Evidence, field table and what is hypothesis: docs/reference/RE_GPU_P3D_SHADER.md.
  *
  * Instruction (w0 = first word written to 0x459, w1 = second):
  *   w0[31:28] src1 index[3:0], w1[2:0] src1 index[6:4]

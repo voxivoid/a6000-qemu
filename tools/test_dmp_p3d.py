@@ -1,12 +1,12 @@
 """Synthetic P3D command-list tests for hw/display/dmp_smaph.c.
 
-Starts the sony-a5000 machine under the qtest accelerator (no guest code
+Starts the sony-a6000 machine under the qtest accelerator (no guest code
 runs), writes hand-built shader programs, vertex data and command lists
 into RAM, kicks them through the GPU registers (+0x1804 / +0x1800) and
 reads the colour / depth buffers back.  Covers the fixed-function parts the
 stock UI lists do not exercise yet: depth and stencil test, points and
 lines, mip levels / LOD bias / linear mip filter, border wrap.  Register
-meanings: docs/RE_GPU_P3D_CMD.md.  No firmware data is used except the
+meanings: docs/reference/RE_GPU_P3D_CMD.md.  No firmware data is used except the
 NAND image run.sh needs to build the machine.
 
 usage: python3 -I emulator/tools/test_dmp_p3d.py <qemu-system-arm> <nand>
@@ -18,7 +18,7 @@ QEMU, NAND = sys.argv[1], sys.argv[2]
 RUN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    'run.sh')
 PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 46073
-env = dict(os.environ, A5K_NAND=NAND, A5K_QEMU=QEMU)
+env = dict(os.environ, A6K_NAND=NAND, A6K_QEMU=QEMU)
 proc = subprocess.Popen([RUN, '-display', 'none', '-serial', 'none', '-accel', 'qtest',
                          '-qtest', 'tcp:127.0.0.1:%d,server=on,wait=off' % PORT,
                          '-monitor', 'none'], env=env,

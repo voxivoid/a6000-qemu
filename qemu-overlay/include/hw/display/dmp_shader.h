@@ -1,5 +1,5 @@
 /*
- * DMP SMAPH-S30 programmable shader units — interpreter interface (a5000).
+ * DMP SMAPH-S30 programmable shader units — interpreter interface.
  *
  * Contract between the P3D command-list decoder / rasteriser
  * (hw/display/dmp_smaph.c) and the shader interpreter
@@ -7,7 +7,7 @@
  * guest uploaded through P3D registers (program words, operand
  * descriptors, uniforms, attribute layout) into DmpShaderProg and calls
  * the interpreter per vertex / per fragment.  Field meanings are filled in
- * from docs/RE_GPU_P3D_SHADER.md; extend the structs as needed, but keep
+ * from docs/reference/RE_GPU_P3D_SHADER.md; extend the structs as needed, but keep
  * both sides building.
  */
 #ifndef HW_DISPLAY_DMP_SHADER_H
@@ -62,7 +62,7 @@ typedef enum DmpShaderStage {
 /*
  * Run one invocation.  in[] are the input registers (vertex attributes or
  * interpolated varyings), out[] receive the output registers.  What the
- * interpreter uses from prog (docs/RE_GPU_P3D_SHADER.md §1):
+ * interpreter uses from prog (docs/reference/RE_GPU_P3D_SHADER.md §1):
  *   code[]   words written through P3D 0x459, indexed from address 0
  *            (0x458 = instruction address, i.e. word index / 2)
  *   opdesc[] 0x461 data at index 0x460 (0..127)

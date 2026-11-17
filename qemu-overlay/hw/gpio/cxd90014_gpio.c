@@ -1,7 +1,7 @@
 /*
  * CXD90014 GPIO, 18 ports (gpio_p0..p17) at PA 0xF2910000 + 0x100*n.
  * Register triples (value / set / clear), from the kernel hw_gpio_* code
- * (docs/RE_INPUT_I2C_POWER.md):
+ * (docs/reference/RE_INPUT_I2C_POWER.md):
  *   +0x00/04/08 direction (1 = output [?])   +0x10 pin input data
  *   +0x20/24/28 input enable                  +0x30/34/38 mode/pull
  *   +0x40/44/48 output latch
@@ -12,7 +12,7 @@
  * released).
  * P0.9 is the E-mount lens-detect line (active low, av-cam 439939C0); it
  * idles high (empty mount) unless the "lens-attached" property is set
- * (docs/RE_LENS_EMOUNT.md section 5.1).
+ * (docs/reference/RE_LENS_EMOUNT.md section 5.1).
  * Named GPIO outputs "out" (32 per port, port-major) follow the output
  * latch of each pin, so board models can react to firmware-driven lines
  * (lens handshake).  The latch is used, not latch AND direction: av-cam

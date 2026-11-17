@@ -1,7 +1,7 @@
 /*
- * CXD90014 camera timing-event block at PA 0xF3C30000 (a5000).
+ * CXD90014 camera timing-event block at PA 0xF3C30000.
  *
- * Programming model from av-cam.bin 1.10 (docs/RE_ENGINE_TICK.md):
+ * Programming model from av-cam.bin 1.10 (docs/reference/RE_ENGINE_TICK.md):
  *   +0xE0 free-running counter (rd 436ac5f4).  Clock: +0xE8 = 0x17 is
  *         written at init; taken as 24 MHz / (0x17 + 1) = 1 MHz [?] -- this
  *         matches the engine's own frame constant 0x8257 = 33367 us
@@ -159,7 +159,7 @@ static void ev_write(void *opaque, hwaddr off, uint64_t v, unsigned size)
          * the compare value (+0x114 + 8k) just latches.  The IRQ 84
          * handler disarms by writing a past compare value and then
          * +0x110 = 0; re-evaluating on the compare write fired the
-         * comparator a second time (docs/RE_ENGINE_STABILITY.md §2).
+         * comparator a second time (docs/reference/RE_ENGINE_STABILITY.md §2).
          */
         if (off >= 0x110 && off < 0x110 + 8 * NCMP && !((off - 0x110) & 7)) {
             ev_cmp_arm(s, (off - 0x110) / 8);

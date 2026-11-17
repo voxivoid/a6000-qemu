@@ -1,7 +1,7 @@
 /*
- * CXD90014 SIO (SPI-style serial) controller, 5 channels (a5000).
+ * CXD90014 SIO (SPI-style serial) controller, 5 channels.
  * PA 0xF2405000 + 0x200*ch, GIC IRQ 201 + ch.  From av-cam.bin's driver
- * (docs/RE_AVCAM_IRQ_BOOT.md §4):
+ * (docs/reference/RE_AVCAM_IRQ_BOOT.md §4):
  *   +0x00  W config bits; R bit29 = done, bit25 = error;
  *          W |= bit31 clears the IRQ, |= bit30 clears error, &= ~bit29
  *   +0x10  0x01000000 = enable
@@ -10,7 +10,7 @@
  * Start = the driver sets +0x00 bit29 (0x43918df0); the hardware keeps it set
  * as "done" until the ISR clears it (status reader 0x43918e60).
  *   +0x04  transfer mode word; on ch2 bit29 = TX, bit28 = RX [H]
- *          (docs/RE_NFC.md section 1.2)
+ *          (docs/reference/RE_NFC.md section 1.2)
  * Model: a start completes immediately (done + IRQ).  Board-level slaves
  * (sub-micro on ch0/ch3, NFC tag on ch2) exchange the FIFO bytes; a channel
  * without a slave transfers nothing (receive data stays as is).
