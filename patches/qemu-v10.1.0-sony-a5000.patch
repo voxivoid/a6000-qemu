@@ -162,7 +162,7 @@ index 4c09790..f7b93e4 100644
  xilinx_axidma_loading_desc_fail(uint32_t res) "error:%u"
 +
 +# cxd90014_dmac.c
-+cxd_dmac_done(int ch, uint32_t n) "ch0 chain of 0 done"
++cxd_dmac_done(int ch, uint32_t n) "ch%d chain of %u done"
 +cxd_mdma_copy(int ch, uint32_t src, uint32_t dst, uint64_t len) "ch%d 0x%08x -> 0x%08x len 0x%" PRIx64
 +
 +# cxd90014_aif.c

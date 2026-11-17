@@ -2286,9 +2286,16 @@ static void a5k_init(MachineState *ms)
     if (ms->kernel_cmdline && *ms->kernel_cmdline) {
         cmd = ms->kernel_cmdline;
     } else if (con) {
-        g_autoptr(GString) g = g_string_new(a5k_default_cmdline);
-        g_string_replace(g, "console=ttynull", con, 1);
-        dbg = g_string_free(g_steal_pointer(&g), false);
+        /* g_string_replace() needs GLib 2.68; QEMU caps the API at 2.66 */
+        const char *tok = "console=ttynull";
+        const char *at = strstr(a5k_default_cmdline, tok);
+        if (at) {
+            dbg = g_strdup_printf("%.*s%s%s",
+                                  (int)(at - a5k_default_cmdline),
+                                  a5k_default_cmdline, con, at + strlen(tok));
+        } else {
+            dbg = g_strdup(a5k_default_cmdline);
+        }
         cmd = dbg;
     }
     if (prov_len) {

@@ -32,7 +32,7 @@ python3 -I "$E/provision/mkinitramfs.py" "$E/provision/prov.cpio" init.sh
 LOG="$E/state/provision.log"
 "$E/qemu/build/qemu-system-arm" -M "sony-a5000,debug-console=on,nand=$OUT.tmp,provision=$IMG" \
   -m 512M -kernel "$F/vmlinux.bin" -initrd "$E/provision/prov.cpio" \
-  -display none -serial file:"$LOG" -monitor none &
+  -display none -serial null -serial null -serial file:"$LOG" -monitor none &  # debug-console = ttyAM1 = UART2 (3rd -serial)
 QP=$!
 for i in $(seq 1 240); do
   sleep 5

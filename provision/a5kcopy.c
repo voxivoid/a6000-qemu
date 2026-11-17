@@ -24,7 +24,9 @@
  *
  * Build (from the emulator repository root):
  *   arm-none-eabi-gcc -march=armv7-a -marm -O2 -nostdlib -static \
- *       -ffreestanding -o provision/a5kcopy provision/a5kcopy.c
+ *       -ffreestanding -Wl,-Ttext-segment=0x10000 -o provision/a5kcopy provision/a5kcopy.c
+ *   (-Ttext-segment: some toolchains, e.g. Ubuntu arm-none-eabi 10.3, link at
+ *   VA 0; the kernel refuses page 0 and exec dies with SIGKILL "Killed")
  */
 typedef unsigned long ul;
 typedef unsigned int u32;
