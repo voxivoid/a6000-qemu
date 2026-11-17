@@ -26,3 +26,10 @@ __pycache__/
 # build products
 /tools/*.dylib
 /tools/*.so
+# --- a6000-qemu additions ---
+# Sony updater packages / firmware containers
+*.exe
+*.dat
+*.FDAT
+# raw dumps from the owner's A6000 (NAND, NVRAM/backup, RAM, SWD)
+/dumps/
