@@ -26,6 +26,8 @@ struct AdcState {
     MemoryRegion mr;
     uint32_t reg[0x100 / 4];
     uint16_t result[12];
+    uint16_t idle[12];      /* level with no key pressed (reset value) */
+    bool idle_set;
     QEMUTimer *t;
     qemu_irq irq;
 };
@@ -89,12 +91,38 @@ void cxd90014_adc_set(DeviceState *dev, int ch, uint16_t level)
     }
 }
 
+/*
+ * Idle (released) level of a channel, kept across resets.  Default 1023;
+ * a position-type input such as the A6000 mode dial (two ladders, one of
+ * them inside a band at every dial position) sets it to the band it rests in.
+ */
+void cxd90014_adc_set_idle(DeviceState *dev, int ch, uint16_t level)
+{
+    AdcState *s = CXD_ADC(dev);
+    if (!s->idle_set) {
+        for (int i = 0; i < 12; i++) {
+            s->idle[i] = 1023;
+        }
+        s->idle_set = true;
+    }
+    if (ch >= 0 && ch < 12) {
+        s->idle[ch] = level & 0x3ff;
+        s->result[ch] = s->idle[ch];
+    }
+}
+
+uint16_t cxd90014_adc_idle(DeviceState *dev, int ch)
+{
+    AdcState *s = CXD_ADC(dev);
+    return s->idle_set && ch >= 0 && ch < 12 ? s->idle[ch] : 1023;
+}
+
 static void adc_reset(DeviceState *dev)
 {
     AdcState *s = CXD_ADC(dev);
     memset(s->reg, 0, sizeof(s->reg));
     for (int i = 0; i < 12; i++) {
-        s->result[i] = 1023;
+        s->result[i] = s->idle_set ? s->idle[i] : 1023;
     }
     timer_del(s->t);
 }

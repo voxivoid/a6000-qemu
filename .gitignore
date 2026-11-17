@@ -23,6 +23,8 @@ __pycache__/
 /data/wbi/
 # official updater (Sony firmware), unpacked locally
 /firmware/
+/firmware-a6000/
+/data-a6000/
 # build products
 /tools/*.dylib
 /tools/*.so

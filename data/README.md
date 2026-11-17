@@ -55,3 +55,24 @@ Safety:
   an app install.
 - Keep the dump as a backup of your camera, and **never share it**: it contains your camera's
   settings, calibration and identifiers (serial number, Wi-Fi settings).
+
+## 4. ILCE-6000: your own A6000 is required
+The `sony-a6000` machine (`docs/A6000_ROADMAP.md`) has the same requirement as the a5000, and there is no way
+around it: **you need a NAND dump of an A6000 you own.** Sony's updater ships the firmware but not the per-unit
+data written at the factory: the settings store `Backup.bin` (the emulator reads the camera's button map and boot load
+table from it), factory calibration, and the updater core. A dump of someone else's camera must not be used or shared:
+it is that owner's personal data (serial number, device name, Wi-Fi settings, face registrations) and Sony's.
+
+1. Official updater **3.21** (`Update_ILCE6000V321.exe`). Current Sony downloads wrap the firmware in an archive that
+   fwtool rejects (`Unknown exe file`). Cut the `FirmwareData_ILCE6000V321.dat` out of the exe and unpack that instead:
+   it starts at the DAT magic `\x89UFU\r\n\x1a\n` (file offset 524866), and its size is the u32 just before its UTF-16
+   name in the exe's archive table. Then:
+   `fwtool.py unpack -f FirmwareData_ILCE6000V321.dat -o firmware-a6000/unpacked`
+2. `python3 tools/mkdata.py --fwtool ../fwtool.py --nflasha5 firmware-a6000/unpacked/firmware.tar_unpacked/0700_part_image/dev/nflasha5 --out data-a6000`
+3. Dump your own A6000 read-only, as in step 3 (`/dev/nflasha`, about 483 MiB; check the md5 on both sides), and keep
+   it under `dumps/` (git-ignored).
+4. `./provision.sh dumps/<your dump>` → rename `state/a5000.nand` to `state/a6000.nand`. Keep an untouched copy:
+   a failed boot can erase the emulated NAND.
+
+The emulator writes only to `state/a6000.nand`; your camera is never touched.
+

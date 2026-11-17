@@ -16,7 +16,7 @@ Background and verdict: `docs/A6000_FEASIBILITY.md`.
 ### Phase 0 status (2026-11-17)
 - Step 1: `qemu/` cloned (v10.1.0), overlay copied, patch fully applied (`git apply --check --reverse` is clean). The build is blocked on apt build deps (needs sudo). The ILCE-5000 1.10 updater isn't downloaded yet.
 - Steps 2–3: **mostly done already** in `../a6000-dumps/run2/` (taken via updatershell, `pmca-scripts/run_fw.sh`):
-  - `nflasha.bin`: full NAND, 506 462 208 B, md5 `9867aebba0d048cc1a9cbac784758931` (the camera-side md5 was not recorded)
+  - `nflasha.bin`: full NAND, 506 462 208 B (camera-side md5 not recorded)
   - `fw/`: fwtool unpack. `nflasha3_unpacked_unpacked/` = `vmlinux.bin`, `initrd.img`, `av-cam.bin`, `sabin/`
   - `fw/nflasha5`: 60 MiB, magic `WBI1` → **a factory WBI exists**, so `mkdata.py`-style derivation is possible (not decompressed yet: needs fwtool.py)
   - `fw/nflasha2_unpacked/kemco.txt`: the A6000 stock cmdline
@@ -37,9 +37,35 @@ Background and verdict: `docs/A6000_FEASIBILITY.md`.
 - `tools/mkdata.py` OK on the a5000 1.10 updater (WBI 1073 sections, 127 430 656 B).
 - **No a5000 NAND exists** (the owner has an A6000 only), so a full a5000 `run.sh` baseline is impossible. Decision: skip it. The a5000 kernel is used only as a provisioning smoke test, then go straight to A6000 bring-up.
 
-- **Step 9 done early: `state/a6000.nand` provisioned** from `dumps/run2/nflasha.bin` with the a5000 1.10 kernel + NAND stack (`a5k-provision: OK`; md5 `bb248c672ccca9051922b790e69db26c`, untouched copy `state/a6000.nand.pristine`). This also smoke-tests the a5000 kernel, SMP, GIC and NAND HLE under WSL. Two fixes:
+- **Step 9 done early: `state/a6000.nand` provisioned** from `dumps/run2/nflasha.bin` with the a5000 1.10 kernel + NAND stack (`a5k-provision: OK`; untouched copy `state/a6000.nand.pristine`). This also smoke-tests the a5000 kernel, SMP, GIC and NAND HLE under WSL. Two fixes:
   - `provision.sh` logged UART0, but `debug-console=on` now means `ttyAM1` = UART2 → the log stayed empty and the script waited out its timeout. Now it passes `-serial null -serial null -serial file:LOG`.
   - `a5kcopy` built with Ubuntu arm-none-eabi 10.3 links its first PT_LOAD at VA 0 → the kernel refuses page 0 → exec dies with SIGKILL (`Killed`). Build with `-Wl,-Ttext-segment=0x10000` (documented in `a5kcopy.c`).
+
+### First A6000 boot (2026-11-17): stock UI reached
+`A5K_MODEL=a6000 ./run.sh` → stage-1 loader (A6000 kernel + modules) mounts the NAND (partitions p1..p23) → stage 2 stock kernel/initrd from NAND → stock `/sbin/init`, Android init, `stella` WindowServer → **panel shows the stock "Set Area/Date/Time." first-boot dialog** (~100 s, WSL). What it took:
+- `sony-a6000` machine type (subclass of `sony-a5000`) + `A5KModel` profile: 1 GiB DDR, initrd 0x80628000, cmdline = the 3.21 `kemco.txt` (conversion checked: the same rule reproduces the a5000 string exactly), ATAG banks
+- `firmware-a6000/` = the official 3.21 updater unpacked; identical to the dump (vmlinux, initrd, av-cam, kemco, WBI prefix)
+- `data-a6000/` from the 3.21 WBI (1164 sections). Sub-micro frames still at PA 0x8334417C (raw CRC valid, same 0x20/0x30 headers)
+- load table (Backup 0xFA0080): av-cam.bin still 0x83541000; sa_dfdet.bin 0x96800000 (`-loadtable` reads it, no change needed)
+- loader: nand.ko `g_dev` = module base from `/proc/modules` + offset computed by `mkinitramfs.py` from the packed nand.ko (Linux 3.0 `layout_sections`; a5000 0x1bd20 reproduces the old 0x3f03ad20; A6000 0x1bf38, base unchanged 0x3f01f000). The stock busybox has no `printf` → `a5kcopy -mumin <base> <off>` adds them.
+- `run.sh`: `A5K_MODEL=a6000`; the loader cpio is rebuilt when stale
+- Not yet checked: everything past the dialog; av-cam hooks (row 5); A6000-only hardware.
+
+### Camera body UI
+`python3 tools/camui.py --launch` (starts `run.sh` headless with a QMP socket) → http://localhost:8642: live LCD (QMP `screendump`, ~5 fps) + a drawn A6000 body (top plate, back, lens/sides). Controls send QMP `input-send-event` down/up, so holds are real. The shutter goes half → full after 0.7 s (or shift-click). Layout from product photos plus Sony's ILCE-6000 Help Guide "Identifying parts" (no AF/MF lever on the A6000: that's AEL; C2 = Delete).
+
+### A6000 buttons (step 7, mostly done)
+Source: the input.ko key table in the owner's `Backup.bin` (`BIN!` block at file 0x9ed74, 25 rows of 64 B; first row 0x9ed8c). Names from the A6000 libObj `{code, "KEY_..."}` table (file 0xfcc090).
+| Input | Key | Host key | Status |
+|---|---|---|---|
+| ADC ch 0x0C 0–91 / 92–273 / 274–439 / 440–599 | DELETE (C2) / **AEL** 0x7090 / **Fn** 0x7095 / **C1** 0x66 | Del / A / F / C | firmware reacts: Fn panel, C1 "Lens: invalid", AEL "not available: MF" |
+| ADC ch 0x0D | wheel ENTER/UP/LEFT/DOWN/RIGHT (as a5000) | arrows, Enter | verified |
+| ADC ch 0x0E + 0x0F | **mode dial** 0x7025, value 1..11 | PgUp/PgDn, `-M sony-a6000,mode-dial=N`, `qom-set /machine mode-dial N` | all 10 verified by OSD: 1 iA, 2 iA+, 3 P, 5 A, 4 S, 6 M, 7 MR, 10 Movie, 8 Panorama, 11 SCN |
+| GPIO P10.10 | MOVIE (as a5000) | R | wired |
+| sub-micro CAkey1 bits 0/1/2/9 | POWER / PLAY / MENU / FLASH_POPUP (active low) | O / P / M / H | MENU, PLAY verified; flash pop-up no visible change yet |
+| shutter S1/S2 GPIOs (not in the table, as a5000) | | S / Space | wired |
+| no row | body zoom lever (A6000 has none; T/W kept for the a5000 only) | | — |
+Still open: **control dial** (not in the key table: likely a second jog/TPU counter, like the wheel's `cxd90014-jog`), **eye sensor**, lens release, the flash pop-up's effect. The ADC model now keeps a per-channel idle level across resets (`cxd90014_adc_set_idle`), so the dial survives reboots.
 
 ### Phase 1 first results
 - Kernel: same source `3.0.27_nl-rt106`, same size (3 478 912 B), rebuilt 2019-01-24 for the A6000. 183 157 bytes differ.

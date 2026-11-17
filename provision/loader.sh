@@ -27,8 +27,14 @@ mknod /dev/nflasha2 b 252 2
 mknod /dev/dnflasha3 b 252 131
 mkdir -p /mnt/setting /mnt/system /mnt/updater
 fail() { echo "a5k-loader: FAILED: $1"; cat /proc/partitions; exec /bin/sh; }
-# nand.ko's device struct (fixed: same module load order as the stock initrd)
-a5kcopy -mumin 0x3f03ad20 || fail mumin
+# nand.ko's device struct g_dev = module base (/proc/modules) + its offset in
+# this nand.ko build (kmod/nand.g_dev, computed by mkinitramfs.py).
+# a5000 1.10 with the stock load order: 0x3f01f000 + 0x1bd20 = 0x3f03ad20.
+NBASE=$(sed -n 's/^nand .* Live \(0x[0-9a-f]*\).*/\1/p' /proc/modules)
+GOFF=$(cat /kmod/nand.g_dev)
+echo "a5k-loader: nand.ko base $NBASE + g_dev offset $GOFF"
+[ -n "$NBASE" ] && [ -n "$GOFF" ] || fail "nand.ko g_dev"
+a5kcopy -mumin $NBASE $GOFF || fail mumin
 mount -t vfat -o ro /dev/nflasha2 /mnt/setting || fail setting
 a5kcopy -backup /mnt/setting/Backup.bin || fail backup
 # loader boot mode 1 = COLD (the file keeps the last real power-on's 2 = HOT).

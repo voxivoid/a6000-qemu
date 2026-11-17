@@ -6,7 +6,7 @@
  *   a5kcopy -f2p <file> <phys>                    file -> phys RAM
  *   a5kcopy -backup <Backup.bin>                  file -> phys from its
  *                                                 header word 0
- *   a5kcopy -mumin <dev_va>                       MUMIN hand-off: copy the
+ *   a5kcopy -mumin <dev_va> [<add>]               MUMIN hand-off: copy the
  *        mounted muminmem (dev+0x34 / dev+0x38) to PA 0x80000000, with
  *        pointers into itself rebased to VA 0x40000000
  *   a5kcopy -w32 <phys> <val> [<val>...]          write words
@@ -384,7 +384,9 @@ void cmain(int argc, char **argv)
     } else if (argc >= 3 && streq(argv[1], "-loadtable")) {
         loadtable(argv[2], argc > 3 ? argv[3] : "/mnt/setting/Backup.bin");
     } else if (argc >= 3 && streq(argv[1], "-mumin")) {
-        mumin_handoff(hex(argv[2]));
+        /* optional 2nd arg: offset added to the first (module base +
+         * g_dev offset; the stock busybox has no printf applet) */
+        mumin_handoff(hex(argv[2]) + (argc > 3 ? hex(argv[3]) : 0));
     } else if (argc >= 4 && streq(argv[1], "-w32")) {
         ul pa = hex(argv[2]), ml; long b;
         u32 *p = (u32 *)pmap(pa, 4 * (argc - 3), &ml, &b);

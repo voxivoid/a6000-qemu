@@ -58,9 +58,9 @@
 #include "qom/object.h"
 
 #define A5K_DDR_BASE        0x80000000ULL
-#define A5K_DDR_SIZE        (512 * MiB)
+#define A5K_DDR_SIZE        (a5k_model->ddr_size)
 #define A5K_KERNEL_ADDR     0x80038000ULL
-#define A5K_INITRD_ADDR     0x80428000ULL
+#define A5K_INITRD_ADDR     (a5k_model->initrd_addr)
 /* boot scratch inside memrsv 0x28000@0x80000000, clear of the MUMIN
  * hand-off (0x80000000+0x20000) and the wbimem page at 0x80021000 */
 #define A5K_ATAG_ADDR       0x80024000ULL
@@ -116,7 +116,94 @@ static const char a5k_default_cmdline[] =
     "memrsv=0x28000@0x80000000 memrsv=0x13A7000@0x82D90000 "
     "memrsv=0x13800000@0x8C800000";
 
+/* ILCE-6000 fw 3.21: /setting/kemco.txt of the official updater (identical
+ * in the owner's NAND dump), converted like the a5000 string above.  DDR:
+ * mem=256M@0x80000000 + mem=576M@0x9C000000 with 24 x 8 MiB secgrp
+ * sections (offline at boot) in between = 0x80000000..0xBFFFFFFF, 1 GiB.
+ * Bootloader load table (Backup 0xFA0080) matches: initrd 0x80628000,
+ * sa_dfdet.bin 0x96800000, av-cam.bin still 0x83541000.  (H: the real
+ * DDR size; only the cmdline's view of it is known.) */
+static const char a6k_default_cmdline[] =
+    "ramdisk_size=8192 rw noatime noalign lpj=1671168 "
+    "heap_profile.records=0 dma_mapping.l2th=0x80000 "
+    "snsc_workqueue.kipid=130 manage.irqd=129 softirq.sirqd=128 "
+    "exception.reboot=1 softlockup_panic=0 softlockup_thresh=30 "
+    "cfg.uart=5 wdt.timeout=500 warm.mode=2 warm.tmo=50000 "
+    "warm.resume_drop=0 warm.boot_drop=0 warm.ignore_drop=1 "
+    "basic.prof_path=/log/ssbi_prof.bin cfg.poff=0,10 error.led=0,0 "
+    "page_alloc.minkb=256 console=ttynull xrstreq=1 wdt.mode=1 "
+    "stack_usage=n cxd90014.bam=N ip=off "
+    "cmpr.path=/system/sabin/ssboot.bin "
+    "cmpr.path2=/system/sabin/ssboot_any.bin tmonitor.addr=0x82000000 "
+    "tmonitor.size=0x500000 tmonitor.mask=0 rootfstype=ext2 "
+    "root=/dev/ram0 init=/sbin/init initrd=0x80628000,8M "
+    "pm.resume=0x80021054 pm.sus_error=0x80021060 "
+    "wbi_memclr=0x800210e8 wbimem=0x1000@0x80021000 "
+    "wbimem=0xE5000@0x82D90000 wbimem=0x8000@0x82EAE000 "
+    "wbimem=0x500000@0x82FC0000 wbimem=0x30000@0x96800000 "
+    "wbimem=0x80000@0x8E680000 wbimem=0x384E000@0x8F708000 "
+    "wbimem=0x1E000@0x9334F000 wbimem=0x2000@0x93383000 "
+    "wbimem=0x680000@0x933AD000 wbimem=0xEC000@0x96083000 "
+    "wbimem=0x200000@0x96600000 cmpr.mem=0x8000@0x9A000000 "
+    "warm.mem_dst=0xC00000@0x9B000000 "
+    "warm.mem_work=0x600000@0x9C000000 wbi_cmpr.waddr=0x5D000000 "
+    "wbi_cmpr.wsize=0x100000 wbi_cmpr.nbuf=12 "
+    "boottime=0x20000@0x834C0000 klog.addr=0x834E0000 "
+    "klog.size=0x20000 alog.addr=0x8345ffc0 alog.size=0x60040 "
+    "alog.clock=cpu mem=256M@0x80000000@0 mem=576M@0x9C000000@2 "
+    "memrsv=0x28000@0x80000000 memrsv=0x13B1000@0x82D90000 "
+    "memrsv=0x1980000@0x8E680000 "
+    "secgrp=8M@0x90000000@1:offline:0x90000000 "
+    "secgrp=8M@0x90800000@1:offline:0x90800000 "
+    "secgrp=8M@0x91000000@1:offline:0x91000000 "
+    "secgrp=8M@0x91800000@1:offline:0x91800000 "
+    "secgrp=8M@0x92000000@1:offline:0x92000000 "
+    "secgrp=8M@0x92800000@1:offline:0x92800000 "
+    "secgrp=8M@0x93000000@1:offline:0x93000000 "
+    "secgrp=8M@0x93800000@1:offline:0x93800000 "
+    "secgrp=8M@0x94000000@1:offline:0x94000000 "
+    "secgrp=8M@0x94800000@1:offline:0x94800000 "
+    "secgrp=8M@0x95000000@1:offline:0x95000000 "
+    "secgrp=8M@0x95800000@1:offline:0x95800000 "
+    "secgrp=8M@0x96000000@1:offline:0x96000000 "
+    "secgrp=8M@0x96800000@1:offline:0x96800000 "
+    "secgrp=8M@0x97000000@1:offline:0x97000000 "
+    "secgrp=8M@0x97800000@1:offline:0x97800000 "
+    "secgrp=8M@0x98000000@1:offline:0x98000000 "
+    "secgrp=8M@0x98800000@1:offline:0x98800000 "
+    "secgrp=8M@0x99000000@1:offline:0x99000000 "
+    "secgrp=8M@0x99800000@1:offline:0x99800000 "
+    "secgrp=8M@0x9a000000@1:offline:0x9a000000 "
+    "secgrp=8M@0x9a800000@1:offline:0x9a800000 "
+    "secgrp=8M@0x9b000000@1:offline:0x9b000000 "
+    "secgrp=8M@0x9b800000@1:offline:0x9b800000 memrsv=576M@0x9C000000";
+
+/* Per-model boot contract (what the Sony bootloader hands over).  One
+ * machine per process: a5k_init selects the profile from the QOM type. */
+typedef struct A5KModel {
+    const char *name;
+    uint64_t ddr_size;
+    uint64_t initrd_addr;
+    const char *cmdline;
+    uint32_t atag_mem[2][2];    /* {size, start}: the cmdline's mem= banks */
+} A5KModel;
+
+static const A5KModel a5k_model_a5000 = {
+    .name = "sony-a5000", .ddr_size = 512 * MiB, .initrd_addr = 0x80428000,
+    .cmdline = a5k_default_cmdline,
+    .atag_mem = { { 200 * MiB, 0x80000000 }, { 312 * MiB, 0x8C800000 } },
+};
+
+static const A5KModel a5k_model_a6000 = {
+    .name = "sony-a6000", .ddr_size = 1024 * MiB, .initrd_addr = 0x80628000,
+    .cmdline = a6k_default_cmdline,
+    .atag_mem = { { 256 * MiB, 0x80000000 }, { 576 * MiB, 0x9C000000 } },
+};
+
+static const A5KModel *a5k_model = &a5k_model_a5000;
+
 #define TYPE_A5K_MACHINE MACHINE_TYPE_NAME("sony-a5000")
+#define TYPE_A6K_MACHINE MACHINE_TYPE_NAME("sony-a6000")
 OBJECT_DECLARE_SIMPLE_TYPE(A5KMachineState, A5K_MACHINE)
 
 struct A5KMachineState {
@@ -139,6 +226,7 @@ struct A5KMachineState {
     bool submicro;
     uint8_t *submicro_frames;
     int adc_key[4];                 /* qcode holding each ADC key ladder */
+    int mode_dial;                  /* A6000 KEY_POS_MODE_DIAL value, 0 = none */
     bool key_shift;                 /* host Shift held (zoom speed) */
     bool key_s2;                    /* shutter fully pressed */
     DeviceState *adc[2];
@@ -219,10 +307,11 @@ static void a5k_write_atags(const char *cmdline, uint32_t initrd_size)
     buf[n++] = 5; buf[n++] = ATAG_CORE;
     buf[n++] = 1; buf[n++] = 4096; buf[n++] = 0;
 
-    buf[n++] = 4; buf[n++] = ATAG_MEM;
-    buf[n++] = 200 * MiB; buf[n++] = 0x80000000;
-    buf[n++] = 4; buf[n++] = ATAG_MEM;
-    buf[n++] = 312 * MiB; buf[n++] = 0x8C800000;
+    for (int b = 0; b < 2; b++) {
+        buf[n++] = 4; buf[n++] = ATAG_MEM;
+        buf[n++] = a5k_model->atag_mem[b][0];
+        buf[n++] = a5k_model->atag_mem[b][1];
+    }
 
     if (initrd_size) {
         buf[n++] = 4; buf[n++] = ATAG_INITRD2;
@@ -474,10 +563,12 @@ static void a5k_submicro_front_key(A5KMachineState *s, int bit, bool down)
     if (!s->submicro_frames) {
         return;
     }
+    int i = 28 + bit / 8;               /* CAkey1 = bytes 28.. (bit 9 = byte 29) */
+
     if (down) {
-        s->submicro_frames[28] |= 1 << bit;
+        s->submicro_frames[i] |= 1 << (bit % 8);
     } else {
-        s->submicro_frames[28] &= ~(1 << bit);
+        s->submicro_frames[i] &= ~(1 << (bit % 8));
     }
     a5k_submicro_crc(s->submicro_frames);
 }
@@ -840,8 +931,67 @@ static void a5k_adc_key(A5KMachineState *s, int ch, int qcode, bool down,
         cxd90014_adc_set(s->adc[1], ch, level);
     } else if (s->adc_key[ch] == qcode) {
         s->adc_key[ch] = 0;
-        cxd90014_adc_set(s->adc[1], ch, 1023);
+        cxd90014_adc_set(s->adc[1], ch, cxd90014_adc_idle(s->adc[1], ch));
     }
+}
+
+/*
+ * A6000 mode dial (input.ko key table in the A6000 Backup.bin, rows with key
+ * 0x7025 KEY_POS_MODE_DIAL, opt 18/1/2): a position switch read as two
+ * resistor ladders, ADC ch 0x0E (unit 1 ch 2) and ch 0x0F (unit 1 ch 3).
+ * At every position exactly one of them sits in a band; the key's value is
+ * the position number:
+ *   ch 0x0E: 0..91 = 6, 92..273 = 4, 274..439 = 5, 440..599 = 3, 600..772 = 2
+ *   ch 0x0F: 0..91 = 1, 92..273 = 11, 274..439 = 8, 440..599 = 10, 600..772 = 7
+ * (no position 9).  Modes verified in the emulator by the OSD mode icon
+ * (stock 3.21, each position set on its own): 1 iA, 2 Superior Auto, 3 P,
+ * 5 A, 4 S, 6 M, 7 MR (Memory recall), 10 Movie, 8 Sweep Panorama, 11 SCN.
+ * The table is in physical dial order.  The level is the channel's idle
+ * level, so it survives resets.
+ */
+static const struct { int value, ch, level; const char *mode; } a6k_mode_dial[] = {
+    { 1, 3, 45, "iA" }, { 2, 2, 686, "iA+" }, { 3, 2, 520, "P" },
+    { 5, 2, 356, "A" }, { 4, 2, 182, "S" }, { 6, 2, 45, "M" },
+    { 7, 3, 686, "MR" }, { 10, 3, 520, "Movie" }, { 8, 3, 356, "Panorama" },
+    { 11, 3, 182, "SCN" },
+};
+
+static int a6k_mode_dial_index(int value)
+{
+    for (int i = 0; i < ARRAY_SIZE(a6k_mode_dial); i++) {
+        if (a6k_mode_dial[i].value == value) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void a6k_apply_mode_dial(A5KMachineState *s)
+{
+    int i = a6k_mode_dial_index(s->mode_dial);
+
+    if (!s->adc[1] || a5k_model != &a5k_model_a6000) {
+        return;
+    }
+    cxd90014_adc_set_idle(s->adc[1], 2, 1023);
+    cxd90014_adc_set_idle(s->adc[1], 3, 1023);
+    if (i >= 0) {
+        cxd90014_adc_set_idle(s->adc[1], a6k_mode_dial[i].ch,
+                              a6k_mode_dial[i].level);
+    }
+    info_report("sony-a6000: mode dial %s (position %d)",
+                i >= 0 ? a6k_mode_dial[i].mode : "none", s->mode_dial);
+}
+
+/* Page Up / Page Down: turn the dial one detent (physical order) */
+static void a6k_step_mode_dial(A5KMachineState *s, int dir)
+{
+    int n = ARRAY_SIZE(a6k_mode_dial);
+    int i = a6k_mode_dial_index(s->mode_dial);
+
+    i = i < 0 ? 0 : (i + dir + n) % n;
+    s->mode_dial = a6k_mode_dial[i].value;
+    a6k_apply_mode_dial(s);
 }
 
 /*
@@ -953,12 +1103,49 @@ static void a5k_key_event(DeviceState *dev, QemuConsole *src,
         }
         break;
     case Q_KEY_CODE_T:
-        /* tele: ADC value 0x8001/0x8002 -> event0 610 (docs/RE_WHEEL_ZOOM_DATE.md 2.3) */
-        a5k_adc_key(s, 3, qcode, down, s->key_shift ? 301 : 400);
+        /* tele: ADC value 0x8001/0x8002 -> event0 610 (docs/RE_WHEEL_ZOOM_DATE.md 2.3).
+         * a5000 body lever only: the A6000 has none, its ch 0x0F is the mode dial */
+        if (a5k_model == &a5k_model_a5000) {
+            a5k_adc_key(s, 3, qcode, down, s->key_shift ? 301 : 400);
+        }
         break;
     case Q_KEY_CODE_W:
         /* wide: ADC value 1/2 -> event0 611 */
-        a5k_adc_key(s, 3, qcode, down, s->key_shift ? 162 : 478);
+        if (a5k_model == &a5k_model_a5000) {
+            a5k_adc_key(s, 3, qcode, down, s->key_shift ? 162 : 478);
+        }
+        break;
+    /*
+     * A6000 extra keys on the DELETE ladder, ADC ch 0x0C (A6000 Backup.bin key
+     * table; names from libObj's KEY_ table): 92..273 AEL (0x7090),
+     * 274..439 Fn (0x7095), 440..599 C1 = KEY_TACT_CUSTOM (0x66).
+     * Host keys A / F / C.
+     */
+    case Q_KEY_CODE_A:
+        if (a5k_model == &a5k_model_a6000) {
+            a5k_adc_key(s, 0, qcode, down, 182);
+        }
+        break;
+    case Q_KEY_CODE_F:
+        if (a5k_model == &a5k_model_a6000) {
+            a5k_adc_key(s, 0, qcode, down, 356);
+        }
+        break;
+    case Q_KEY_CODE_C:
+        if (a5k_model == &a5k_model_a6000) {
+            a5k_adc_key(s, 0, qcode, down, 520);
+        }
+        break;
+    case Q_KEY_CODE_PGUP:
+    case Q_KEY_CODE_PGDN:
+        if (down && a5k_model == &a5k_model_a6000) {
+            a6k_step_mode_dial(s, qcode == Q_KEY_CODE_PGUP ? 1 : -1);
+        }
+        break;
+    /* flash pop-up button: sub-micro CAkey1 bit 9, active low (0x7094
+     * KEY_TACT_FLASH_POPUP; same row in the a5000 table).  Host key H. */
+    case Q_KEY_CODE_H:
+        a5k_submicro_front_key(s, 9, !down);
         break;
     case Q_KEY_CODE_RET:
     case Q_KEY_CODE_KP_ENTER:
@@ -1641,8 +1828,12 @@ static void a5k_init(MachineState *ms)
     DeviceState *mp, *dev;
     qemu_irq pic[A5K_NUM_IRQ - 32];
 
+    if (object_dynamic_cast(OBJECT(ms), TYPE_A6K_MACHINE)) {
+        a5k_model = &a5k_model_a6000;
+    }
     if (ms->ram_size != A5K_DDR_SIZE) {
-        error_report("sony-a5000: RAM is fixed at 512M");
+        error_report("%s: RAM is fixed at %" PRIu64 "M", a5k_model->name,
+                     A5K_DDR_SIZE / MiB);
         exit(1);
     }
     memory_region_add_subregion(sysmem, A5K_DDR_BASE, ms->ram);
@@ -1849,6 +2040,7 @@ static void a5k_init(MachineState *ms)
                                          0xF2406000 + u * 0x1000,
                                          pic[GIC_ID(215 + u)]);
     }
+    a6k_apply_mode_dial(s);
 
     /* control-wheel TPU counter (docs/RE_WHEEL_ZOOM_DATE.md 1) */
     s->jog = qdev_new(TYPE_CXD90014_JOG);
@@ -2281,20 +2473,20 @@ static void a5k_init(MachineState *ms)
         s->initrd_len = len;
     }
     g_autofree char *dbg = NULL;
-    const char *cmd = a5k_default_cmdline;
+    const char *cmd = a5k_model->cmdline;
     const char *con = a5k_console_token(s);
     if (ms->kernel_cmdline && *ms->kernel_cmdline) {
         cmd = ms->kernel_cmdline;
     } else if (con) {
         /* g_string_replace() needs GLib 2.68; QEMU caps the API at 2.66 */
         const char *tok = "console=ttynull";
-        const char *at = strstr(a5k_default_cmdline, tok);
+        const char *at = strstr(a5k_model->cmdline, tok);
         if (at) {
             dbg = g_strdup_printf("%.*s%s%s",
-                                  (int)(at - a5k_default_cmdline),
-                                  a5k_default_cmdline, con, at + strlen(tok));
+                                  (int)(at - a5k_model->cmdline),
+                                  a5k_model->cmdline, con, at + strlen(tok));
         } else {
-            dbg = g_strdup(a5k_default_cmdline);
+            dbg = g_strdup(a5k_model->cmdline);
         }
         cmd = dbg;
     }
@@ -2354,6 +2546,24 @@ static bool a5k_get_rtclost(Object *o, Error **errp)
 static void a5k_set_rtclost(Object *o, bool v, Error **errp)
 {
     A5K_MACHINE(o)->rtc_lost = v;
+}
+
+static char *a6k_get_mode_dial(Object *o, Error **errp)
+{
+    return g_strdup_printf("%d", A5K_MACHINE(o)->mode_dial);
+}
+
+static void a6k_set_mode_dial(Object *o, const char *v, Error **errp)
+{
+    A5KMachineState *s = A5K_MACHINE(o);
+    int n = atoi(v);
+
+    if (a6k_mode_dial_index(n) < 0) {
+        error_setg(errp, "mode-dial: position 1..8, 10 or 11");
+        return;
+    }
+    s->mode_dial = n;
+    a6k_apply_mode_dial(s);     /* no-op before the ADC exists */
 }
 
 static char *a5k_get_nfc(Object *o, Error **errp)
@@ -2739,7 +2949,7 @@ static void a5k_class_init(ObjectClass *oc, const void *data)
     mc->max_cpus = 4;
     mc->default_cpus = 4;   /* quad Cortex-A5: snapshot log "CPU1..3: shutdown" */
     mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a5");
-    mc->default_ram_size = A5K_DDR_SIZE;
+    mc->default_ram_size = 512 * MiB;
     mc->default_ram_id = "a5k.ddr";
     mc->ignore_memory_transaction_failures = false;
 }
@@ -2757,8 +2967,37 @@ static const TypeInfo a5k_info = {
     .class_init = a5k_class_init,
 };
 
+/* ILCE-6000: same CXD90014 board, A6000 boot contract (a5k_model_a6000).
+ * A6000-only hardware (EVF, mode dial, ...) is not modelled yet
+ * (docs/A6000_ROADMAP.md). */
+static void a6k_class_init(ObjectClass *oc, const void *data)
+{
+    MachineClass *mc = MACHINE_CLASS(oc);
+
+    mc->desc = "Sony ILCE-6000 (CXD90014, Cortex-A5 MPCore)";
+    object_class_property_add_str(oc, "mode-dial", a6k_get_mode_dial,
+                                  a6k_set_mode_dial);
+    object_class_property_set_description(oc, "mode-dial",
+        "A6000 mode dial position (KEY_POS_MODE_DIAL value 1..8, 10, 11); "
+        "settable at run time with qom-set /machine mode-dial N");
+    mc->default_ram_size = 1024 * MiB;
+}
+
+static void a6k_instance_init(Object *o)
+{
+    A5K_MACHINE(o)->mode_dial = 3;  /* P: a real dial always rests somewhere */
+}
+
+static const TypeInfo a6k_info = {
+    .name = TYPE_A6K_MACHINE,
+    .parent = TYPE_A5K_MACHINE,
+    .instance_init = a6k_instance_init,
+    .class_init = a6k_class_init,
+};
+
 static void a5k_register(void)
 {
     type_register_static(&a5k_info);
+    type_register_static(&a6k_info);
 }
 type_init(a5k_register)

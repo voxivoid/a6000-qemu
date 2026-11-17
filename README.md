@@ -28,6 +28,23 @@ All commands below run from the repository root.
 
 Step-by-step instructions: [`data/README.md`](data/README.md).
 
+### ILCE-6000 (`sony-a6000` machine)
+**You must own an A6000 and supply a NAND dump of your own camera.** Nothing device-specific is published, and
+there is no generic NAND: the settings store (`Backup.bin`: button map, boot load table, model and region data),
+the factory calibration and the updater core exist only on a real camera and are not in Sony's updater. The dump
+also holds personal data (serial number, device name, Wi-Fi settings, face registrations). Keep it local and never
+share or commit it; every path that holds it is git-ignored.
+
+| Path | What |
+|---|---|
+| `firmware-a6000/unpacked/...` | Sony's official ILCE-6000 updater **3.21**, unpacked (see `data/README.md` §4 for the current exe format) |
+| `dumps/` (e.g. `dumps/run2/nflasha.bin`) | full NAND dump of **your own** A6000 (`/dev/nflasha`, read-only) |
+| `data-a6000/` | hand-off page and sub-micro frames from the 3.21 warm-boot image (`tools/mkdata.py --out data-a6000`) |
+| `state/a6000.nand` | emulated NAND, made by `./provision.sh <your dump>` (then renamed) |
+
+Then `A5K_MODEL=a6000 ./run.sh`, or `python3 tools/camui.py --launch` for the camera-body UI.
+Bring-up status and details: [`docs/A6000_ROADMAP.md`](docs/A6000_ROADMAP.md).
+
 ## Getting QEMU
 The `qemu/` directory is **not published**. It is rebuilt from upstream QEMU `v10.1.0` plus this repository:
 ```sh

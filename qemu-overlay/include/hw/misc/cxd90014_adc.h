@@ -6,5 +6,7 @@
 
 /* Set the 10-bit level of channel ch (0..11) as the next scans read it. */
 void cxd90014_adc_set(DeviceState *dev, int ch, uint16_t level);
+void cxd90014_adc_set_idle(DeviceState *dev, int ch, uint16_t level);
+uint16_t cxd90014_adc_idle(DeviceState *dev, int ch);
 
 #endif
