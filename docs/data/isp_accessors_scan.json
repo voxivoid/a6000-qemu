@@ -1,0 +1,8661 @@
+{
+"0x2d0": {
+"R": [
+[
+"0x43b684a6",
+"bfi r3, r1, #0, #0x10; str r3, [r0];"
+],
+[
+"0x43b684ba",
+"bfi r3, r1, #0x10, #0x10; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x300": {
+"R": [],
+"W": [
+[
+"0x43ad17a4",
+""
+]
+]
+},
+"0x304": {
+"R": [],
+"W": [
+[
+"0x43ad17b2",
+""
+]
+]
+},
+"0x308": {
+"R": [],
+"W": [
+[
+"0x43ad17c0",
+""
+]
+]
+},
+"0x30c": {
+"R": [],
+"W": [
+[
+"0x43ad1796",
+""
+]
+]
+},
+"0x328": {
+"R": [],
+"W": [
+[
+"0x43b6c00a",
+""
+]
+]
+},
+"0x800": {
+"R": [],
+"W": [
+[
+"0x43ad6c68",
+""
+]
+]
+},
+"0x1000": {
+"R": [
+[
+"0x43ab1702",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab1716",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x105c": {
+"R": [
+[
+"0x43916c5e",
+"cmp r0, r1; bne #0x43916c94; movs r2, #0xc; mla r2, r2, r4, r3; add.w r4, r4, #0x210;"
+]
+],
+"W": []
+},
+"0x10bc": {
+"R": [
+[
+"0x43a62d92",
+""
+],
+[
+"0x43a62e00",
+""
+]
+],
+"W": []
+},
+"0x10c0": {
+"R": [
+[
+"0x43a62d66",
+""
+]
+],
+"W": []
+},
+"0x10d8": {
+"R": [
+[
+"0x43ab17c2",
+"pop {r4, pc}; add.w r0, r0, #0x10c0; ldr r0, [r0, #0x1c]; pop {r4, pc}; add.w r0, r0, #0x10e0;"
+]
+],
+"W": [
+[
+"0x43ab17f0",
+"pop {r3, r4, r5, pc}; add.w r0, r0, #0x10c0; str r5, [r0, #0x1c]; pop {r3, r4, r5, pc}; add.w r0, r0, #0x10e0;"
+]
+]
+},
+"0x10dc": {
+"R": [
+[
+"0x43ab17ca",
+"pop {r4, pc}; add.w r0, r0, #0x10e0; ldr r0, [r0]; pop {r4, pc}; push {r3, r4, r5, lr};"
+]
+],
+"W": [
+[
+"0x43ab17f8",
+"pop {r3, r4, r5, pc}; add.w r0, r0, #0x10e0; str r5, [r0]; pop {r3, r4, r5, pc}; push {r3, lr};"
+]
+]
+},
+"0x10e0": {
+"R": [
+[
+"0x43a62d6e",
+""
+],
+[
+"0x43ab17d2",
+"pop {r4, pc}; push {r3, r4, r5, lr}; mov r4, r1; ldr r3, [r0]; mov r5, r2;"
+]
+],
+"W": [
+[
+"0x43ab1800",
+"pop {r3, r4, r5, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x10e4": {
+"R": [
+[
+"0x43ab23c8",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+],
+"W": [
+[
+"0x43ab23b6",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1100": {
+"R": [
+[
+"0x43ab25dc",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab25f0",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x110a": {
+"R": [
+[
+"0x43ab2628",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab263c",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x110b": {
+"R": [
+[
+"0x43ab264e",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2662",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1130": {
+"R": [
+[
+"0x43779fc2",
+"add.w r3, r1, #0x186; ldr.w r2, [r4, r3, lsl #2]; add.w r3, r4, #0x1200; cmp r2, #4; bgt #0x43779fde;"
+]
+],
+"W": []
+},
+"0x115c": {
+"R": [
+[
+"0x43ab189c",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab18b0",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1160": {
+"R": [
+[
+"0x43ab18c2",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab18d6",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1164": {
+"R": [
+[
+"0x43ab1af0",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+],
+[
+"0x43ae67d2",
+""
+]
+],
+"W": [
+[
+"0x43ab1b04",
+"pop {r4, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+],
+[
+"0x43ae67ca",
+""
+]
+]
+},
+"0x1168": {
+"R": [
+[
+"0x43ab1962",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab1976",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x116c": {
+"R": [
+[
+"0x43ab1916",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab192a",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+],
+[
+"0x43ae6cd0",
+""
+]
+]
+},
+"0x1170": {
+"R": [
+[
+"0x43ab193c",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab1950",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1191": {
+"R": [
+[
+"0x43b08ffe",
+""
+]
+],
+"W": []
+},
+"0x11dc": {
+"R": [
+[
+"0x43ab1a7a",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+],
+"W": [
+[
+"0x43ab1a68",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x11e0": {
+"R": [
+[
+"0x43ab1988",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab199c",
+"pop {r4, pc}; sub sp, #0x10; push {r4, r5, r6, lr}; add r5, sp, #0x14; stm.w r5, {r1, r2, r3};"
+]
+]
+},
+"0x11fc": {
+"R": [
+[
+"0x43ab1cde",
+"pop {r4, pc}; add.w r0, r0, #0x1200; ldr r0, [r0, #4]; pop {r4, pc}; add.w r0, r0, #0x11c0;"
+],
+[
+"0x43ab1cee",
+"pop {r4, pc}; push {r3, r4, r5, lr}; mov r4, r1; ldr r3, [r0]; mov r5, r2;"
+]
+],
+"W": [
+[
+"0x43ab1cbc",
+"pop {r3, r4, r5, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+]
+},
+"0x1210": {
+"R": [
+[
+"0x43a7b606",
+"cmp r3, #2; bne #0x43a7b622; movs r1, #0; adds r3, #1; mov r2, r1;"
+],
+[
+"0x43a7b628",
+"cmp r3, #3; bne #0x43a7b642; movs r1, #0; str r1, [r0, #0x10]; mov r2, r1;"
+]
+],
+"W": []
+},
+"0x1214": {
+"R": [
+[
+"0x43ae67ba",
+""
+]
+],
+"W": []
+},
+"0x1217": {
+"R": [
+[
+"0x43779878",
+"cbz r1, #0x437798be; ldr r3, [pc, #0x7c]; add r3, pc; ldrb r7, [r3]; cmp r7, #0;"
+]
+],
+"W": []
+},
+"0x12a0": {
+"R": [
+[
+"0x43ab23a2",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2390",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x12d8": {
+"R": [
+[
+"0x4388990c",
+"ldr r3, [r3, r2]; ldrh.w r3, [r3, #0x1da]; cmp r0, r3; ite hi; movhi r0, #1;"
+]
+],
+"W": []
+},
+"0x12e4": {
+"R": [
+[
+"0x43b152ba",
+""
+],
+[
+"0x43b152ca",
+""
+]
+],
+"W": []
+},
+"0x1318": {
+"R": [],
+"W": [
+[
+"0x43ab1da4",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x135c": {
+"R": [
+[
+"0x43ab1bfe",
+"pop {r3, pc}; push {r3, r4, r5, lr}; mov r4, r1; ldr r3, [r0]; mov r5, r2;"
+]
+],
+"W": [
+[
+"0x43ab1bec",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1490": {
+"R": [],
+"W": [
+[
+"0x43a48d3c",
+"ldr r3, [sp]; strh r2, [r0, #0xc]; str r1, [r0, #8]; str r3, [r0, #0x14];"
+]
+]
+},
+"0x1498": {
+"R": [],
+"W": [
+[
+"0x43a48ce8",
+"mov r0, r1;"
+]
+]
+},
+"0x14dc": {
+"R": [
+[
+"0x43ab2a6e",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2a82",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x14e0": {
+"R": [
+[
+"0x43ab2a94",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2aa8",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x14e8": {
+"R": [
+[
+"0x43ab2b0a",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2b1e",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x14ec": {
+"R": [
+[
+"0x43ab2b30",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2b44",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x14f0": {
+"R": [
+[
+"0x43ab2bc8",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2bdc",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x14f4": {
+"R": [
+[
+"0x43ab2bee",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2c02",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x14f8": {
+"R": [
+[
+"0x43ab2c14",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2c28",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x14fc": {
+"R": [
+[
+"0x43ab2c3a",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2c4e",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1500": {
+"R": [
+[
+"0x43ab2ae4",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2af8",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x150c": {
+"R": [
+[
+"0x43ab2ba2",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2bb6",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x150d": {
+"R": [
+[
+"0x43ab269e",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab26b2",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1510": {
+"R": [
+[
+"0x43ab26c4",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab26d8",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1514": {
+"R": [
+[
+"0x43ab26ea",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab26fe",
+"pop {r4, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+]
+},
+"0x1570": {
+"R": [
+[
+"0x439311b2",
+"cbnz r0, #0x439311d6; add.w r0, sb, r3; vldr s14, [r7, #-0x14]; add.w r0, r0, #0x1740; vldr s13, [r0, #0x30];"
+]
+],
+"W": []
+},
+"0x15d8": {
+"R": [
+[
+"0x43ab27e0",
+"strb r3, [r4]; ldrb r3, [r0, #0x19]; strb r3, [r5]; ldrb r3, [r0, #0x1a]; strb r3, [r6];"
+]
+],
+"W": [
+[
+"0x43ab2802",
+"strb r5, [r0, #0x19]; strb r6, [r0, #0x1a]; pop {r4, r5, r6, pc}; push {r3, lr}; ldr r3, [r0];"
+]
+]
+},
+"0x15db": {
+"R": [
+[
+"0x43ab2818",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab282c",
+"pop {r4, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+]
+},
+"0x15dc": {
+"R": [
+[
+"0x43ab2cb8",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2ccc",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x168c": {
+"R": [
+[
+"0x43a827ea",
+""
+]
+],
+"W": []
+},
+"0x1690": {
+"R": [
+[
+"0x43a82de6",
+"rsbs.w r0, r0, #1; it lo; movlo r0, #0;"
+]
+],
+"W": []
+},
+"0x16bc": {
+"R": [
+[
+"0x43ab2f1e",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+],
+"W": [
+[
+"0x43ab2f44",
+"pop {r4, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+]
+},
+"0x16c0": {
+"R": [
+[
+"0x43ab2f30",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2f58",
+"pop {r4, pc}; add.w r0, r0, #0x1c40; adds r0, #0x28;"
+]
+]
+},
+"0x174c": {
+"R": [
+[
+"0x43ab0e30",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab0e1e",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1750": {
+"R": [
+[
+"0x43ab0e56",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab0e44",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1751": {
+"R": [
+[
+"0x43ab2e96",
+"cmp r3, #3; bhi #0x43ab2ea4; adds r3, #1; b #0x43ab2ea6; movs r3, #4;"
+],
+[
+"0x43ab2eb4",
+"cmp r0, #3; ite ls; movls r0, #0; movhi r0, #1; pop {r3, pc};"
+]
+],
+"W": [
+[
+"0x43ab2e84",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1754": {
+"R": [
+[
+"0x43ab2e04",
+"pop {r4, pc}; push {r3, r4, r5, lr}; mov r5, r2; ldr r3, [r0]; mov r4, r1;"
+]
+],
+"W": []
+},
+"0x175c": {
+"R": [
+[
+"0x43ab2e70",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+],
+"W": [
+[
+"0x43ab2e5e",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1760": {
+"R": [
+[
+"0x43ab2e4a",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab2e38",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x18e4": {
+"R": [
+[
+"0x435d9b4e",
+"cbz r0, #0x435d9b82; adds r5, r4, r1; add.w r5, r5, #0x18e0; ldrb r5, [r5]; cmp r5, r2;"
+]
+],
+"W": []
+},
+"0x1918": {
+"R": [],
+"W": [
+[
+"0x43a608d4",
+""
+]
+]
+},
+"0x193c": {
+"R": [],
+"W": [
+[
+"0x43a608dc",
+""
+]
+]
+},
+"0x19b8": {
+"R": [
+[
+"0x43ab30b2",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab30a0",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x19c0": {
+"R": [
+[
+"0x43ab315e",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+],
+"W": [
+[
+"0x43ab314c",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a18": {
+"R": [
+[
+"0x439ddbcc",
+"b #0x439ddbd6; mov r4, r0; movs r2, #0; movw r3, #0x305; str r2, [sp, #8];"
+]
+],
+"W": []
+},
+"0x1a50": {
+"R": [
+[
+"0x43ab3300",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3314",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a54": {
+"R": [
+[
+"0x43ab3326",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab333a",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a58": {
+"R": [
+[
+"0x43ab334c",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3360",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a5c": {
+"R": [
+[
+"0x43ab3398",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab33ac",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a60": {
+"R": [
+[
+"0x43a827f6",
+""
+],
+[
+"0x43ab3372",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3386",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a64": {
+"R": [
+[
+"0x43ab32da",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab32ee",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a68": {
+"R": [
+[
+"0x43ab33be",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab33d2",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a6c": {
+"R": [
+[
+"0x43ab33e4",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab33f8",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a70": {
+"R": [
+[
+"0x43ab340a",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab341e",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a74": {
+"R": [
+[
+"0x43ab3430",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3444",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a78": {
+"R": [
+[
+"0x43ab3456",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab346a",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a7c": {
+"R": [
+[
+"0x43ab347c",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3490",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a80": {
+"R": [
+[
+"0x43ab34a2",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab34b6",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a8c": {
+"R": [
+[
+"0x43ab3528",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+],
+"W": [
+[
+"0x43ab3516",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1a94": {
+"R": [
+[
+"0x43ab353a",
+"cbnz r3, #0x43ab354e; ldr r0, [r0, #0x10]; rsbs.w r0, r0, #1; it lo; movlo r0, #0;"
+]
+],
+"W": []
+},
+"0x1a98": {
+"R": [
+[
+"0x43ab355c",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+],
+"W": []
+},
+"0x1a9c": {
+"R": [
+[
+"0x43ab356e",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3582",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1aa0": {
+"R": [
+[
+"0x43ab3594",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab35a8",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1aa4": {
+"R": [
+[
+"0x43ab35ba",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab35ce",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1aa8": {
+"R": [
+[
+"0x43ab35e0",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab35f4",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1acc": {
+"R": [
+[
+"0x43ab3848",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3836",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1ad0": {
+"R": [
+[
+"0x43ab386e",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab385c",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1ad4": {
+"R": [
+[
+"0x43ab3894",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+],
+"W": [
+[
+"0x43ab3882",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1ad8": {
+"R": [
+[
+"0x43ab38a6",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab38ba",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1adc": {
+"R": [
+[
+"0x43ab38cc",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab38e0",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1ae0": {
+"R": [
+[
+"0x43ab38f2",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3906",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1ae4": {
+"R": [
+[
+"0x43ab3918",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab392c",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1be8": {
+"R": [
+[
+"0x43ae766e",
+""
+]
+],
+"W": []
+},
+"0x1c0d": {
+"R": [
+[
+"0x438cbf90",
+"cmp r0, #0; ite eq; moveq r0, #2; movne r0, #0; b #0x438cbfc8;"
+]
+],
+"W": [
+[
+"0x438cc078",
+"movs r0, #0; b #0x438cc084; movs r0, #2; pop {r1, r2, r3, r4, r5, r6, r7, pc}; add.w r3, r4, #0x4a00;"
+]
+]
+},
+"0x1c4c": {
+"R": [
+[
+"0x43ab3a6a",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3a7e",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1c50": {
+"R": [
+[
+"0x43ab3a90",
+"pop {r3, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+],
+"W": [
+[
+"0x43ab3aa4",
+"pop {r4, pc}; ldr r3, [r0]; push {r4, lr}; mov r4, r1; ldr.w r3, [r3, #0x8ac];"
+]
+]
+},
+"0x1c54": {
+"R": [
+[
+"0x43ab37d8",
+"pop {r3, pc}; sub sp, #0x10; push {r3, r4, r5, lr}; add r4, sp, #0x14; stm.w r4, {r1, r2, r3};"
+]
+],
+"W": [
+[
+"0x43ab37c6",
+"pop {r4, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x8ac]; blx r3;"
+]
+]
+},
+"0x1c64": {
+"R": [
+[
+"0x43ab2f9a",
+"adds r3, #1; str r3, [r0, #0x24]; ldr r0, [r0, #0x24];"
+]
+],
+"W": []
+},
+"0x1da0": {
+"R": [
+[
+"0x43a008d2",
+"cbz r3, #0x43a008de; movs r3, #0; strb r3, [r0];"
+]
+],
+"W": []
+},
+"0x1e50": {
+"R": [
+[
+"0x43ae8e2c",
+"add.w r2, r3, #0xa60; str r3, [r1, #0x34]; adds r2, #8; add.w r3, r3, #0x7d8; str r2, [r1, #0x58];"
+]
+],
+"W": []
+},
+"0x1e54": {
+"R": [
+[
+"0x43ae8e44",
+"add.w r2, r3, #0x138; str r2, [r1, #0x60]; str r3, [r1, #0x38]; add.w r3, r3, #0x134; str.w r3, [r1, #0x84];"
+]
+],
+"W": []
+},
+"0x1e58": {
+"R": [
+[
+"0x43ae8e5c",
+"add.w r2, r3, #0xf10; str r2, [r1, #0x68]; str r3, [r1, #0x3c]; add.w r3, r3, #0x1f4; str.w r3, [r1, #0x90];"
+]
+],
+"W": []
+},
+"0x1e5c": {
+"R": [
+[
+"0x43ae8e74",
+"str r3, [r1, #0x40]; adds r3, #2; str.w r3, [r1, #0xa0];"
+]
+],
+"W": []
+},
+"0x1e60": {
+"R": [
+[
+"0x43ae8e84",
+"add.w r2, r3, #0x440; str r2, [r1, #0x70]; str r3, [r1, #0x44]; adds r3, #8; str.w r3, [r1, #0xa8];"
+]
+],
+"W": []
+},
+"0x1e64": {
+"R": [
+[
+"0x43ae8e9a",
+"str r3, [r1, #0x48];"
+]
+],
+"W": []
+},
+"0x1e68": {
+"R": [
+[
+"0x43ae8ea4",
+"str r3, [r1, #0x4c];"
+]
+],
+"W": []
+},
+"0x1e80": {
+"R": [
+[
+"0x43b44f4c",
+"and r0, r0, #1;"
+],
+[
+"0x43b45358",
+"adds r3, #1; str r3, [r0];"
+],
+[
+"0x43b7a042",
+"bfi r3, r1, #0, #8; str r3, [r0];"
+],
+[
+"0x43b7a056",
+"bfi r3, r1, #0x10, #8; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x1e8e": {
+"R": [
+[
+"0x43b45224",
+"str r5, [r1]; add.w r5, r4, #0xb8; ldrb r1, [r0, #0xd]; str r1, [r2]; ldr r2, [r0, #0x24];"
+]
+],
+"W": []
+},
+"0x1f7c": {
+"R": [
+[
+"0x43b4427e",
+""
+],
+[
+"0x43b4462c",
+"subs r0, #1; cmp r0, #1; ite hi; movhi r0, #0; movls r0, #1;"
+]
+],
+"W": [
+[
+"0x43b44276",
+""
+]
+]
+},
+"0x1f80": {
+"R": [],
+"W": [
+[
+"0x43b44286",
+""
+]
+]
+},
+"0x1f8c": {
+"R": [
+[
+"0x43b44c86",
+"cmp r2, r3; bne #0x43b44c6e; add.w r5, r5, #0x1f80; movs r3, #0; adds r5, #0x14;"
+]
+],
+"W": []
+},
+"0x2274": {
+"R": [
+[
+"0x43b4573e",
+"adds r1, #1; str r1, [r0, #0x74]; adds r2, #1; ldr r3, [r3, #0x74]; cmp.w r3, r2, lsl #1;"
+]
+],
+"W": [
+[
+"0x43b4575a",
+"mov r0, r1;"
+]
+]
+},
+"0x25cc": {
+"R": [
+[
+"0x43b41d2c",
+""
+]
+],
+"W": []
+},
+"0x274c": {
+"R": [
+[
+"0x439feb82",
+"str.w r0, [r1, #0x100]; adds r1, #4; cmp r2, r3; blt #0x439feb7c; add.w r3, r5, #0x2700;"
+]
+],
+"W": []
+},
+"0x2860": {
+"R": [
+[
+"0x43b330ce",
+""
+]
+],
+"W": [
+[
+"0x43b330c6",
+""
+]
+]
+},
+"0x2864": {
+"R": [
+[
+"0x43b330be",
+""
+]
+],
+"W": [
+[
+"0x43b330b6",
+""
+]
+]
+},
+"0x286c": {
+"R": [
+[
+"0x43b33028",
+""
+]
+],
+"W": [
+[
+"0x43b33020",
+""
+]
+]
+},
+"0x2870": {
+"R": [
+[
+"0x43b33116",
+""
+]
+],
+"W": []
+},
+"0x2874": {
+"R": [
+[
+"0x43b3312a",
+""
+]
+],
+"W": []
+},
+"0x2878": {
+"R": [
+[
+"0x43b330ae",
+""
+]
+],
+"W": [
+[
+"0x43b3309e",
+"movs r0, #0;"
+]
+]
+},
+"0x2880": {
+"R": [
+[
+"0x43b33060",
+""
+]
+],
+"W": [
+[
+"0x43b33058",
+""
+]
+]
+},
+"0x2958": {
+"R": [
+[
+"0x43b3480c",
+""
+]
+],
+"W": []
+},
+"0x2994": {
+"R": [
+[
+"0x43b3fd82",
+"tst.w r3, #4; bne #0x43b3fd9c; tst.w r3, #3; beq #0x43b3fd9c; ldr r0, [r0, #0x10];"
+]
+],
+"W": []
+},
+"0x29a0": {
+"R": [
+[
+"0x43b44f3c",
+""
+]
+],
+"W": []
+},
+"0x29a4": {
+"R": [
+[
+"0x43b44f44",
+""
+]
+],
+"W": []
+},
+"0x2ad4": {
+"R": [
+[
+"0x435dd3be",
+"ldr r3, [r0]; ldr r3, [r3, #0x18]; blx r3; mov r0, r5; b #0x435dd3fa;"
+]
+],
+"W": []
+},
+"0x2b14": {
+"R": [
+[
+"0x43b152c2",
+""
+]
+],
+"W": []
+},
+"0x2ba0": {
+"R": [
+[
+"0x43b328ca",
+""
+]
+],
+"W": []
+},
+"0x2c98": {
+"R": [
+[
+"0x43a5f6ae",
+"subs r3, #1; cmp r3, #2; ite ls; ldrbls r0, [r0, #0x1c]; movhi r0, #0;"
+],
+[
+"0x43a5f6c0",
+"subs r3, #1; cmp r3, #2; itte hi; ldrbhi r0, [r0, #0x1c]; eorhi r0, r0, #1;"
+],
+[
+"0x43a5f6d6",
+"subs r0, #2; cmp r0, #1; ite hi; movhi r0, #0; movls r0, #1;"
+],
+[
+"0x43a5f6e8",
+"subs r0, #2; cmp r0, #1; ite ls; movls r0, #0; movhi r0, #1;"
+]
+],
+"W": []
+},
+"0x3118": {
+"R": [
+[
+"0x43ad06d2",
+"bfi r3, r1, #0, #1; str r3, [r0, #0x18];"
+]
+],
+"W": []
+},
+"0x314c": {
+"R": [
+[
+"0x43a7f77c",
+"bl #0x43a8011a; ldrb r3, [r4, #2]; ldrb r2, [r4, #3]; cmp r3, #0xff; and r1, r2, #0x7f;"
+]
+],
+"W": []
+},
+"0x3180": {
+"R": [
+[
+"0x43ad0842",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x3258": {
+"R": [],
+"W": [
+[
+"0x43ad0850",
+""
+]
+]
+},
+"0x326c": {
+"R": [
+[
+"0x438a54ca",
+"str r0, [r1, r3]; adds r3, #4; cmp r3, #0x18; bne #0x438a54c4; adds r2, #0x18;"
+]
+],
+"W": []
+},
+"0x3280": {
+"R": [
+[
+"0x43ad0834",
+"bfi r3, r1, #0x19, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x3300": {
+"R": [
+[
+"0x43ad06e0",
+"and r0, r0, #1;"
+],
+[
+"0x43ad06ec",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+],
+[
+"0x43ad06fa",
+"bfi r3, r1, #0x10, #1; str r3, [r0];"
+],
+[
+"0x43ad0708",
+"bfi r3, r1, #0x14, #3; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x330c": {
+"R": [
+[
+"0x43ad0784",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0xc];"
+],
+[
+"0x43ad0792",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0xc];"
+]
+],
+"W": []
+},
+"0x3310": {
+"R": [
+[
+"0x43ad07a0",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0x10];"
+],
+[
+"0x43ad07ae",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0x10];"
+]
+],
+"W": []
+},
+"0x3314": {
+"R": [
+[
+"0x43ad07bc",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x14];"
+],
+[
+"0x43ad07ca",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x14];"
+]
+],
+"W": []
+},
+"0x3318": {
+"R": [
+[
+"0x43ad07d8",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x18];"
+],
+[
+"0x43ad07e6",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x18];"
+]
+],
+"W": []
+},
+"0x331c": {
+"R": [
+[
+"0x43ad07f4",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x1c];"
+],
+[
+"0x43ad0802",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x1c];"
+]
+],
+"W": []
+},
+"0x3320": {
+"R": [],
+"W": [
+[
+"0x43ad0810",
+""
+]
+]
+},
+"0x3324": {
+"R": [
+[
+"0x43ad0294",
+"bfc r3, #0x10, #2; str r3, [r0, #0x24];"
+]
+],
+"W": []
+},
+"0x3328": {
+"R": [
+[
+"0x43ad0818",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0x28];"
+],
+[
+"0x43ad0826",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0x28];"
+]
+],
+"W": []
+},
+"0x3380": {
+"R": [],
+"W": [
+[
+"0x43b6be88",
+""
+]
+]
+},
+"0x33c0": {
+"R": [],
+"W": [
+[
+"0x43b45e44",
+""
+]
+]
+},
+"0x3400": {
+"R": [
+[
+"0x43b6b14e",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43ad088a",
+""
+]
+]
+},
+"0x340c": {
+"R": [
+[
+"0x43b6b16c",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43ad08a2",
+""
+]
+]
+},
+"0x3410": {
+"R": [
+[
+"0x43b6b176",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43ad08aa",
+""
+]
+]
+},
+"0x3414": {
+"R": [
+[
+"0x43b6b180",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43ad08b2",
+""
+]
+]
+},
+"0x3418": {
+"R": [
+[
+"0x43b6b18a",
+"bfi r3, r1, #0, #1; str r3, [r0, #0x18];"
+],
+[
+"0x43b6b198",
+"bfi r3, r1, #1, #1; str r3, [r0, #0x18];"
+],
+[
+"0x43b6b1a6",
+"bfi r3, r1, #4, #1; str r3, [r0, #0x18];"
+],
+[
+"0x43b6b1b4",
+""
+]
+],
+"W": [
+[
+"0x43ad08ba",
+""
+]
+]
+},
+"0x3480": {
+"R": [],
+"W": [
+[
+"0x43ad08c2",
+""
+]
+]
+},
+"0x348c": {
+"R": [],
+"W": [
+[
+"0x43b6b858",
+""
+]
+]
+},
+"0x3490": {
+"R": [],
+"W": [
+[
+"0x43b6b860",
+""
+]
+]
+},
+"0x3494": {
+"R": [],
+"W": [
+[
+"0x43b6b868",
+""
+]
+]
+},
+"0x3500": {
+"R": [
+[
+"0x43ad0868",
+"bfi r3, r1, #0x11, #1; str r3, [r0];"
+],
+[
+"0x43b69da2",
+"bfi r3, r1, #0, #6; str r3, [r0];"
+],
+[
+"0x43b69db0",
+"bfi r3, r1, #0x10, #1; str r3, [r0];"
+],
+[
+"0x43b69dbe",
+"bfi r3, r1, #0x12, #1; str r3, [r0];"
+],
+[
+"0x43b69dcc",
+"bfi r3, r1, #0x13, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x350c": {
+"R": [
+[
+"0x43b69e28",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0xc];"
+],
+[
+"0x43b69e36",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0xc];"
+]
+],
+"W": []
+},
+"0x3510": {
+"R": [
+[
+"0x43b69e44",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0x10];"
+],
+[
+"0x43b69e52",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0x10];"
+]
+],
+"W": []
+},
+"0x3514": {
+"R": [],
+"W": [
+[
+"0x43b69e60",
+""
+]
+]
+},
+"0x3518": {
+"R": [
+[
+"0x43b69e68",
+"bfi r3, r1, #0, #6; str r3, [r0, #0x18];"
+],
+[
+"0x43b69e76",
+"bfi r3, r1, #0x10, #3; str r3, [r0, #0x18];"
+]
+],
+"W": []
+},
+"0x351c": {
+"R": [
+[
+"0x43b69e84",
+"bfi r3, r1, #0, #2; str r3, [r0, #0x1c];"
+],
+[
+"0x43b69e92",
+"bfi r3, r1, #2, #2; str r3, [r0, #0x1c];"
+],
+[
+"0x43b69ea0",
+"bfi r3, r1, #4, #3; str r3, [r0, #0x1c];"
+]
+],
+"W": []
+},
+"0x3520": {
+"R": [],
+"W": [
+[
+"0x43b69eae",
+""
+]
+]
+},
+"0x3524": {
+"R": [],
+"W": [
+[
+"0x43b69eb6",
+""
+]
+]
+},
+"0x3528": {
+"R": [],
+"W": [
+[
+"0x43b69ebe",
+""
+]
+]
+},
+"0x352c": {
+"R": [],
+"W": [
+[
+"0x43b69ec6",
+""
+]
+]
+},
+"0x3530": {
+"R": [],
+"W": [
+[
+"0x43b69ece",
+""
+]
+]
+},
+"0x3534": {
+"R": [],
+"W": [
+[
+"0x43b69ed6",
+""
+]
+]
+},
+"0x3538": {
+"R": [
+[
+"0x43b69ede",
+"lsls r0, r0, #0x12; lsrs r0, r0, #0x12;"
+]
+],
+"W": []
+},
+"0x353c": {
+"R": [
+[
+"0x43b69eea",
+"lsls r0, r0, #0x12; lsrs r0, r0, #0x12;"
+]
+],
+"W": []
+},
+"0x3540": {
+"R": [
+[
+"0x43b69ef6",
+"lsls r0, r0, #0x12; lsrs r0, r0, #0x12;"
+]
+],
+"W": []
+},
+"0x3544": {
+"R": [
+[
+"0x43b69f02",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+],
+[
+"0x43b69f0e",
+"ubfx r0, r0, #0x10, #9;"
+]
+],
+"W": []
+},
+"0x3548": {
+"R": [
+[
+"0x43b69f1a",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+],
+[
+"0x43b69f26",
+"ubfx r0, r0, #0x10, #9;"
+]
+],
+"W": []
+},
+"0x354c": {
+"R": [
+[
+"0x43b69f32",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+],
+[
+"0x43b69f3e",
+"ubfx r0, r0, #0x10, #9;"
+]
+],
+"W": []
+},
+"0x3550": {
+"R": [
+[
+"0x43b69f4a",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+],
+[
+"0x43b69f56",
+"ubfx r0, r0, #0x10, #9;"
+]
+],
+"W": []
+},
+"0x3554": {
+"R": [
+[
+"0x43b69f62",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+],
+[
+"0x43b69f6e",
+"ubfx r0, r0, #0x10, #9;"
+]
+],
+"W": []
+},
+"0x3558": {
+"R": [
+[
+"0x43b69f7a",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+],
+[
+"0x43b69f86",
+"ubfx r0, r0, #0x10, #9;"
+]
+],
+"W": []
+},
+"0x3900": {
+"R": [
+[
+"0x43b6b2a8",
+"bfi r3, r1, #0, #2; str r3, [r0];"
+],
+[
+"0x43b6b2b6",
+"bfi r3, r1, #2, #2; str r3, [r0];"
+],
+[
+"0x43b6b2c4",
+"bfi r3, r1, #4, #2; str r3, [r0];"
+],
+[
+"0x43b6b2d2",
+"bfi r3, r1, #6, #2; str r3, [r0];"
+],
+[
+"0x43b6b2e0",
+"bfi r3, r1, #8, #2; str r3, [r0];"
+],
+[
+"0x43b6b2ee",
+"bfi r3, r1, #0xa, #2; str r3, [r0];"
+],
+[
+"0x43b6b2fc",
+"bfi r3, r1, #0xc, #2; str r3, [r0];"
+],
+[
+"0x43b6b30a",
+"bfi r3, r1, #0xe, #2; str r3, [r0];"
+],
+[
+"0x43b6b318",
+"bfi r3, r1, #0x10, #2; str r3, [r0];"
+],
+[
+"0x43b6b326",
+"bfi r3, r1, #0x12, #2; str r3, [r0];"
+],
+[
+"0x43b6b334",
+"bfi r3, r1, #0x14, #2; str r3, [r0];"
+],
+[
+"0x43b6b342",
+"bfi r3, r1, #0x16, #2; str r3, [r0];"
+],
+[
+"0x43b6b350",
+"bfi r3, r1, #0x18, #2; str r3, [r0];"
+],
+[
+"0x43b6b35e",
+"bfi r3, r1, #0x1a, #2; str r3, [r0];"
+],
+[
+"0x43b6b36c",
+"bfi r3, r1, #0x1c, #2; str r3, [r0];"
+],
+[
+"0x43b6b37a",
+"bfi r3, r1, #0x1e, #2; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x392c": {
+"R": [
+[
+"0x43b6b3ee",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x2c];"
+],
+[
+"0x43b6b3fc",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x2c];"
+]
+],
+"W": []
+},
+"0x3934": {
+"R": [
+[
+"0x43b6b42a",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x34];"
+],
+[
+"0x43b6b438",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x34];"
+]
+],
+"W": []
+},
+"0x393c": {
+"R": [
+[
+"0x43b6b466",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x3c];"
+],
+[
+"0x43b6b474",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x3c];"
+]
+],
+"W": []
+},
+"0x3944": {
+"R": [
+[
+"0x43b6b4a2",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x44];"
+],
+[
+"0x43b6b4b0",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x44];"
+]
+],
+"W": []
+},
+"0x3948": {
+"R": [
+[
+"0x43b6b4be",
+"bfi r3, r1, #0, #6; str r3, [r0, #0x48];"
+],
+[
+"0x43b6b4cc",
+"bfi r3, r1, #8, #3; str r3, [r0, #0x48];"
+],
+[
+"0x43b6b4da",
+"bfi r3, r1, #0x10, #6; str r3, [r0, #0x48];"
+],
+[
+"0x43b6b4e8",
+"bfi r3, r1, #0x18, #3; str r3, [r0, #0x48];"
+]
+],
+"W": []
+},
+"0x394c": {
+"R": [
+[
+"0x43b6b4f6",
+"bfi r3, r1, #0, #6; str r3, [r0, #0x4c];"
+],
+[
+"0x43b6b504",
+"bfi r3, r1, #8, #3; str r3, [r0, #0x4c];"
+],
+[
+"0x43b6b512",
+"bfi r3, r1, #0x10, #6; str r3, [r0, #0x4c];"
+],
+[
+"0x43b6b520",
+"bfi r3, r1, #0x18, #3; str r3, [r0, #0x4c];"
+]
+],
+"W": []
+},
+"0x3ba0": {
+"R": [],
+"W": [
+[
+"0x43b6b52e",
+""
+]
+]
+},
+"0x3c00": {
+"R": [
+[
+"0x43b6b8e2",
+"bfi r3, r1, #0, #0xe; str r3, [r0];"
+],
+[
+"0x43b6b8f0",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x3c0c": {
+"R": [
+[
+"0x43b6b960",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0xc];"
+],
+[
+"0x43b6b96e",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0xc];"
+]
+],
+"W": []
+},
+"0x3c10": {
+"R": [
+[
+"0x43b6b97c",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x10];"
+],
+[
+"0x43b6b98a",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x10];"
+]
+],
+"W": []
+},
+"0x3c14": {
+"R": [
+[
+"0x43b6b998",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x14];"
+],
+[
+"0x43b6b9a6",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x14];"
+]
+],
+"W": []
+},
+"0x3c18": {
+"R": [
+[
+"0x43b6b9b4",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x18];"
+],
+[
+"0x43b6b9c2",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x18];"
+]
+],
+"W": []
+},
+"0x3c1c": {
+"R": [
+[
+"0x43b6b9d0",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x1c];"
+],
+[
+"0x43b6b9de",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x1c];"
+]
+],
+"W": []
+},
+"0x3c20": {
+"R": [
+[
+"0x43b6b9ec",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x20];"
+],
+[
+"0x43b6b9fa",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x20];"
+]
+],
+"W": []
+},
+"0x3c24": {
+"R": [
+[
+"0x43b6ba08",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x24];"
+],
+[
+"0x43b6ba16",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x24];"
+]
+],
+"W": []
+},
+"0x3c28": {
+"R": [
+[
+"0x43b6ba24",
+"bfi r3, r1, #0, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6ba32",
+"bfi r3, r1, #1, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6ba40",
+"bfi r3, r1, #2, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6ba4e",
+"bfi r3, r1, #3, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6ba5c",
+"bfi r3, r1, #4, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6ba6a",
+"bfi r3, r1, #5, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6ba78",
+"bfi r3, r1, #6, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6ba86",
+"bfi r3, r1, #7, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6ba94",
+"bfi r3, r1, #8, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6baa2",
+"bfi r3, r1, #9, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6bab0",
+"bfi r3, r1, #0xa, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6babe",
+"bfi r3, r1, #0xb, #1; str r3, [r0, #0x28];"
+],
+[
+"0x43b6bacc",
+"bfi r3, r1, #0x10, #2; str r3, [r0, #0x28];"
+],
+[
+"0x43b6bada",
+"bfi r3, r1, #0x12, #2; str r3, [r0, #0x28];"
+],
+[
+"0x43b6bae8",
+"bfi r3, r1, #0x14, #2; str r3, [r0, #0x28];"
+],
+[
+"0x43b6baf6",
+"bfi r3, r1, #0x16, #2; str r3, [r0, #0x28];"
+],
+[
+"0x43b6bb04",
+"bfi r3, r1, #0x18, #2; str r3, [r0, #0x28];"
+],
+[
+"0x43b6bb12",
+"bfi r3, r1, #0x1a, #2; str r3, [r0, #0x28];"
+],
+[
+"0x43b6bb20",
+"bfi r3, r1, #0x1c, #2; str r3, [r0, #0x28];"
+],
+[
+"0x43b6bb2e",
+"bfi r3, r1, #0x1e, #2; str r3, [r0, #0x28];"
+]
+],
+"W": []
+},
+"0x3c2c": {
+"R": [
+[
+"0x43b6bb3c",
+"bfi r3, r1, #0, #1; str r3, [r0, #0x2c];"
+],
+[
+"0x43b6bb4a",
+"bfi r3, r1, #4, #4; str r3, [r0, #0x2c];"
+]
+],
+"W": []
+},
+"0x3d00": {
+"R": [
+[
+"0x43b6aaac",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+],
+[
+"0x43b6aaba",
+"bfi r3, r1, #4, #1; str r3, [r0];"
+],
+[
+"0x43b6aac8",
+"bfi r3, r1, #5, #1; str r3, [r0];"
+],
+[
+"0x43b6aad6",
+"bfi r3, r1, #6, #1; str r3, [r0];"
+],
+[
+"0x43b6aae4",
+"bfi r3, r1, #7, #1; str r3, [r0];"
+],
+[
+"0x43b6aaf2",
+"bfi r3, r1, #8, #1; str r3, [r0];"
+],
+[
+"0x43b6ab00",
+"bfi r3, r1, #9, #1; str r3, [r0];"
+],
+[
+"0x43b6ab0e",
+"bfi r3, r1, #0xa, #1; str r3, [r0];"
+],
+[
+"0x43b6ab1c",
+"bfi r3, r1, #0xb, #1; str r3, [r0];"
+],
+[
+"0x43b6ab2a",
+"bfi r3, r1, #0xc, #1; str r3, [r0];"
+],
+[
+"0x43b6ab38",
+"bfi r3, r1, #0xd, #1; str r3, [r0];"
+],
+[
+"0x43b6ab46",
+"bfi r3, r1, #0xe, #1; str r3, [r0];"
+],
+[
+"0x43b6ab54",
+"bfi r3, r1, #0xf, #1; str r3, [r0];"
+],
+[
+"0x43b6ab62",
+"bfi r3, r1, #0x10, #2; str r3, [r0];"
+],
+[
+"0x43b6ab70",
+"bfi r3, r1, #0x14, #2; str r3, [r0];"
+],
+[
+"0x43b6ab7e",
+"bfi r3, r1, #0x18, #1; str r3, [r0];"
+],
+[
+"0x43b6ab8c",
+"bfi r3, r1, #0x19, #1; str r3, [r0];"
+],
+[
+"0x43b6ab9a",
+"bfi r3, r1, #0x1c, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x3d0c": {
+"R": [
+[
+"0x43b6abe0",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0xc];"
+],
+[
+"0x43b6abee",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0xc];"
+]
+],
+"W": []
+},
+"0x3d10": {
+"R": [
+[
+"0x43b6abfc",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x10];"
+],
+[
+"0x43b6ac0a",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x10];"
+]
+],
+"W": []
+},
+"0x3d14": {
+"R": [
+[
+"0x43b6ac18",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0x14];"
+],
+[
+"0x43b6ac26",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0x14];"
+]
+],
+"W": []
+},
+"0x3d18": {
+"R": [
+[
+"0x43b6ac34",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x18];"
+],
+[
+"0x43b6ac42",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x18];"
+]
+],
+"W": []
+},
+"0x3d1c": {
+"R": [
+[
+"0x43b6ac50",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0x1c];"
+],
+[
+"0x43b6ac5e",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0x1c];"
+]
+],
+"W": []
+},
+"0x3d20": {
+"R": [
+[
+"0x43b6ac6c",
+"bfi r3, r1, #0, #0xb; str r3, [r0, #0x20];"
+],
+[
+"0x43b6ac7a",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0, #0x20];"
+]
+],
+"W": []
+},
+"0x3d24": {
+"R": [
+[
+"0x43b6ac88",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x24];"
+],
+[
+"0x43b6ac96",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x24];"
+]
+],
+"W": []
+},
+"0x3d28": {
+"R": [
+[
+"0x43b6aca4",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x28];"
+],
+[
+"0x43b6acb2",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x28];"
+]
+],
+"W": []
+},
+"0x3d2c": {
+"R": [
+[
+"0x43b6acc0",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x2c];"
+],
+[
+"0x43b6acce",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x2c];"
+]
+],
+"W": []
+},
+"0x3d30": {
+"R": [
+[
+"0x43b6acdc",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x30];"
+],
+[
+"0x43b6acea",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x30];"
+]
+],
+"W": []
+},
+"0x3d34": {
+"R": [
+[
+"0x43b6acf8",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x34];"
+],
+[
+"0x43b6ad06",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x34];"
+]
+],
+"W": []
+},
+"0x3d38": {
+"R": [
+[
+"0x43b6ad14",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x38];"
+],
+[
+"0x43b6ad22",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x38];"
+]
+],
+"W": []
+},
+"0x3d3c": {
+"R": [
+[
+"0x43b6ad30",
+"bfi r3, r1, #0, #0xc; str r3, [r0, #0x3c];"
+],
+[
+"0x43b6ad3e",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0, #0x3c];"
+]
+],
+"W": []
+},
+"0x3d40": {
+"R": [
+[
+"0x43b6ad4c",
+"bfi r3, r1, #0, #0xc; str r3, [r0];"
+],
+[
+"0x43b6ad5a",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x3e00": {
+"R": [
+[
+"0x43b6a21c",
+"and r0, r0, #1;"
+],
+[
+"0x43b6a228",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+],
+[
+"0x43b6a236",
+"bfi r3, r1, #1, #1; str r3, [r0];"
+],
+[
+"0x43b6a244",
+"bfi r3, r1, #2, #1; str r3, [r0];"
+],
+[
+"0x43b6a252",
+"bfi r3, r1, #3, #1; str r3, [r0];"
+],
+[
+"0x43b6a260",
+"ubfx r0, r0, #0x10, #1;"
+],
+[
+"0x43b6a26c",
+"bfi r3, r1, #0x10, #1; str r3, [r0];"
+]
+],
+"W": [
+[
+"0x43ad0860",
+""
+]
+]
+},
+"0x3e0c": {
+"R": [
+[
+"0x43b6a2c0",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a2cc",
+""
+]
+]
+},
+"0x3e10": {
+"R": [
+[
+"0x43b6a2d4",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a2e0",
+""
+]
+]
+},
+"0x3e14": {
+"R": [
+[
+"0x43b6a2e8",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a2f4",
+""
+]
+]
+},
+"0x3e18": {
+"R": [
+[
+"0x43b6a2fc",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a308",
+""
+]
+]
+},
+"0x3e1c": {
+"R": [
+[
+"0x43b6a310",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a31c",
+""
+]
+]
+},
+"0x3e20": {
+"R": [
+[
+"0x43b6a324",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a330",
+""
+]
+]
+},
+"0x3e24": {
+"R": [
+[
+"0x43b6a338",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a344",
+""
+]
+]
+},
+"0x3e28": {
+"R": [
+[
+"0x43b6a34c",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a358",
+""
+]
+]
+},
+"0x3e2c": {
+"R": [
+[
+"0x43b6a360",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a36c",
+""
+]
+]
+},
+"0x3e30": {
+"R": [
+[
+"0x43b6a374",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a380",
+""
+]
+]
+},
+"0x3e34": {
+"R": [
+[
+"0x43b6a388",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a394",
+""
+]
+]
+},
+"0x3e38": {
+"R": [
+[
+"0x43b6a39c",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a3a8",
+""
+]
+]
+},
+"0x3e3c": {
+"R": [
+[
+"0x43b6a3b0",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a3bc",
+""
+]
+]
+},
+"0x3e40": {
+"R": [
+[
+"0x43b6a3c4",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a3d0",
+""
+]
+]
+},
+"0x3e44": {
+"R": [
+[
+"0x43b6a3d8",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a3e4",
+""
+]
+]
+},
+"0x3e48": {
+"R": [
+[
+"0x43b6a3ec",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b6a3f8",
+""
+]
+]
+},
+"0x3e5c": {
+"R": [
+[
+"0x43b6a446",
+"bfi r3, r1, #0, #6; str r3, [r0, #0x5c];"
+],
+[
+"0x43b6a454",
+"bfi r3, r1, #0x10, #6; str r3, [r0, #0x5c];"
+]
+],
+"W": []
+},
+"0x3e60": {
+"R": [
+[
+"0x43b6a462",
+"bfi r3, r1, #0, #6; str r3, [r0, #0x60];"
+],
+[
+"0x43b6a470",
+"bfi r3, r1, #0x10, #6; str r3, [r0, #0x60];"
+]
+],
+"W": []
+},
+"0x3e64": {
+"R": [
+[
+"0x43b6a47e",
+"bfi r3, r1, #0, #6; str r3, [r0, #0x64];"
+],
+[
+"0x43b6a48c",
+"bfi r3, r1, #0x10, #6; str r3, [r0, #0x64];"
+]
+],
+"W": []
+},
+"0x3e68": {
+"R": [
+[
+"0x43b6a49a",
+"bfi r3, r1, #0, #6; str r3, [r0, #0x68];"
+],
+[
+"0x43b6a4a8",
+"bfi r3, r1, #0x10, #6; str r3, [r0, #0x68];"
+]
+],
+"W": []
+},
+"0x4168": {
+"R": [
+[
+"0x43a5bdbc",
+"b.w #0x435d375c; add.w r0, r0, #0x4100; push {r3, lr}; ldr r0, [r0, #0x68]; ldr r3, [r0];"
+]
+],
+"W": []
+},
+"0x416c": {
+"R": [
+[
+"0x43a5b2dc",
+""
+]
+],
+"W": []
+},
+"0x4338": {
+"R": [
+[
+"0x43a79886",
+""
+]
+],
+"W": []
+},
+"0x433c": {
+"R": [
+[
+"0x43a7989c",
+"subs r0, r1, r0; mov r1, r3; bl #0x4355fd4c; b #0x43a798b0; mov.w r1, #-1;"
+]
+],
+"W": []
+},
+"0x4348": {
+"R": [
+[
+"0x43a79ffc",
+"cbz r3, #0x43a7a00c; subs r3, #1; str r3, [r0, #0x48]; movs r0, #0;"
+]
+],
+"W": []
+},
+"0x436c": {
+"R": [
+[
+"0x43a798b4",
+""
+]
+],
+"W": [
+[
+"0x43a7a39a",
+"str r2, [r0, #0x70];"
+]
+]
+},
+"0x4370": {
+"R": [
+[
+"0x43a798bc",
+""
+]
+],
+"W": []
+},
+"0x481c": {
+"R": [
+[
+"0x438899aa",
+"cmp r3, #0xc2; bne #0x438899ca; ldr r3, [r0, #0x20]; ldrb r0, [r3]; subs r0, #3;"
+]
+],
+"W": []
+},
+"0x4850": {
+"R": [
+[
+"0x438a6276",
+"subs r2, #2; cmp r2, #3; bhi #0x438a629e; ldr r3, [pc, #0x24]; add r3, pc;"
+],
+[
+"0x438b75c4",
+"cmp r3, #2; beq #0x438b75d8; cmp r3, #3; beq #0x438b75e4; cmp r3, #1;"
+]
+],
+"W": []
+},
+"0x4b68": {
+"R": [
+[
+"0x43b0041e",
+"mov r0, r2; str.w r2, [r3, #0x84]; subs r2, #0x7e; str r1, [sp]; ldr.w r1, [r3, #0x8c];"
+]
+],
+"W": []
+},
+"0x4b80": {
+"R": [
+[
+"0x437ea994",
+"cmp r6, #2; beq #0x437ea9aa; cmp r6, #3; beq #0x437eaa00; cmp r6, #1;"
+]
+],
+"W": []
+},
+"0x544c": {
+"R": [
+[
+"0x43a540fc",
+""
+]
+],
+"W": []
+},
+"0x5450": {
+"R": [
+[
+"0x43a53fcc",
+""
+]
+],
+"W": []
+},
+"0x5b38": {
+"R": [],
+"W": [
+[
+"0x43b33df8",
+""
+]
+]
+},
+"0x5e80": {
+"R": [
+[
+"0x43b63e74",
+"pop {r3, pc}; push {r3, lr}; ldr r3, [r0]; ldr.w r3, [r3, #0x114]; blx r3;"
+]
+],
+"W": [
+[
+"0x439a9c46",
+"ldr r0, [pc, #8]; add r0, pc; pop.w {r4, lr}; b.w #0x435ab880; ldcl p0, c0, [fp, #-0xcc];"
+]
+]
+},
+"0xd410": {
+"R": [
+[
+"0x43b35d6c",
+"cbz r3, #0x43b35d80; ldr r3, [r0, #0xc]; rsbs.w r3, r3, #1; it lo; movlo r3, #0;"
+],
+[
+"0x43b35d82",
+"cbz r3, #0x43b35d96; ldr r0, [r0, #0xc]; rsbs.w r0, r0, #1; it lo; movlo r0, #0;"
+]
+],
+"W": []
+},
+"0xd42c": {
+"R": [
+[
+"0x43b35702",
+"adds r3, #1; str r3, [r0, #0x2c];"
+]
+],
+"W": []
+},
+"0xe100": {
+"R": [],
+"W": [
+[
+"0x43879418",
+"str r1, [r3]; pop {r3, r4, r5, pc}; cbnz r2, #0x4387942a; ldr r3, [pc, #0xc]; add r3, pc;"
+]
+]
+},
+"0xed04": {
+"R": [
+[
+"0x43b35b8e",
+"adds r0, r1, r0;"
+],
+[
+"0x43b35b9e",
+"subs r0, r1, r0;"
+]
+],
+"W": []
+},
+"0x10000": {
+"R": [],
+"W": [
+[
+"0x43ad1cfe",
+""
+]
+]
+},
+"0x1000c": {
+"R": [],
+"W": [
+[
+"0x43ad1d54",
+""
+]
+]
+},
+"0x10010": {
+"R": [],
+"W": [
+[
+"0x43ad1d7a",
+""
+]
+]
+},
+"0x10018": {
+"R": [],
+"W": [
+[
+"0x43ad1da0",
+""
+]
+]
+},
+"0x10104": {
+"R": [],
+"W": [
+[
+"0x43ad1dbc",
+""
+]
+]
+},
+"0x1010c": {
+"R": [],
+"W": [
+[
+"0x43ad1dc8",
+""
+]
+]
+},
+"0x10128": {
+"R": [],
+"W": [
+[
+"0x43ad1df4",
+""
+]
+]
+},
+"0x1012c": {
+"R": [],
+"W": [
+[
+"0x43ad1e00",
+""
+]
+]
+},
+"0x10130": {
+"R": [],
+"W": [
+[
+"0x43ad1e0c",
+""
+]
+]
+},
+"0x10134": {
+"R": [],
+"W": [
+[
+"0x43ad1e18",
+""
+]
+]
+},
+"0x10200": {
+"R": [],
+"W": [
+[
+"0x43ad1e38",
+""
+]
+]
+},
+"0x10204": {
+"R": [],
+"W": [
+[
+"0x43ad1e40",
+""
+]
+]
+},
+"0x1020c": {
+"R": [],
+"W": [
+[
+"0x43ad1f54",
+""
+]
+]
+},
+"0x10218": {
+"R": [],
+"W": [
+[
+"0x43ad1f80",
+""
+]
+]
+},
+"0x10228": {
+"R": [],
+"W": [
+[
+"0x43ad1f8c",
+""
+]
+]
+},
+"0x1022c": {
+"R": [],
+"W": [
+[
+"0x43ad1f98",
+""
+]
+]
+},
+"0x10230": {
+"R": [],
+"W": [
+[
+"0x43ad1fa4",
+""
+]
+]
+},
+"0x10234": {
+"R": [],
+"W": [
+[
+"0x43ad1fb0",
+""
+]
+]
+},
+"0x10238": {
+"R": [],
+"W": [
+[
+"0x43ad1fbc",
+""
+]
+]
+},
+"0x10400": {
+"R": [],
+"W": [
+[
+"0x43ad1fc8",
+""
+]
+]
+},
+"0x1040c": {
+"R": [],
+"W": [
+[
+"0x43ad1fd8",
+""
+]
+]
+},
+"0x10414": {
+"R": [],
+"W": [
+[
+"0x43ad1fe0",
+""
+]
+]
+},
+"0x10420": {
+"R": [],
+"W": [
+[
+"0x43ad1fe8",
+""
+]
+]
+},
+"0x10424": {
+"R": [],
+"W": [
+[
+"0x43ad1ff0",
+""
+]
+]
+},
+"0x10428": {
+"R": [],
+"W": [
+[
+"0x43ad1ff8",
+""
+]
+]
+},
+"0x1042c": {
+"R": [],
+"W": [
+[
+"0x43ad2000",
+""
+]
+]
+},
+"0x10500": {
+"R": [],
+"W": [
+[
+"0x43ad20e6",
+""
+]
+]
+},
+"0x10504": {
+"R": [],
+"W": [
+[
+"0x43ad20f2",
+""
+]
+]
+},
+"0x1050c": {
+"R": [],
+"W": [
+[
+"0x43ad20fe",
+""
+]
+]
+},
+"0x10528": {
+"R": [],
+"W": [
+[
+"0x43ad211a",
+""
+]
+]
+},
+"0x1052c": {
+"R": [],
+"W": [
+[
+"0x43ad2126",
+""
+]
+]
+},
+"0x10530": {
+"R": [],
+"W": [
+[
+"0x43ad2132",
+""
+]
+]
+},
+"0x10534": {
+"R": [],
+"W": [
+[
+"0x43ad213e",
+""
+]
+]
+},
+"0x10538": {
+"R": [],
+"W": [
+[
+"0x43ad214a",
+""
+]
+]
+},
+"0x1053c": {
+"R": [],
+"W": [
+[
+"0x43ad2156",
+""
+]
+]
+},
+"0x10540": {
+"R": [],
+"W": [
+[
+"0x43ad2162",
+""
+]
+]
+},
+"0x1054c": {
+"R": [],
+"W": [
+[
+"0x43ad216e",
+""
+]
+]
+},
+"0x10600": {
+"R": [],
+"W": [
+[
+"0x43ad217a",
+""
+]
+]
+},
+"0x10608": {
+"R": [],
+"W": [
+[
+"0x43ad238a",
+""
+]
+]
+},
+"0x1060c": {
+"R": [],
+"W": [
+[
+"0x43ad2396",
+""
+]
+]
+},
+"0x10614": {
+"R": [],
+"W": [
+[
+"0x43ad23b2",
+""
+]
+]
+},
+"0x10700": {
+"R": [],
+"W": [
+[
+"0x43ad2018",
+""
+]
+]
+},
+"0x10704": {
+"R": [],
+"W": [
+[
+"0x43ad2024",
+""
+]
+]
+},
+"0x1070c": {
+"R": [],
+"W": [
+[
+"0x43ad208a",
+""
+]
+]
+},
+"0x10714": {
+"R": [],
+"W": [
+[
+"0x43ad2096",
+""
+]
+]
+},
+"0x10720": {
+"R": [],
+"W": [
+[
+"0x43ad20a2",
+""
+]
+]
+},
+"0x10724": {
+"R": [],
+"W": [
+[
+"0x43ad20ae",
+""
+]
+]
+},
+"0x10728": {
+"R": [],
+"W": [
+[
+"0x43ad20ba",
+""
+]
+]
+},
+"0x1072c": {
+"R": [],
+"W": [
+[
+"0x43ad20c6",
+""
+]
+]
+},
+"0x1118c": {
+"R": [],
+"W": [
+[
+"0x43b6637c",
+""
+]
+]
+},
+"0x11190": {
+"R": [],
+"W": [
+[
+"0x43b66388",
+""
+]
+]
+},
+"0x11194": {
+"R": [],
+"W": [
+[
+"0x43b66394",
+""
+]
+]
+},
+"0x11198": {
+"R": [],
+"W": [
+[
+"0x43b663a0",
+""
+]
+]
+},
+"0x1119c": {
+"R": [],
+"W": [
+[
+"0x43b663ac",
+""
+]
+]
+},
+"0x111a0": {
+"R": [],
+"W": [
+[
+"0x43b663b8",
+""
+]
+]
+},
+"0x111a4": {
+"R": [],
+"W": [
+[
+"0x43b663c4",
+""
+]
+]
+},
+"0x111a8": {
+"R": [],
+"W": [
+[
+"0x43b663d0",
+""
+]
+]
+},
+"0x11400": {
+"R": [
+[
+"0x43b66556",
+"bic r0, r0, #0xff000000; bic r0, r0, #0xfe0000;"
+]
+],
+"W": [
+[
+"0x43b66566",
+""
+]
+]
+},
+"0x1140c": {
+"R": [
+[
+"0x43b6659e",
+"bic r0, r0, #0xff000000; bic r0, r0, #0xfe0000;"
+]
+],
+"W": [
+[
+"0x43b665ae",
+""
+]
+]
+},
+"0x11900": {
+"R": [
+[
+"0x43b664e6",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43b664f6",
+""
+]
+]
+},
+"0x11904": {
+"R": [
+[
+"0x43b66502",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43b66512",
+""
+]
+]
+},
+"0x11908": {
+"R": [
+[
+"0x43b6651e",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43b6652e",
+""
+]
+]
+},
+"0x1190c": {
+"R": [
+[
+"0x43b6653a",
+"and r0, r0, #7;"
+]
+],
+"W": [
+[
+"0x43b6654a",
+""
+]
+]
+},
+"0x12028": {
+"R": [],
+"W": [
+[
+"0x43b666fc",
+""
+]
+]
+},
+"0x12054": {
+"R": [],
+"W": [
+[
+"0x43b6677c",
+""
+]
+]
+},
+"0x1205c": {
+"R": [],
+"W": [
+[
+"0x43b66784",
+""
+]
+]
+},
+"0x12078": {
+"R": [],
+"W": [
+[
+"0x43acf70a",
+""
+]
+]
+},
+"0x13000": {
+"R": [],
+"W": [
+[
+"0x43acf97c",
+""
+]
+]
+},
+"0x13010": {
+"R": [],
+"W": [
+[
+"0x43b66b2e",
+""
+]
+]
+},
+"0x14100": {
+"R": [],
+"W": [
+[
+"0x43b6bea2",
+""
+]
+]
+},
+"0x14104": {
+"R": [],
+"W": [
+[
+"0x43b6beae",
+""
+]
+]
+},
+"0x14108": {
+"R": [],
+"W": [
+[
+"0x43b6beba",
+""
+]
+]
+},
+"0x1410c": {
+"R": [],
+"W": [
+[
+"0x43b6bec6",
+""
+]
+]
+},
+"0x14110": {
+"R": [],
+"W": [
+[
+"0x43ad191c",
+""
+]
+]
+},
+"0x14200": {
+"R": [
+[
+"0x43b6c892",
+"lsls r0, r0, #0x15; lsrs r0, r0, #0x15;"
+],
+[
+"0x43b6c89e",
+"bfi r3, r1, #0, #0xb; str r3, [r0];"
+],
+[
+"0x43b6c8ac",
+"ubfx r0, r0, #0x10, #0xb;"
+],
+[
+"0x43b6c8b8",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x14204": {
+"R": [
+[
+"0x43b6c8c6",
+"lsls r0, r0, #0x15; lsrs r0, r0, #0x15;"
+],
+[
+"0x43b6c8d6",
+"bfi r3, r1, #0, #0xb; str r3, [r0];"
+],
+[
+"0x43b6c8e8",
+"ubfx r0, r0, #0x10, #0xb;"
+],
+[
+"0x43b6c8f8",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x14300": {
+"R": [],
+"W": [
+[
+"0x43b6bf2e",
+""
+]
+]
+},
+"0x14304": {
+"R": [
+[
+"0x43b6bf1c",
+"orr r3, r3, #1; str r3, [r0];"
+],
+[
+"0x43b6bf3a",
+"bfi r3, r1, #4, #1; str r3, [r0];"
+],
+[
+"0x43b6bf4c",
+"bfi r3, r1, #8, #1; str r3, [r0];"
+],
+[
+"0x43b6bf5e",
+"bfi r3, r1, #0xc, #1; str r3, [r0];"
+],
+[
+"0x43b6bf70",
+"bfi r3, r1, #0x10, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x14308": {
+"R": [],
+"W": [
+[
+"0x43b6bf82",
+""
+]
+]
+},
+"0x1430c": {
+"R": [
+[
+"0x43b6bf8e",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+],
+[
+"0x43b6bfa0",
+"bfi r3, r1, #0x10, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x14338": {
+"R": [],
+"W": [
+[
+"0x43b6c042",
+""
+]
+]
+},
+"0x1433c": {
+"R": [],
+"W": [
+[
+"0x43b6c04e",
+""
+]
+]
+},
+"0x143bc": {
+"R": [],
+"W": [
+[
+"0x43b6c2e6",
+""
+]
+]
+},
+"0x143c0": {
+"R": [
+[
+"0x43b6c2f2",
+"bfi r3, r1, #0, #7; str r3, [r0];"
+],
+[
+"0x43b6c304",
+"bfi r3, r1, #8, #7; str r3, [r0];"
+],
+[
+"0x43b6c316",
+"bfi r3, r1, #0x10, #6; str r3, [r0];"
+],
+[
+"0x43b6c328",
+"bfi r3, r1, #0x18, #6; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x143c4": {
+"R": [
+[
+"0x43b6c33a",
+"bfi r3, r1, #0, #6; str r3, [r0];"
+],
+[
+"0x43b6c34c",
+"bfi r3, r1, #8, #6; str r3, [r0];"
+],
+[
+"0x43b6c35e",
+"bfi r3, r1, #0x10, #6; str r3, [r0];"
+],
+[
+"0x43b6c370",
+"bfi r3, r1, #0x18, #6; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x143c8": {
+"R": [
+[
+"0x43b6c382",
+"bfi r3, r1, #0, #5; str r3, [r0];"
+],
+[
+"0x43b6c394",
+"bfi r3, r1, #8, #1; str r3, [r0];"
+],
+[
+"0x43b6c3a6",
+"bfi r3, r1, #0xc, #5; str r3, [r0];"
+],
+[
+"0x43b6c3b8",
+"bfi r3, r1, #0x14, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x14400": {
+"R": [
+[
+"0x43b6c90a",
+"bic r0, r0, #0xff000000; bic r0, r0, #0xfe0000;"
+]
+],
+"W": [
+[
+"0x43ad1928",
+""
+]
+]
+},
+"0x1440c": {
+"R": [
+[
+"0x43b6c93a",
+"bic r0, r0, #0xff000000; bic r0, r0, #0xfe0000;"
+]
+],
+"W": [
+[
+"0x43ad1940",
+""
+]
+]
+},
+"0x14500": {
+"R": [],
+"W": [
+[
+"0x43ad2752",
+""
+]
+]
+},
+"0x14504": {
+"R": [],
+"W": [
+[
+"0x43ad275e",
+""
+]
+]
+},
+"0x14508": {
+"R": [],
+"W": [
+[
+"0x43ad276a",
+""
+]
+]
+},
+"0x1450c": {
+"R": [],
+"W": [
+[
+"0x43ad2776",
+""
+]
+]
+},
+"0x14510": {
+"R": [],
+"W": [
+[
+"0x43ad2782",
+""
+]
+]
+},
+"0x14514": {
+"R": [],
+"W": [
+[
+"0x43ad278e",
+""
+]
+]
+},
+"0x14518": {
+"R": [],
+"W": [
+[
+"0x43ad279a",
+""
+]
+]
+},
+"0x1451c": {
+"R": [],
+"W": [
+[
+"0x43ad27a6",
+""
+]
+]
+},
+"0x14520": {
+"R": [],
+"W": [
+[
+"0x43ad27b2",
+""
+]
+]
+},
+"0x14524": {
+"R": [],
+"W": [
+[
+"0x43ad27be",
+""
+]
+]
+},
+"0x14528": {
+"R": [],
+"W": [
+[
+"0x43ad27ca",
+""
+]
+]
+},
+"0x1452c": {
+"R": [],
+"W": [
+[
+"0x43ad27d6",
+""
+]
+]
+},
+"0x14530": {
+"R": [],
+"W": [
+[
+"0x43ad27e2",
+""
+]
+]
+},
+"0x14534": {
+"R": [],
+"W": [
+[
+"0x43ad27ee",
+""
+]
+]
+},
+"0x14538": {
+"R": [],
+"W": [
+[
+"0x43ad27fa",
+""
+]
+]
+},
+"0x1453c": {
+"R": [],
+"W": [
+[
+"0x43ad2806",
+""
+]
+]
+},
+"0x14540": {
+"R": [],
+"W": [
+[
+"0x43ad2812",
+""
+]
+]
+},
+"0x14544": {
+"R": [],
+"W": [
+[
+"0x43ad281e",
+""
+]
+]
+},
+"0x14548": {
+"R": [],
+"W": [
+[
+"0x43ad282a",
+""
+]
+]
+},
+"0x1454c": {
+"R": [],
+"W": [
+[
+"0x43ad2836",
+""
+]
+]
+},
+"0x14550": {
+"R": [],
+"W": [
+[
+"0x43ad2842",
+""
+]
+]
+},
+"0x14554": {
+"R": [],
+"W": [
+[
+"0x43ad284e",
+""
+]
+]
+},
+"0x14558": {
+"R": [],
+"W": [
+[
+"0x43ad285a",
+""
+]
+]
+},
+"0x1455c": {
+"R": [],
+"W": [
+[
+"0x43ad2866",
+""
+]
+]
+},
+"0x14560": {
+"R": [],
+"W": [
+[
+"0x43ad2872",
+""
+]
+]
+},
+"0x14564": {
+"R": [],
+"W": [
+[
+"0x43ad287e",
+""
+]
+]
+},
+"0x14568": {
+"R": [],
+"W": [
+[
+"0x43ad288a",
+""
+]
+]
+},
+"0x1456c": {
+"R": [],
+"W": [
+[
+"0x43ad2896",
+""
+]
+]
+},
+"0x1470c": {
+"R": [],
+"W": [
+[
+"0x43ad25ba",
+""
+]
+]
+},
+"0x14710": {
+"R": [],
+"W": [
+[
+"0x43ad25c6",
+""
+]
+]
+},
+"0x14714": {
+"R": [],
+"W": [
+[
+"0x43ad25d2",
+""
+]
+]
+},
+"0x14718": {
+"R": [],
+"W": [
+[
+"0x43ad25de",
+""
+]
+]
+},
+"0x1471c": {
+"R": [],
+"W": [
+[
+"0x43ad25ea",
+""
+]
+]
+},
+"0x14720": {
+"R": [],
+"W": [
+[
+"0x43ad25f6",
+""
+]
+]
+},
+"0x14724": {
+"R": [],
+"W": [
+[
+"0x43ad2602",
+""
+]
+]
+},
+"0x14728": {
+"R": [],
+"W": [
+[
+"0x43ad260e",
+""
+]
+]
+},
+"0x1472c": {
+"R": [],
+"W": [
+[
+"0x43ad261a",
+""
+]
+]
+},
+"0x14730": {
+"R": [],
+"W": [
+[
+"0x43ad2626",
+""
+]
+]
+},
+"0x14734": {
+"R": [],
+"W": [
+[
+"0x43ad2632",
+""
+]
+]
+},
+"0x14738": {
+"R": [],
+"W": [
+[
+"0x43ad263e",
+""
+]
+]
+},
+"0x1473c": {
+"R": [],
+"W": [
+[
+"0x43ad264a",
+""
+]
+]
+},
+"0x14740": {
+"R": [],
+"W": [
+[
+"0x43ad2656",
+""
+]
+]
+},
+"0x14748": {
+"R": [],
+"W": [
+[
+"0x43ad2662",
+""
+]
+]
+},
+"0x1474c": {
+"R": [],
+"W": [
+[
+"0x43ad266e",
+""
+]
+]
+},
+"0x14750": {
+"R": [],
+"W": [
+[
+"0x43ad267a",
+""
+]
+]
+},
+"0x14754": {
+"R": [],
+"W": [
+[
+"0x43ad2686",
+""
+]
+]
+},
+"0x14758": {
+"R": [],
+"W": [
+[
+"0x43ad2692",
+""
+]
+]
+},
+"0x1475c": {
+"R": [],
+"W": [
+[
+"0x43ad269e",
+""
+]
+]
+},
+"0x14760": {
+"R": [],
+"W": [
+[
+"0x43ad26aa",
+""
+]
+]
+},
+"0x14764": {
+"R": [],
+"W": [
+[
+"0x43ad26b6",
+""
+]
+]
+},
+"0x14768": {
+"R": [],
+"W": [
+[
+"0x43ad26c2",
+""
+]
+]
+},
+"0x1476c": {
+"R": [],
+"W": [
+[
+"0x43ad26ce",
+""
+]
+]
+},
+"0x14770": {
+"R": [],
+"W": [
+[
+"0x43ad26da",
+""
+]
+]
+},
+"0x14774": {
+"R": [],
+"W": [
+[
+"0x43ad26e6",
+""
+]
+]
+},
+"0x14778": {
+"R": [],
+"W": [
+[
+"0x43ad26f2",
+""
+]
+]
+},
+"0x1477c": {
+"R": [],
+"W": [
+[
+"0x43ad26fe",
+""
+]
+]
+},
+"0x14780": {
+"R": [],
+"W": [
+[
+"0x43ad270a",
+""
+]
+]
+},
+"0x14784": {
+"R": [],
+"W": [
+[
+"0x43ad2716",
+""
+]
+]
+},
+"0x14788": {
+"R": [],
+"W": [
+[
+"0x43ad2722",
+""
+]
+]
+},
+"0x1478c": {
+"R": [],
+"W": [
+[
+"0x43ad272e",
+""
+]
+]
+},
+"0x14790": {
+"R": [],
+"W": [
+[
+"0x43ad273a",
+""
+]
+]
+},
+"0x14794": {
+"R": [],
+"W": [
+[
+"0x43ad2746",
+""
+]
+]
+},
+"0x14800": {
+"R": [],
+"W": [
+[
+"0x43ad255a",
+""
+]
+]
+},
+"0x1480c": {
+"R": [],
+"W": [
+[
+"0x43ad2572",
+""
+]
+]
+},
+"0x14810": {
+"R": [],
+"W": [
+[
+"0x43ad257a",
+""
+]
+]
+},
+"0x14814": {
+"R": [],
+"W": [
+[
+"0x43ad2582",
+""
+]
+]
+},
+"0x14818": {
+"R": [],
+"W": [
+[
+"0x43ad258a",
+""
+]
+]
+},
+"0x1481c": {
+"R": [],
+"W": [
+[
+"0x43ad2592",
+""
+]
+]
+},
+"0x14820": {
+"R": [],
+"W": [
+[
+"0x43ad259a",
+""
+]
+]
+},
+"0x14824": {
+"R": [],
+"W": [
+[
+"0x43ad25a2",
+""
+]
+]
+},
+"0x14828": {
+"R": [],
+"W": [
+[
+"0x43ad25aa",
+""
+]
+]
+},
+"0x1482c": {
+"R": [],
+"W": [
+[
+"0x43ad25b2",
+""
+]
+]
+},
+"0x14900": {
+"R": [
+[
+"0x43b6ce9a",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43ad28a2",
+""
+]
+]
+},
+"0x14904": {
+"R": [
+[
+"0x43b6ceaa",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43ad28ae",
+""
+]
+]
+},
+"0x14908": {
+"R": [
+[
+"0x43b6ceba",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43ad28ba",
+""
+]
+]
+},
+"0x1490c": {
+"R": [
+[
+"0x43b6ceca",
+"and r0, r0, #7;"
+]
+],
+"W": [
+[
+"0x43b6ceda",
+""
+]
+]
+},
+"0x14910": {
+"R": [
+[
+"0x43b6cee6",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b6cef6",
+""
+]
+]
+},
+"0x14914": {
+"R": [
+[
+"0x43b6cf02",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43b6cf12",
+""
+]
+]
+},
+"0x14918": {
+"R": [
+[
+"0x43b6cf1e",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43b6cf2e",
+""
+]
+]
+},
+"0x1491c": {
+"R": [
+[
+"0x43b6cf3a",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": [
+[
+"0x43b6cf4a",
+""
+]
+]
+},
+"0x14a80": {
+"R": [],
+"W": [
+[
+"0x43b6c7e6",
+""
+]
+]
+},
+"0x14a84": {
+"R": [],
+"W": [
+[
+"0x43b6c7f2",
+""
+]
+]
+},
+"0x14a88": {
+"R": [],
+"W": [
+[
+"0x43b6c7fe",
+""
+]
+]
+},
+"0x14a8c": {
+"R": [],
+"W": [
+[
+"0x43b6c80a",
+""
+]
+]
+},
+"0x14a90": {
+"R": [],
+"W": [
+[
+"0x43b6c816",
+""
+]
+]
+},
+"0x14a94": {
+"R": [],
+"W": [
+[
+"0x43b6c822",
+""
+]
+]
+},
+"0x15018": {
+"R": [
+[
+"0x43b67c50",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0x18];"
+],
+[
+"0x43b67c5e",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0x18];"
+]
+],
+"W": []
+},
+"0x1501c": {
+"R": [
+[
+"0x43b67c6c",
+"bfi r3, r1, #0, #0xd; str r3, [r0, #0x1c];"
+],
+[
+"0x43b67c7a",
+"bfi r3, r1, #0x10, #0xd; str r3, [r0, #0x1c];"
+]
+],
+"W": []
+},
+"0x15020": {
+"R": [
+[
+"0x43acff74",
+"ubfx r0, r0, #0x10, #4;"
+],
+[
+"0x43acff80",
+"ubfx r0, r0, #0x18, #4;"
+],
+[
+"0x43b67c88",
+"bfi r3, r1, #0, #1; str r3, [r0, #0x20];"
+],
+[
+"0x43b67c96",
+"bfi r3, r1, #0x10, #4; str r3, [r0, #0x20];"
+],
+[
+"0x43b67ca4",
+"bfi r3, r1, #0x18, #4; str r3, [r0, #0x20];"
+]
+],
+"W": []
+},
+"0x1502c": {
+"R": [],
+"W": [
+[
+"0x43b67cce",
+""
+]
+]
+},
+"0x15030": {
+"R": [],
+"W": [
+[
+"0x43b67cd6",
+""
+]
+]
+},
+"0x15034": {
+"R": [],
+"W": [
+[
+"0x43b67cde",
+""
+]
+]
+},
+"0x15060": {
+"R": [
+[
+"0x43b67d66",
+"bfi r3, r1, #0, #3; str r3, [r0, #0x60];"
+],
+[
+"0x43b67d74",
+"bfi r3, r1, #0x10, #1; str r3, [r0, #0x60];"
+]
+],
+"W": []
+},
+"0x15068": {
+"R": [],
+"W": [
+[
+"0x43b67d8e",
+""
+]
+]
+},
+"0x1506c": {
+"R": [],
+"W": [
+[
+"0x43b67d96",
+""
+]
+]
+},
+"0x15070": {
+"R": [],
+"W": [
+[
+"0x43b67d9e",
+""
+]
+]
+},
+"0x15074": {
+"R": [],
+"W": [
+[
+"0x43b67da6",
+""
+]
+]
+},
+"0x15078": {
+"R": [],
+"W": [
+[
+"0x43b67dae",
+""
+]
+]
+},
+"0x1507c": {
+"R": [],
+"W": [
+[
+"0x43b67db6",
+""
+]
+]
+},
+"0x15100": {
+"R": [
+[
+"0x43b671c8",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b671d8",
+""
+]
+]
+},
+"0x15104": {
+"R": [
+[
+"0x43b671e4",
+"lsls r0, r0, #0x15; lsrs r0, r0, #0x15;"
+]
+],
+"W": [
+[
+"0x43b671f4",
+""
+]
+]
+},
+"0x15108": {
+"R": [
+[
+"0x43b67200",
+"lsls r0, r0, #0x16; lsrs r0, r0, #0x16;"
+]
+],
+"W": [
+[
+"0x43b67210",
+""
+]
+]
+},
+"0x1510c": {
+"R": [
+[
+"0x43b6721c",
+"lsls r0, r0, #0x15; lsrs r0, r0, #0x15;"
+]
+],
+"W": [
+[
+"0x43b6722c",
+""
+]
+]
+},
+"0x15500": {
+"R": [
+[
+"0x43b674a2",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b674b2",
+""
+]
+]
+},
+"0x15504": {
+"R": [
+[
+"0x43b674be",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b674ce",
+""
+]
+]
+},
+"0x15508": {
+"R": [
+[
+"0x43b674da",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b674ea",
+""
+]
+]
+},
+"0x1550c": {
+"R": [
+[
+"0x43b674f6",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b67504",
+""
+]
+]
+},
+"0x15510": {
+"R": [
+[
+"0x43b67510",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b6751e",
+""
+]
+]
+},
+"0x15514": {
+"R": [
+[
+"0x43b6752a",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b67538",
+""
+]
+]
+},
+"0x15518": {
+"R": [
+[
+"0x43b67544",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b67552",
+""
+]
+]
+},
+"0x1551c": {
+"R": [
+[
+"0x43b6755e",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b6756c",
+""
+]
+]
+},
+"0x15520": {
+"R": [
+[
+"0x43b67578",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b67586",
+""
+]
+]
+},
+"0x15524": {
+"R": [
+[
+"0x43b67592",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b675a0",
+""
+]
+]
+},
+"0x15528": {
+"R": [
+[
+"0x43b675ac",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b675ba",
+""
+]
+]
+},
+"0x1552c": {
+"R": [
+[
+"0x43b675c6",
+"uxth r0, r0;"
+]
+],
+"W": [
+[
+"0x43b675d4",
+""
+]
+]
+},
+"0x15600": {
+"R": [
+[
+"0x43b672a6",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": []
+},
+"0x15604": {
+"R": [
+[
+"0x43b672b2",
+"lsls r0, r0, #0x14; lsrs r0, r0, #0x14;"
+]
+],
+"W": []
+},
+"0x15608": {
+"R": [
+[
+"0x43b68f48",
+"and r0, r0, #0x7f;"
+]
+],
+"W": [
+[
+"0x43b68f58",
+""
+]
+]
+},
+"0x1560c": {
+"R": [
+[
+"0x43b68f64",
+"and r0, r0, #0x7f;"
+]
+],
+"W": [
+[
+"0x43b68f74",
+""
+]
+]
+},
+"0x15610": {
+"R": [],
+"W": [
+[
+"0x43b672c2",
+""
+]
+]
+},
+"0x15614": {
+"R": [],
+"W": [
+[
+"0x43b672ce",
+""
+]
+]
+},
+"0x15618": {
+"R": [],
+"W": [
+[
+"0x43b672da",
+""
+]
+]
+},
+"0x1561c": {
+"R": [],
+"W": [
+[
+"0x43b672e6",
+""
+]
+]
+},
+"0x15620": {
+"R": [],
+"W": [
+[
+"0x43b672f2",
+""
+]
+]
+},
+"0x15624": {
+"R": [],
+"W": [
+[
+"0x43b672fe",
+""
+]
+]
+},
+"0x15628": {
+"R": [],
+"W": [
+[
+"0x43b6730a",
+""
+]
+]
+},
+"0x1562c": {
+"R": [],
+"W": [
+[
+"0x43b67316",
+""
+]
+]
+},
+"0x15630": {
+"R": [],
+"W": [
+[
+"0x43b67322",
+""
+]
+]
+},
+"0x15634": {
+"R": [],
+"W": [
+[
+"0x43b6732e",
+""
+]
+]
+},
+"0x15638": {
+"R": [],
+"W": [
+[
+"0x43b68f80",
+""
+]
+]
+},
+"0x1563c": {
+"R": [],
+"W": [
+[
+"0x43b68f8c",
+""
+]
+]
+},
+"0x15644": {
+"R": [],
+"W": [
+[
+"0x43b68f98",
+""
+]
+]
+},
+"0x15648": {
+"R": [],
+"W": [
+[
+"0x43b68fa4",
+""
+]
+]
+},
+"0x1564c": {
+"R": [],
+"W": [
+[
+"0x43b68fb0",
+""
+]
+]
+},
+"0x15658": {
+"R": [],
+"W": [
+[
+"0x43b68fbc",
+""
+]
+]
+},
+"0x1565c": {
+"R": [],
+"W": [
+[
+"0x43b68fc8",
+""
+]
+]
+},
+"0x15680": {
+"R": [
+[
+"0x43b68fd4",
+"and r0, r0, #0x7f;"
+]
+],
+"W": [
+[
+"0x43b68fe4",
+""
+]
+]
+},
+"0x15684": {
+"R": [
+[
+"0x43b68ff0",
+"and r0, r0, #3;"
+]
+],
+"W": [
+[
+"0x43b69000",
+""
+]
+]
+},
+"0x15688": {
+"R": [
+[
+"0x43b6900c",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b6901c",
+""
+]
+]
+},
+"0x1568c": {
+"R": [
+[
+"0x43b69028",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b69038",
+""
+]
+]
+},
+"0x15690": {
+"R": [
+[
+"0x43b69044",
+"and r0, r0, #7;"
+]
+],
+"W": [
+[
+"0x43b69054",
+""
+]
+]
+},
+"0x15694": {
+"R": [
+[
+"0x43b69060",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+]
+],
+"W": [
+[
+"0x43b69070",
+""
+]
+]
+},
+"0x15698": {
+"R": [
+[
+"0x43b6907c",
+"and r0, r0, #7;"
+]
+],
+"W": [
+[
+"0x43b6908c",
+""
+]
+]
+},
+"0x1569c": {
+"R": [
+[
+"0x43b69098",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b690a6",
+""
+]
+]
+},
+"0x156a0": {
+"R": [
+[
+"0x43b690b2",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b690c2",
+""
+]
+]
+},
+"0x156a4": {
+"R": [
+[
+"0x43b690ce",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+]
+],
+"W": [
+[
+"0x43b690de",
+""
+]
+]
+},
+"0x156a8": {
+"R": [
+[
+"0x43b690ea",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+]
+],
+"W": [
+[
+"0x43b690fa",
+""
+]
+]
+},
+"0x156ac": {
+"R": [
+[
+"0x43b69106",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b69114",
+""
+]
+]
+},
+"0x156b0": {
+"R": [
+[
+"0x43b69120",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b6912e",
+""
+]
+]
+},
+"0x156b4": {
+"R": [
+[
+"0x43b6913a",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+]
+],
+"W": [
+[
+"0x43b6914a",
+""
+]
+]
+},
+"0x156b8": {
+"R": [
+[
+"0x43b69156",
+"lsls r0, r0, #0x17; lsrs r0, r0, #0x17;"
+]
+],
+"W": [
+[
+"0x43b69166",
+""
+]
+]
+},
+"0x156bc": {
+"R": [
+[
+"0x43b69172",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b69180",
+""
+]
+]
+},
+"0x156c0": {
+"R": [
+[
+"0x43b6918c",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b6919a",
+""
+]
+]
+},
+"0x156c4": {
+"R": [
+[
+"0x43b691a6",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b691b6",
+""
+]
+]
+},
+"0x156c8": {
+"R": [
+[
+"0x43b691c2",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b691d2",
+""
+]
+]
+},
+"0x156cc": {
+"R": [
+[
+"0x43b691de",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b691ee",
+""
+]
+]
+},
+"0x156d0": {
+"R": [
+[
+"0x43b691fa",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b6920a",
+""
+]
+]
+},
+"0x15800": {
+"R": [],
+"W": [
+[
+"0x43b69a9a",
+""
+]
+]
+},
+"0x15810": {
+"R": [],
+"W": [
+[
+"0x43b69aaa",
+""
+]
+]
+},
+"0x15814": {
+"R": [],
+"W": [
+[
+"0x43b69ab2",
+""
+]
+]
+},
+"0x15818": {
+"R": [],
+"W": [
+[
+"0x43b69aba",
+""
+]
+]
+},
+"0x1581c": {
+"R": [],
+"W": [
+[
+"0x43b69ac2",
+""
+]
+]
+},
+"0x15820": {
+"R": [],
+"W": [
+[
+"0x43b69aca",
+""
+]
+]
+},
+"0x15824": {
+"R": [],
+"W": [
+[
+"0x43b69ad2",
+""
+]
+]
+},
+"0x15828": {
+"R": [],
+"W": [
+[
+"0x43b69ada",
+""
+]
+]
+},
+"0x15830": {
+"R": [],
+"W": [
+[
+"0x43b69ae2",
+""
+]
+]
+},
+"0x15838": {
+"R": [],
+"W": [
+[
+"0x43b69aea",
+""
+]
+]
+},
+"0x1583c": {
+"R": [],
+"W": [
+[
+"0x43b69af2",
+""
+]
+]
+},
+"0x15840": {
+"R": [],
+"W": [
+[
+"0x43b69afa",
+""
+]
+]
+},
+"0x15848": {
+"R": [],
+"W": [
+[
+"0x43b69b02",
+""
+]
+]
+},
+"0x1584c": {
+"R": [],
+"W": [
+[
+"0x43b69b0a",
+""
+]
+]
+},
+"0x15850": {
+"R": [],
+"W": [
+[
+"0x43b69b12",
+""
+]
+]
+},
+"0x15854": {
+"R": [],
+"W": [
+[
+"0x43b69b1a",
+""
+]
+]
+},
+"0x15900": {
+"R": [
+[
+"0x43b66d3c",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b66d4c",
+""
+]
+]
+},
+"0x15904": {
+"R": [
+[
+"0x43b66d58",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b66d68",
+""
+]
+]
+},
+"0x15908": {
+"R": [
+[
+"0x43b66d74",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b66d84",
+""
+]
+]
+},
+"0x1590c": {
+"R": [
+[
+"0x43b66d90",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66d9e",
+""
+]
+]
+},
+"0x15910": {
+"R": [
+[
+"0x43b66daa",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66db8",
+""
+]
+]
+},
+"0x15914": {
+"R": [
+[
+"0x43b66dc4",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66dd2",
+""
+]
+]
+},
+"0x15918": {
+"R": [
+[
+"0x43b66dde",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66dec",
+""
+]
+]
+},
+"0x1591c": {
+"R": [
+[
+"0x43b66df8",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66e06",
+""
+]
+]
+},
+"0x15920": {
+"R": [
+[
+"0x43b66e12",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66e20",
+""
+]
+]
+},
+"0x15924": {
+"R": [
+[
+"0x43b66e2c",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66e3a",
+""
+]
+]
+},
+"0x15928": {
+"R": [
+[
+"0x43b66e46",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66e54",
+""
+]
+]
+},
+"0x1592c": {
+"R": [
+[
+"0x43b66e60",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66e6e",
+""
+]
+]
+},
+"0x15930": {
+"R": [
+[
+"0x43b66e7a",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66e88",
+""
+]
+]
+},
+"0x15934": {
+"R": [
+[
+"0x43b66e94",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66ea2",
+""
+]
+]
+},
+"0x15938": {
+"R": [
+[
+"0x43b66eae",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66ebc",
+""
+]
+]
+},
+"0x1593c": {
+"R": [
+[
+"0x43b66ec8",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66ed6",
+""
+]
+]
+},
+"0x15940": {
+"R": [
+[
+"0x43b66ee2",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66ef0",
+""
+]
+]
+},
+"0x15944": {
+"R": [
+[
+"0x43b66efc",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66f0a",
+""
+]
+]
+},
+"0x15948": {
+"R": [
+[
+"0x43b66f16",
+"uxtb r0, r0;"
+]
+],
+"W": [
+[
+"0x43b66f24",
+""
+]
+]
+},
+"0x1594c": {
+"R": [
+[
+"0x43b66f30",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b66f40",
+""
+]
+]
+},
+"0x15950": {
+"R": [
+[
+"0x43b66f4c",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b66f5c",
+""
+]
+]
+},
+"0x15954": {
+"R": [
+[
+"0x43b66f68",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b66f78",
+""
+]
+]
+},
+"0x15a00": {
+"R": [],
+"W": [
+[
+"0x43b6813e",
+""
+]
+]
+},
+"0x15a04": {
+"R": [
+[
+"0x43b68146",
+"bfi r3, r1, #0, #6; str r3, [r0];"
+],
+[
+"0x43b68158",
+"bfi r3, r1, #8, #6; str r3, [r0];"
+],
+[
+"0x43b6816a",
+"bfi r3, r1, #0x10, #6; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a08": {
+"R": [],
+"W": [
+[
+"0x43b6817c",
+""
+]
+]
+},
+"0x15a0c": {
+"R": [],
+"W": [
+[
+"0x43b68188",
+""
+]
+]
+},
+"0x15a10": {
+"R": [],
+"W": [
+[
+"0x43b68194",
+""
+]
+]
+},
+"0x15a14": {
+"R": [
+[
+"0x43b681a0",
+"bfi r3, r1, #0, #7; str r3, [r0];"
+],
+[
+"0x43b681b2",
+"bfi r3, r1, #0x10, #7; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a18": {
+"R": [
+[
+"0x43b681c4",
+"bfi r3, r1, #0, #0xc; str r3, [r0];"
+],
+[
+"0x43b681d6",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a1c": {
+"R": [
+[
+"0x43b681e8",
+"bfi r3, r1, #0, #0xc; str r3, [r0];"
+],
+[
+"0x43b681fa",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a20": {
+"R": [],
+"W": [
+[
+"0x43b6820c",
+""
+]
+]
+},
+"0x15a24": {
+"R": [],
+"W": [
+[
+"0x43b68218",
+""
+]
+]
+},
+"0x15a28": {
+"R": [
+[
+"0x43b68224",
+"bfi r3, r1, #0, #7; str r3, [r0];"
+],
+[
+"0x43b68236",
+"bfi r3, r1, #0x10, #7; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a2c": {
+"R": [
+[
+"0x43b68248",
+"bfi r3, r1, #0, #0xc; str r3, [r0];"
+],
+[
+"0x43b6825a",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a30": {
+"R": [
+[
+"0x43b6826c",
+"bfi r3, r1, #0, #0xc; str r3, [r0];"
+],
+[
+"0x43b6827e",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a34": {
+"R": [],
+"W": [
+[
+"0x43b68290",
+""
+]
+]
+},
+"0x15a38": {
+"R": [],
+"W": [
+[
+"0x43b6829c",
+""
+]
+]
+},
+"0x15a40": {
+"R": [],
+"W": [
+[
+"0x43b682a8",
+""
+]
+]
+},
+"0x15a44": {
+"R": [],
+"W": [
+[
+"0x43b682b4",
+""
+]
+]
+},
+"0x15a48": {
+"R": [
+[
+"0x43b682c0",
+"bfi r3, r1, #0, #0xb; str r3, [r0];"
+],
+[
+"0x43b682d2",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a4c": {
+"R": [
+[
+"0x43b682e4",
+"bfi r3, r1, #0, #7; str r3, [r0];"
+],
+[
+"0x43b682f6",
+"bfi r3, r1, #0x10, #7; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15a50": {
+"R": [],
+"W": [
+[
+"0x43b68308",
+""
+]
+]
+},
+"0x15a54": {
+"R": [],
+"W": [
+[
+"0x43b68314",
+""
+]
+]
+},
+"0x15a58": {
+"R": [],
+"W": [
+[
+"0x43b68320",
+""
+]
+]
+},
+"0x15a5c": {
+"R": [],
+"W": [
+[
+"0x43b6832c",
+""
+]
+]
+},
+"0x15a60": {
+"R": [],
+"W": [
+[
+"0x43b68338",
+""
+]
+]
+},
+"0x15a64": {
+"R": [],
+"W": [
+[
+"0x43b68344",
+""
+]
+]
+},
+"0x15a68": {
+"R": [],
+"W": [
+[
+"0x43b68350",
+""
+]
+]
+},
+"0x15a6c": {
+"R": [],
+"W": [
+[
+"0x43b6835c",
+""
+]
+]
+},
+"0x15a70": {
+"R": [],
+"W": [
+[
+"0x43b68368",
+""
+]
+]
+},
+"0x15a74": {
+"R": [],
+"W": [
+[
+"0x43b68374",
+""
+]
+]
+},
+"0x15a78": {
+"R": [],
+"W": [
+[
+"0x43b68380",
+""
+]
+]
+},
+"0x15a7c": {
+"R": [],
+"W": [
+[
+"0x43b6838c",
+""
+]
+]
+},
+"0x15a80": {
+"R": [],
+"W": [
+[
+"0x43b68398",
+""
+]
+]
+},
+"0x15a84": {
+"R": [],
+"W": [
+[
+"0x43b683a4",
+""
+]
+]
+},
+"0x15a88": {
+"R": [],
+"W": [
+[
+"0x43b683b0",
+""
+]
+]
+},
+"0x15a8c": {
+"R": [],
+"W": [
+[
+"0x43b683bc",
+""
+]
+]
+},
+"0x15a90": {
+"R": [],
+"W": [
+[
+"0x43b683c8",
+""
+]
+]
+},
+"0x15a94": {
+"R": [],
+"W": [
+[
+"0x43b683d4",
+""
+]
+]
+},
+"0x15a98": {
+"R": [],
+"W": [
+[
+"0x43b683e0",
+""
+]
+]
+},
+"0x15a9c": {
+"R": [],
+"W": [
+[
+"0x43b683ec",
+""
+]
+]
+},
+"0x15aa0": {
+"R": [],
+"W": [
+[
+"0x43b683f8",
+""
+]
+]
+},
+"0x15aa4": {
+"R": [],
+"W": [
+[
+"0x43b68404",
+""
+]
+]
+},
+"0x15aa8": {
+"R": [],
+"W": [
+[
+"0x43b68410",
+""
+]
+]
+},
+"0x15aac": {
+"R": [],
+"W": [
+[
+"0x43b6841c",
+""
+]
+]
+},
+"0x15ab0": {
+"R": [],
+"W": [
+[
+"0x43b68428",
+""
+]
+]
+},
+"0x15ab4": {
+"R": [],
+"W": [
+[
+"0x43b68434",
+""
+]
+]
+},
+"0x15ac0": {
+"R": [],
+"W": [
+[
+"0x43b68440",
+""
+]
+]
+},
+"0x15ac4": {
+"R": [],
+"W": [
+[
+"0x43b6844c",
+""
+]
+]
+},
+"0x15ac8": {
+"R": [
+[
+"0x43b68458",
+"bfi r3, r1, #0, #0xc; str r3, [r0];"
+],
+[
+"0x43b6846a",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15acc": {
+"R": [
+[
+"0x43b6847c",
+"bfi r3, r1, #0, #0xb; str r3, [r0];"
+],
+[
+"0x43b6848e",
+"bfi r3, r1, #0x10, #0xb; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15ad4": {
+"R": [
+[
+"0x43b684c8",
+"bfi r3, r1, #0, #0xa; str r3, [r0];"
+],
+[
+"0x43b684da",
+"bfi r3, r1, #0x10, #0xa; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15ad8": {
+"R": [],
+"W": [
+[
+"0x43b684ec",
+""
+]
+]
+},
+"0x15adc": {
+"R": [],
+"W": [
+[
+"0x43b684f8",
+""
+]
+]
+},
+"0x15ae0": {
+"R": [],
+"W": [
+[
+"0x43b68504",
+""
+]
+]
+},
+"0x15ae4": {
+"R": [],
+"W": [
+[
+"0x43b68510",
+""
+]
+]
+},
+"0x15ae8": {
+"R": [],
+"W": [
+[
+"0x43b6851c",
+""
+]
+]
+},
+"0x15aec": {
+"R": [],
+"W": [
+[
+"0x43b68528",
+""
+]
+]
+},
+"0x15b00": {
+"R": [],
+"W": [
+[
+"0x43b68534",
+""
+]
+]
+},
+"0x15b04": {
+"R": [],
+"W": [
+[
+"0x43ad42de",
+""
+]
+]
+},
+"0x15b80": {
+"R": [
+[
+"0x43b68540",
+"lsls r0, r0, #0x12; lsrs r0, r0, #0x12;"
+]
+],
+"W": []
+},
+"0x15b84": {
+"R": [
+[
+"0x43a5d2da",
+""
+],
+[
+"0x43b68550",
+"lsls r0, r0, #0x12; lsrs r0, r0, #0x12;"
+]
+],
+"W": []
+},
+"0x15b88": {
+"R": [
+[
+"0x43b68560",
+"bic r0, r0, #0xfe000000;"
+]
+],
+"W": []
+},
+"0x15b8c": {
+"R": [
+[
+"0x43b68570",
+"lsls r0, r0, #0x15; lsrs r0, r0, #0x15;"
+]
+],
+"W": []
+},
+"0x15b90": {
+"R": [
+[
+"0x43b68580",
+"lsls r0, r0, #0x12; lsrs r0, r0, #0x12;"
+]
+],
+"W": []
+},
+"0x15b94": {
+"R": [
+[
+"0x43b68590",
+""
+]
+],
+"W": []
+},
+"0x15b98": {
+"R": [
+[
+"0x43b6859c",
+"bic r0, r0, #0xf0000000;"
+]
+],
+"W": []
+},
+"0x15b9c": {
+"R": [
+[
+"0x43b685ac",
+"lsls r0, r0, #0x12; lsrs r0, r0, #0x12;"
+]
+],
+"W": []
+},
+"0x15ba0": {
+"R": [
+[
+"0x43a5d406",
+""
+],
+[
+"0x43b685bc",
+""
+]
+],
+"W": [
+[
+"0x43a5d3fa",
+""
+]
+]
+},
+"0x15ba4": {
+"R": [
+[
+"0x43b685c8",
+"bic r0, r0, #0xf0000000;"
+]
+],
+"W": []
+},
+"0x15c10": {
+"R": [],
+"W": [
+[
+"0x43b68aa6",
+""
+]
+]
+},
+"0x15c14": {
+"R": [],
+"W": [
+[
+"0x43b68aae",
+""
+]
+]
+},
+"0x15c18": {
+"R": [],
+"W": [
+[
+"0x43b68ab6",
+""
+]
+]
+},
+"0x15c28": {
+"R": [],
+"W": [
+[
+"0x43b68ae2",
+""
+]
+]
+},
+"0x15c2c": {
+"R": [],
+"W": [
+[
+"0x43b68aea",
+""
+]
+]
+},
+"0x15c30": {
+"R": [],
+"W": [
+[
+"0x43b68af2",
+""
+]
+]
+},
+"0x15c34": {
+"R": [],
+"W": [
+[
+"0x43b68afa",
+""
+]
+]
+},
+"0x15c38": {
+"R": [],
+"W": [
+[
+"0x43b68b02",
+""
+]
+]
+},
+"0x15c3c": {
+"R": [],
+"W": [
+[
+"0x43b68b0a",
+""
+]
+]
+},
+"0x15c40": {
+"R": [],
+"W": [
+[
+"0x43b68b12",
+""
+]
+]
+},
+"0x15c44": {
+"R": [],
+"W": [
+[
+"0x43b68b1a",
+""
+]
+]
+},
+"0x15c48": {
+"R": [],
+"W": [
+[
+"0x43b68b22",
+""
+]
+]
+},
+"0x15c4c": {
+"R": [],
+"W": [
+[
+"0x43b68b2a",
+""
+]
+]
+},
+"0x15c50": {
+"R": [],
+"W": [
+[
+"0x43b68b32",
+""
+]
+]
+},
+"0x15c54": {
+"R": [],
+"W": [
+[
+"0x43b68b3a",
+""
+]
+]
+},
+"0x15c58": {
+"R": [],
+"W": [
+[
+"0x43b68b42",
+""
+]
+]
+},
+"0x15c60": {
+"R": [],
+"W": [
+[
+"0x43b68b56",
+""
+]
+]
+},
+"0x15c64": {
+"R": [],
+"W": [
+[
+"0x43b68b5e",
+""
+]
+]
+},
+"0x15c68": {
+"R": [],
+"W": [
+[
+"0x43b68b66",
+""
+]
+]
+},
+"0x15c6c": {
+"R": [],
+"W": [
+[
+"0x43b68b6e",
+""
+]
+]
+},
+"0x15c70": {
+"R": [],
+"W": [
+[
+"0x43b68b76",
+""
+]
+]
+},
+"0x15c74": {
+"R": [],
+"W": [
+[
+"0x43b68b7e",
+""
+]
+]
+},
+"0x15c78": {
+"R": [],
+"W": [
+[
+"0x43b68b86",
+""
+]
+]
+},
+"0x15c7c": {
+"R": [],
+"W": [
+[
+"0x43b68b8e",
+""
+]
+]
+},
+"0x15d00": {
+"R": [
+[
+"0x43b67720",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b67730",
+""
+]
+]
+},
+"0x15d04": {
+"R": [
+[
+"0x43b6773c",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b6774c",
+""
+]
+]
+},
+"0x15d08": {
+"R": [
+[
+"0x43b67758",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b67768",
+""
+]
+]
+},
+"0x15d0c": {
+"R": [
+[
+"0x43b67774",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b67784",
+""
+]
+]
+},
+"0x15d10": {
+"R": [
+[
+"0x43b67790",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b677a0",
+""
+]
+]
+},
+"0x15d14": {
+"R": [
+[
+"0x43b677ac",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b677bc",
+""
+]
+]
+},
+"0x15d18": {
+"R": [
+[
+"0x43b677c8",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b677d8",
+""
+]
+]
+},
+"0x15d1c": {
+"R": [
+[
+"0x43b677e4",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b677f4",
+""
+]
+]
+},
+"0x15d20": {
+"R": [
+[
+"0x43b67800",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b67810",
+""
+]
+]
+},
+"0x15d24": {
+"R": [
+[
+"0x43b6781c",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b6782c",
+""
+]
+]
+},
+"0x15d28": {
+"R": [
+[
+"0x43b67838",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b67848",
+""
+]
+]
+},
+"0x15d2c": {
+"R": [
+[
+"0x43b67854",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b67864",
+""
+]
+]
+},
+"0x15d30": {
+"R": [
+[
+"0x43b67870",
+"and r0, r0, #0x3f;"
+]
+],
+"W": [
+[
+"0x43b67880",
+""
+]
+]
+},
+"0x15d34": {
+"R": [
+[
+"0x43b6788c",
+"and r0, r0, #0x3f;"
+]
+],
+"W": [
+[
+"0x43b6789c",
+""
+]
+]
+},
+"0x15d38": {
+"R": [
+[
+"0x43b678a8",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b678b8",
+""
+]
+]
+},
+"0x15d3c": {
+"R": [
+[
+"0x43b678c4",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b678d4",
+""
+]
+]
+},
+"0x15d40": {
+"R": [
+[
+"0x43b678e0",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b678f0",
+""
+]
+]
+},
+"0x15d44": {
+"R": [
+[
+"0x43b678fc",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b6790c",
+""
+]
+]
+},
+"0x15e00": {
+"R": [
+[
+"0x43b6953c",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+],
+[
+"0x43b6954a",
+"bfi r3, r1, #8, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15e3c": {
+"R": [],
+"W": [
+[
+"0x43b69558",
+""
+]
+]
+},
+"0x15e40": {
+"R": [],
+"W": [
+[
+"0x43b69564",
+""
+]
+]
+},
+"0x15e44": {
+"R": [],
+"W": [
+[
+"0x43b69570",
+""
+]
+]
+},
+"0x15e48": {
+"R": [],
+"W": [
+[
+"0x43b6957c",
+""
+]
+]
+},
+"0x15e4c": {
+"R": [
+[
+"0x43b69588",
+"uxtb r0, r0;"
+],
+[
+"0x43b69596",
+"ubfx r0, r0, #8, #8;"
+],
+[
+"0x43b695a6",
+"ubfx r0, r0, #0x10, #8;"
+]
+],
+"W": []
+},
+"0x15e58": {
+"R": [
+[
+"0x43b695b6",
+"and r0, r0, #3;"
+]
+],
+"W": [
+[
+"0x43b695c6",
+""
+]
+]
+},
+"0x15e5c": {
+"R": [
+[
+"0x43b695d2",
+"bfi r3, r1, #0, #3; str r3, [r0];"
+],
+[
+"0x43b695e4",
+"bfi r3, r1, #4, #3; str r3, [r0];"
+],
+[
+"0x43b695f6",
+"bfi r3, r1, #8, #3; str r3, [r0];"
+],
+[
+"0x43b69608",
+"bfi r3, r1, #0xc, #3; str r3, [r0];"
+],
+[
+"0x43b6961a",
+"bfi r3, r1, #0x10, #3; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x15e60": {
+"R": [],
+"W": [
+[
+"0x43b6962c",
+""
+]
+]
+},
+"0x15e64": {
+"R": [],
+"W": [
+[
+"0x43b69638",
+""
+]
+]
+},
+"0x15e68": {
+"R": [
+[
+"0x43b69644",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b69654",
+""
+]
+]
+},
+"0x15e6c": {
+"R": [
+[
+"0x43b69660",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b69670",
+""
+]
+]
+},
+"0x15e70": {
+"R": [],
+"W": [
+[
+"0x43b6967c",
+""
+]
+]
+},
+"0x15e74": {
+"R": [],
+"W": [
+[
+"0x43b69688",
+""
+]
+]
+},
+"0x15e78": {
+"R": [
+[
+"0x43b69694",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b696a4",
+""
+]
+]
+},
+"0x15e7c": {
+"R": [
+[
+"0x43b696b0",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b696c0",
+""
+]
+]
+},
+"0x15e80": {
+"R": [],
+"W": [
+[
+"0x43b696cc",
+""
+]
+]
+},
+"0x15e84": {
+"R": [],
+"W": [
+[
+"0x43b696d8",
+""
+]
+]
+},
+"0x15e88": {
+"R": [
+[
+"0x43b696e4",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b696f4",
+""
+]
+]
+},
+"0x15e8c": {
+"R": [
+[
+"0x43b69700",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b69710",
+""
+]
+]
+},
+"0x15e90": {
+"R": [],
+"W": [
+[
+"0x43b6971c",
+""
+]
+]
+},
+"0x15e94": {
+"R": [],
+"W": [
+[
+"0x43b69728",
+""
+]
+]
+},
+"0x15e98": {
+"R": [
+[
+"0x43b69734",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b69744",
+""
+]
+]
+},
+"0x15e9c": {
+"R": [
+[
+"0x43b69750",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b69760",
+""
+]
+]
+},
+"0x15ea0": {
+"R": [],
+"W": [
+[
+"0x43b6976c",
+""
+]
+]
+},
+"0x15ea4": {
+"R": [],
+"W": [
+[
+"0x43b69778",
+""
+]
+]
+},
+"0x15ea8": {
+"R": [
+[
+"0x43b69784",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b69794",
+""
+]
+]
+},
+"0x15eac": {
+"R": [
+[
+"0x43b697a0",
+"lsls r0, r0, #0x13; lsrs r0, r0, #0x13;"
+]
+],
+"W": [
+[
+"0x43b697b0",
+""
+]
+]
+},
+"0x16f29": {
+"R": [],
+"W": [
+[
+"0x438ba770",
+"strb r5, [r0, #0x12]; strb r5, [r0, #0x13]; strb r5, [r0, #0x14]; movw r0, #0x7035; bl #0x438b9828;"
+],
+[
+"0x438ba78e",
+"strb r5, [r0, #0x12]; strb r5, [r0, #0x13]; strb r5, [r0, #0x14]; movw r0, #0x7037; bl #0x438b9828;"
+]
+]
+},
+"0x16f2d": {
+"R": [],
+"W": [
+[
+"0x43b17608",
+"strb r4, [r0, #0xe]; strb r4, [r0, #0xf]; strb r4, [r0, #0x10]; movw r0, #0x7035; bl #0x438b9828;"
+],
+[
+"0x43b17626",
+"strb r4, [r0, #0xe]; strb r4, [r0, #0xf]; strb r4, [r0, #0x10]; movw r0, #0x7037; bl #0x438b9828;"
+]
+]
+},
+"0x1d000": {
+"R": [],
+"W": [
+[
+"0x43ad67c6",
+""
+]
+]
+},
+"0x1d010": {
+"R": [],
+"W": [
+[
+"0x43ad67be",
+""
+]
+]
+},
+"0x1d014": {
+"R": [],
+"W": [
+[
+"0x43ad67b0",
+""
+]
+]
+},
+"0x1f018": {
+"R": [
+[
+"0x43ad693a",
+""
+]
+],
+"W": []
+},
+"0x1ff00": {
+"R": [
+[
+"0x43ad6942",
+""
+]
+],
+"W": [
+[
+"0x43ad694e",
+""
+]
+]
+},
+"0x20028": {
+"R": [
+[
+"0x43ad7258",
+"bfi r3, r1, #7, #1; str r3, [r0, #0x28];"
+]
+],
+"W": [
+[
+"0x43ad7250",
+""
+]
+]
+},
+"0x80020": {
+"R": [],
+"W": [
+[
+"0x43ad6bac",
+""
+]
+]
+},
+"0x8003c": {
+"R": [],
+"W": [
+[
+"0x43ad6bb4",
+""
+]
+]
+},
+"0x80054": {
+"R": [],
+"W": [
+[
+"0x43ad6bbc",
+""
+]
+]
+},
+"0x80104": {
+"R": [
+[
+"0x43ad6bf6",
+""
+]
+],
+"W": []
+},
+"0x80110": {
+"R": [
+[
+"0x43ad6c02",
+""
+]
+],
+"W": []
+},
+"0x98800": {
+"R": [],
+"W": [
+[
+"0x43ad6c56",
+""
+]
+]
+},
+"0x99100": {
+"R": [],
+"W": [
+[
+"0x43ad873e",
+""
+]
+]
+},
+"0x99a00": {
+"R": [
+[
+"0x43b7f6b2",
+"bfi r3, r1, #8, #1; str r3, [r0];"
+],
+[
+"0x43b7f6c4",
+"bfi r3, r1, #0x18, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x99a20": {
+"R": [
+[
+"0x43b7f6d6",
+"bfi r3, r1, #0, #0xc; str r3, [r0];"
+],
+[
+"0x43b7f6e8",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x99a40": {
+"R": [
+[
+"0x43b7f6fa",
+"bfi r3, r1, #0, #0xc; str r3, [r0];"
+],
+[
+"0x43b7f70c",
+"bfi r3, r1, #0x10, #0xc; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa0014": {
+"R": [
+[
+"0x43ad6916",
+""
+]
+],
+"W": []
+},
+"0xa0020": {
+"R": [
+[
+"0x43ad691e",
+""
+]
+],
+"W": []
+},
+"0xa0100": {
+"R": [
+[
+"0x43ad6e1e",
+"bfi r3, r1, #8, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa1100": {
+"R": [],
+"W": [
+[
+"0x43ad7580",
+""
+]
+]
+},
+"0xa1120": {
+"R": [
+[
+"0x43ad75b4",
+"bfi r3, r1, #0, #0xe; str r3, [r0];"
+],
+[
+"0x43ad75c6",
+"bfi r3, r1, #0x10, #0xe; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa1140": {
+"R": [
+[
+"0x43ad7638",
+"bfi r3, r1, #0, #3; str r3, [r0];"
+],
+[
+"0x43ad764a",
+"bfi r3, r1, #0x10, #3; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa1180": {
+"R": [
+[
+"0x43ad765c",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa1200": {
+"R": [],
+"W": [
+[
+"0x43ad7efa",
+""
+]
+]
+},
+"0xa1300": {
+"R": [],
+"W": [
+[
+"0x43ad7bd8",
+""
+]
+]
+},
+"0xa1400": {
+"R": [],
+"W": [
+[
+"0x43ad81c6",
+""
+]
+]
+},
+"0xa1600": {
+"R": [],
+"W": [
+[
+"0x43ad8454",
+""
+]
+]
+},
+"0xa1620": {
+"R": [
+[
+"0x43ad84d2",
+"bfi r3, r1, #0x10, #0xe; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa1640": {
+"R": [
+[
+"0x43ad84e4",
+"bfi r3, r1, #0x10, #0xe; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa1700": {
+"R": [],
+"W": [
+[
+"0x43ad854a",
+""
+]
+]
+},
+"0xa1b80": {
+"R": [],
+"W": [
+[
+"0x43ad766e",
+""
+]
+]
+},
+"0xa1be0": {
+"R": [],
+"W": [
+[
+"0x43ad769a",
+""
+]
+]
+},
+"0xa1cc0": {
+"R": [
+[
+"0x43ad6ed0",
+"and r0, r0, #1;"
+]
+],
+"W": []
+},
+"0xa1e40": {
+"R": [],
+"W": [
+[
+"0x43b798f0",
+""
+]
+]
+},
+"0xa1e60": {
+"R": [],
+"W": [
+[
+"0x43b798fc",
+""
+]
+]
+},
+"0xa1e80": {
+"R": [],
+"W": [
+[
+"0x43b79908",
+""
+]
+]
+},
+"0xa1ea0": {
+"R": [],
+"W": [
+[
+"0x43b79914",
+""
+]
+]
+},
+"0xa1ec0": {
+"R": [],
+"W": [
+[
+"0x43b79920",
+""
+]
+]
+},
+"0xa1ee0": {
+"R": [],
+"W": [
+[
+"0x43b7992c",
+""
+]
+]
+},
+"0xa1f00": {
+"R": [],
+"W": [
+[
+"0x43b79938",
+""
+]
+]
+},
+"0xa1f20": {
+"R": [],
+"W": [
+[
+"0x43b79944",
+""
+]
+]
+},
+"0xa1f40": {
+"R": [],
+"W": [
+[
+"0x43b79950",
+""
+]
+]
+},
+"0xa3300": {
+"R": [
+[
+"0x43ad7cb0",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+],
+[
+"0x43ad7cc2",
+"bfi r3, r1, #4, #1; str r3, [r0];"
+],
+[
+"0x43ad7cd4",
+"bfi r3, r1, #5, #1; str r3, [r0];"
+],
+[
+"0x43ad7ce6",
+"bfi r3, r1, #6, #1; str r3, [r0];"
+],
+[
+"0x43ad7cf8",
+"bfi r3, r1, #7, #1; str r3, [r0];"
+],
+[
+"0x43ad7d0a",
+"bfi r3, r1, #0x10, #1; str r3, [r0];"
+],
+[
+"0x43ad7d1c",
+"bfi r3, r1, #0x14, #3; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa3960": {
+"R": [],
+"W": [
+[
+"0x43b78cd2",
+""
+]
+]
+},
+"0xa3980": {
+"R": [],
+"W": [
+[
+"0x43b78cde",
+""
+]
+]
+},
+"0xa39a0": {
+"R": [
+[
+"0x43b78c16",
+"bfi r3, r1, #0, #0xe; str r3, [r0];"
+],
+[
+"0x43b78c28",
+"bfi r3, r1, #0x10, #0xe; str r3, [r0];"
+],
+[
+"0x43b78cea",
+"bfi r3, r1, #0, #0xe; str r3, [r0];"
+],
+[
+"0x43b78cfc",
+"bfi r3, r1, #0x10, #0xe; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa3a00": {
+"R": [
+[
+"0x43b78c4a",
+"bic r0, r0, #0xff000000; bic r0, r0, #0xfe0000;"
+],
+[
+"0x43b78d2e",
+"bic r0, r0, #0xff000000; bic r0, r0, #0xfe0000;"
+]
+],
+"W": []
+},
+"0xa3a20": {
+"R": [
+[
+"0x43b78c5e",
+"bic r0, r0, #0xff000000; bic r0, r0, #0xfe0000;"
+],
+[
+"0x43b78d42",
+"bic r0, r0, #0xff000000; bic r0, r0, #0xfe0000;"
+]
+],
+"W": []
+},
+"0xa3a60": {
+"R": [
+[
+"0x43b78c72",
+""
+],
+[
+"0x43b78d56",
+""
+]
+],
+"W": []
+},
+"0xa3a80": {
+"R": [
+[
+"0x43b78c7e",
+""
+],
+[
+"0x43b78d62",
+""
+]
+],
+"W": []
+},
+"0xa3aa0": {
+"R": [
+[
+"0x43b78c8a",
+""
+],
+[
+"0x43b78d6e",
+""
+]
+],
+"W": []
+},
+"0xa3ac0": {
+"R": [
+[
+"0x43b78c96",
+""
+],
+[
+"0x43b78d7a",
+""
+]
+],
+"W": []
+},
+"0xa3c00": {
+"R": [
+[
+"0x43b79852",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b79862",
+""
+]
+]
+},
+"0xa3e00": {
+"R": [
+[
+"0x43b78a92",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+],
+[
+"0x43b78aa4",
+"bfi r3, r1, #4, #1; str r3, [r0];"
+],
+[
+"0x43b78ab6",
+"bfi r3, r1, #8, #1; str r3, [r0];"
+],
+[
+"0x43b78ac8",
+"bfi r3, r1, #9, #1; str r3, [r0];"
+],
+[
+"0x43b78ada",
+"bfi r3, r1, #0xa, #1; str r3, [r0];"
+],
+[
+"0x43b78aec",
+"bfi r3, r1, #0xc, #3; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa5500": {
+"R": [
+[
+"0x43b79ecc",
+"bfi r3, r1, #0, #0xe; str r3, [r0];"
+],
+[
+"0x43b79ede",
+"bfi r3, r1, #0x10, #2; str r3, [r0];"
+],
+[
+"0x43b79ef0",
+"bfi r3, r1, #0x18, #2; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa5700": {
+"R": [
+[
+"0x43b79f02",
+"bfi r3, r1, #0, #1; str r3, [r0];"
+],
+[
+"0x43b79f14",
+"bfi r3, r1, #0x10, #1; str r3, [r0];"
+]
+],
+"W": []
+},
+"0xa5920": {
+"R": [],
+"W": [
+[
+"0x43b7a458",
+""
+]
+]
+},
+"0xa5ba0": {
+"R": [],
+"W": [
+[
+"0x43b7a474",
+""
+]
+]
+},
+"0xa5c00": {
+"R": [
+[
+"0x43b7a358",
+"and r0, r0, #1;"
+]
+],
+"W": [
+[
+"0x43b7a368",
+""
+]
+]
+},
+"0xa5e20": {
+"R": [],
+"W": [
+[
+"0x43b7a000",
+""
+]
+]
+},
+"0xa5e40": {
+"R": [],
+"W": [
+[
+"0x43b7a00c",
+""
+]
+]
+},
+"0xa5e60": {
+"R": [
+[
+"0x43b7a018",
+"bfi r3, r1, #0, #6; str r3, [r0];"
+],
+[
+"0x43b7a02a",
+"bfi r3, r1, #0x10, #6; str r3, [r0];"
+]
+],
+"W": []
+},
+"0x440000": {
+"R": [
+[
+"0x4395f406",
+"bl #0x4395d9d0; mov r4, r0; bl #0x4396dcf4; ldr r3, [pc, #0x28]; movs r1, #0;"
+]
+],
+"W": []
+},
+"0x910010": {
+"R": [
+[
+"0x43b5e472",
+"lsrs r0, r1; and r0, r0, #1;"
+]
+],
+"W": []
+},
+"0x910040": {
+"R": [
+[
+"0x43b5e486",
+"lsrs r0, r1; and r0, r0, #1;"
+]
+],
+"W": []
+}
+}

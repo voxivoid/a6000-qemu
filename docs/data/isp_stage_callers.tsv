@@ -1,0 +1,189 @@
+# stage setter/getter fn VA (see isp_stages.py) | caller VA (CamCore wrapper code) | nearby log string
+43b663dc	438882f6	
+43b663dc	43b137f4	
+43b663dc	43b1385c	
+43b665b6	4381d684	
+43b665b6	43b0512c	
+43b6661e	4382a534	
+43b6661e	4382a5ae	
+43b6661e	4382a61a	
+43b66f84	4381da3e	
+43b66f84	43b050fc	
+43b670ba	4382ac2e	
+43b670ba	4382ac8a	
+43b670ba	4382acd6	
+43b670ba	43b0566a	
+43b67238	4381d7be	
+43b67238	4381d7d0	
+43b67238	43b04ffe	
+43b67238	43b05014	
+43b67270	4382a852	
+43b67270	4382bb68	
+43b67270	43b055c8	
+43b67358	437d78b6	
+43b67358	437d7a00	
+43b673ae	437d7928	
+43b673ae	437d7a98	
+43b67414	43b67488	
+43b675e0	4381d864	
+43b675e0	43b05068	
+43b6768a	4382a8be	
+43b6768a	4382a934	
+43b6768a	4382a9aa	
+43b6768a	43b05510	
+43b67988	4381d2c6	[CAMERA_MAIN_CC]: CamCore 3D-Lut table Write Start | CamCore 3D-Lut table Write Start | [CAMERA_MAIN_CC]: CamCore 3D-Lut table Write End
+43b67988	4381daf8	
+43b67b1a	4382b7dc	
+43b67b1a	4382b866	
+43b67b1a	43b05724	
+43b67e72	438a55e2	
+43b67fba	438a4770	
+43b67fba	438a560a	
+43b67fba	439cd32c	
+43b685d8	43b68a2c	
+43b6862e	4386144a	
+43b6862e	4386167c	
+43b6862e	438616de	
+43b6862e	438618bc	
+43b6862e	4386197c	
+43b6862e	438619da	
+43b6862e	4386b2cc	
+43b6866c	43865f0e	
+43b68716	438614aa	
+43b68716	4386177c	
+43b68786	43865e50	
+43b687e8	43861578	
+43b687e8	4386186e	
+43b68938	43865f46	
+43b68938	4386b2dc	
+43b689be	43861d0e	
+43b689be	43861ea4	
+43b689be	4386b2d4	
+43b68c88	438b1d3a	
+43b68c88	438b3d9e	[CAMERA_MAIN_YC]: YAP:aus_X_ISO =%x | YAP:aus_X_ISO =%x | [CAMERA_MAIN_YC]: YAP:picture_effect =%x
+43b68c88	438b3da6	[CAMERA_MAIN_YC]: YAP:aus_X_ISO =%x | YAP:aus_X_ISO =%x | [CAMERA_MAIN_YC]: YAP:picture_effect =%x
+43b68c88	438b5e78	
+43b68c88	438b6f32	
+43b68c88	43b161ba	
+43b68d18	438b1ed0	
+43b68d18	438b33b6	[CAMERA_MAIN_YC]: YAP:aus_X_ISO =%x | YAP:aus_X_ISO =%x | [CAMERA_MAIN_YC]: YAP:picture_effect =%x
+43b68d18	438b33be	[CAMERA_MAIN_YC]: YAP:aus_X_ISO =%x | YAP:aus_X_ISO =%x | [CAMERA_MAIN_YC]: YAP:picture_effect =%x
+43b68d18	438b64ce	
+43b68d18	438b7160	
+43b68d18	43b16212	
+43b68d86	438b0d7c	
+43b68d86	438b15d0	
+43b68d86	438b15d8	
+43b68d86	438b1f36	
+43b68d86	438b691a	
+43b68d86	438b71d0	
+43b68df6	438b1962	
+43b68df6	438b196a	
+43b68df6	438b1faa	
+43b68df6	438b6a7a	
+43b68df6	438b727c	
+43b68df6	43b16252	
+43b69264	438680f0	
+43b69264	43868162	
+43b69264	4386b224	
+43b69264	43b0b7c2	
+43b692bc	4381d91e	
+43b692bc	43b050b0	
+43b69312	4381d8d0	
+43b69312	43b05098	
+43b693bc	4381d964	
+43b693bc	43b050cc	
+43b69426	4382ab80	
+43b69426	43b05620	
+43b69474	4382aa4a	
+43b69474	4382aac6	
+43b69474	43b05570	
+43b694fa	4382abd6	
+43b697bc	4381d3f0	CamCore Change 3D-Lut %X | [CAMERA_MAIN_CC]: CamCore GetBaseAddress  %X | CamCore GetBaseAddress  %X
+43b6982a	439cdcdc	
+43b69884	439cde34	
+43b6991e	439cde40	
+43b699b8	43b0596a	
+43b69b34	4386639e	
+43b69b34	438663ba	
+43b69b34	43866406	
+43b69b34	43866f4e	
+43b69bd8	43867370	
+43b69bd8	43867578	
+43b69bd8	43867580	
+43b69bd8	4386761c	
+43b69f92	43b6a12a	
+43b69ff0	43852d38	
+43b6a0ac	438520ee	
+43b6a15c	438522a4	
+43b6a15c	438522ac	
+43b6a15c	438527ca	
+43b6a186	438522f0	
+43b6a186	438522f8	
+43b6a186	43852716	
+43b6a636	4381d626	
+43b6a636	4381e17a	
+43b6a636	4381e4c6	
+43b6a636	4381e4d0	
+43b6a636	4381e596	
+43b6a636	43b05938	
+43b6a786	4381e632	
+43b6a7bc	4381e53c	
+43b6a7bc	4381e600	
+43b6a9aa	4382a2ec	
+43b6a9aa	4382a34c	
+43b6a9aa	4382a3c6	
+43b6a9aa	4382a440	
+43b6a9aa	4382a4ba	
+43b6a9aa	43b053ee	
+43b6adf8	438865ec	
+43b6ae30	438866c8	
+43b6ae68	438867ac	
+43b6aea0	43887ee6	
+43b6b0a4	4388869a	
+43b6b242	4383c724	
+43b6b536	43b6b7fe	
+43b6b56a	43b24c04	
+43b6b682	43b24ca6	
+43b6b750	43b24ce2	
+43b6bb6a	43aeff00	
+43b6bd5e	439cd7c2	[CAMCORE]: loadDefectPos | [CAMCORE]: Acl::CAMHEAD_Z1C::setDefectPt return err. | Acl::CAMHEAD_Z1C::setDefectPt return err.
+43b6bd5e	439cd7d0	[CAMCORE]: loadDefectPos | [CAMCORE]: Acl::CAMHEAD_Z1C::setDefectPt return err. | Acl::CAMHEAD_Z1C::setDefectPt return err.
+43b6bed2	43888312	
+43b6bed2	43b13818	
+43b6bed2	43b13888	
+43b6c3ca	438a3b8e	uc_pbx_band_h_pass_lev_hf           = 0x%x | [CAMERA_MAIN_YC]: uc_pbx_thresh_mode                  = 0x%x | uc_pbx_thresh_mode                  = 0x%x
+43b6c480	438a31e6	
+43b6c480	43b15252	
+43b6c82e	438a3244	
+43b6c82e	43b15296	
+43b6c94a	4381d6da	
+43b6c94a	43b04f88	
+43b6c9b2	4381d51a	
+43b6ca1a	4382a686	
+43b6ca1a	4382a700	
+43b6ca1a	4382a76c	
+43b6ca1a	43b05446	
+43b6ca1a	43b054a0	
+43b6cf56	4381d760	
+43b6cf56	43b04fb8	
+43b6cff6	4382a7d8	
+43b6cff6	4382baec	
+43b6cff6	43b054e0	
+43b78afe	43b78bde	
+43b78b20	4389b4b6	[CAMERA_MAIN_YC]: LGA::job_YC_SetParam (CAP): GetIfmtLga error | LGA::job_YC_SetParam (CAP): GetIfmtLga error | [CAMERA_MAIN_YC]: [Async]job_YC_SetParam
+43b78b20	43b150a8	
+43b79322	438885d4	
+43b79322	43889e4a	[CAMERA_MAIN_YC]: CLP::Set_Async_IFMT_OAC_Clamp (ASYNC) L%d: p_def_ifmt_oac_setter = NULL | CLP::Set_Async_IFMT_OAC_Clamp (ASYNC) L%d: p_def_ifmt_oac_setter = NULL | [CAMERA_MAIN_YC]: CLP::Set_Async_I
+43b793b0	43886980	[CAMERA_MAIN_YC]: CLP::job_Clp_Async_Get_OAC_DetectResult (ASYNC) L%d: p_def_ifmt_oac_getter = NULL | CLP::job_Clp_Async_Get_OAC_DetectResult (ASYNC) L%d: p_def_ifmt_oac_getter = NULL
+43b79536	43886a46	[CAMERA_MAIN_YC]: CLP::job_Clp_Async_Get_OAC_DetectResult (ASYNC) L%d: p_def_ifmt_oac_getter = NULL | CLP::job_Clp_Async_Get_OAC_DetectResult (ASYNC) L%d: p_def_ifmt_oac_getter = NULL | [CAMERA_MAIN_Y
+43b79536	43888e6c	
+43b79536	43889944	
+43b79536	438e9e52	[CAMERA_MAIN_YC]: ADJ::sjob_Dk_G_Check_Result L%d: p_def_ifmt_oac_setter = NULL | ADJ::sjob_Dk_G_Check_Result L%d: p_def_ifmt_oac_setter = NULL
+43b79536	438e9faa	[CAMERA_MAIN_YC]: ADJ::sjob_Hl_G_Check_Result L%d: p_def_ifmt_oac_setter = NULL | ADJ::sjob_Hl_G_Check_Result L%d: p_def_ifmt_oac_setter = NULL
+43b799a2	438a6fd8	[CAMERA_MAIN_YC]: SCA::job_YC_SetParam: GetIfmtSca error | SCA::job_YC_SetParam: GetIfmtSca error
+43b799a2	438a7096	
+43b799a2	43b1591c	
+43b79d5c	43b15934	
+43b7a480	43b7a62e	
+43b7f71e	43a3a93e	[DFECore]: dgim_zpd_scc_dc setEyePtnOffset: parameter err %d %d %d | dgim_zpd_scc_dc setEyePtnOffset: parameter err %d %d %d

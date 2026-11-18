@@ -9,6 +9,8 @@ spacing). See docs/A6000_LOOK_MOD_ISP.md. This evaluates a transfer function at 
 LOOK:
   slog2     Sony S-Log2 (10-bit code = 64 + 876*y legal, or y*1023 with --range full)
   slog3     Sony S-Log3
+  logc3     ARRI LogC3 EI 800 (full range, the curve of the a6400 "ARRI Wide Gamut" preset; grey 18% -> 0.391)
+  arri709   APPROXIMATE ARRI-Classic-like Rec.709 view (filmic shoulder, gamma 2.4); not ARRI's LUT
   rec709    ITU-R BT.709 OETF (a "flat-ish" sanity reference)
   invert    1023 - stock-like gamma curve is NOT built here; use make_curve.py/invert on the RAM curve
   identity  output = knot*1023/2047 (linear passthrough, very dark: sanity test)
@@ -39,6 +41,20 @@ def slog3(r):
     return (r * (171.2102946929 - 95.0) / 0.01125 + 95.0) / 1023.0
 
 
+def logc3(r):
+    """ARRI LogC3 EI800 (published ALEXA constants), r = scene linear (0.18 grey)."""
+    if r > 0.010591:
+        return 0.247190 * math.log10(5.555556 * r + 0.052272) + 0.385537
+    return 5.367655 * r + 0.092809
+
+
+def arri709(r):
+    """Approximation only: ACES-fit filmic tone map (grey 0.18 -> ~0.40 code) then gamma 2.4 encode."""
+    r *= 0.5
+    L = r * (2.51 * r + 0.03) / (r * (2.43 * r + 0.59) + 0.14)
+    return max(0.0, min(1.0, L)) ** (1 / 2.4)
+
+
 def rec709(r):
     r = max(0.0, min(1.0, r))
     return 4.5 * r if r < 0.018 else 1.099 * r ** 0.45 - 0.099
@@ -47,7 +63,7 @@ def rec709(r):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
-    ap.add_argument("look", choices=["slog2", "slog3", "rec709", "identity"])
+    ap.add_argument("look", choices=["slog2", "slog3", "logc3", "arri709", "rec709", "identity"])
     ap.add_argument("--grey-x", type=float, default=76.0)
     ap.add_argument("--range", choices=["legal", "full"], default="legal")
     a = ap.parse_args()
@@ -61,6 +77,10 @@ def main():
         elif a.look == "slog3":
             y = slog3(r)
             code = (64 + 876 * y) if a.range == "legal" else y * 1023
+        elif a.look == "logc3":
+            code = logc3(r) * 1023
+        elif a.look == "arri709":
+            code = arri709(r) * 1023
         elif a.look == "rec709":
             code = rec709(r / 5.0) * 1023           # headroom 5x
         else:

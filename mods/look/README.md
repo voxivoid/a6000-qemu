@@ -12,6 +12,8 @@ python3 mods/look/make_hwgamma.py slog2.bin slog2             # 96 x u32 for the
 CAM=<camera-ip> mods/look/look.sh apply slog2.bin             # write once + patch the camera's table writer (no flicker, still + video)
 CAM=<camera-ip> mods/look/look.sh revert                      # undo; battery pull also resets everything
 ```
+Colour matrix (verified live): `python3 mods/look/make_hwmatrix.py out.bin stock.bin awg3|sat 0.8`, pushed with
+`gammamod -F hwwr 0xF321550C out.bin` (+ patch writer `0x83b675e0`; see `docs/A6000_ISP_REGISTER_MAP.md`). `look.sh` doesn't do the matrix yet.
 Verified on hardware: stays applied through live view, stills and video. Details: `docs/A6000_LOOK_MOD_ISP.md` section 7.
 
 ## Hardware gamma path (manual, what look.sh automates)

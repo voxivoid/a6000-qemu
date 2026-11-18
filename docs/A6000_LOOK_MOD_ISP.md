@@ -173,3 +173,8 @@ The SRAM holds the 10-bit output at each knot. `mods/look/make_hwgamma.py` evalu
    A per-mode look would need two tables and a mode switch.
 5. Instead of blocking the writer, redirect its source pointer so the camera itself writes *our* table (keeps Creative Style
    etc. working on other tables). The a6300 has the identical writer (`0x43c2b91c`, wrapper `0x43c2b984`).
+
+## See also
+* `A6000_ISP_REGISTER_MAP.md` - every ISP register/table we know, colour matrix at `0xF321550C` (verified), writers to patch.
+* `A6000_PICTURE_PROFILE_ISP_PLAN.md` - plan to implement a6300 Picture Profiles and other cameras' looks.
+* Look generators: `mods/look/make_hwgamma.py` (slog2/slog3/logc3/arri709/rec709), `mods/look/make_hwmatrix.py` (awg3/sat).
