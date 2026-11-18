@@ -339,3 +339,16 @@ Conclusion [?]: the A6000's high-ISO NR is **not controlled through a visible re
 tables in DDR. Next step for NR would be static RE of the NR controller (`Camera::CamCore::NRController`, `CamNr` class base) rather than more snapshots.
 Control-based scan summary: **found and verified**: gamma, matrix, saturation gains, sharpness; **found (not writable-tested)**: DRO enable `0xF3040100/108/110` + DDR buffers `0xF3040128..138`;
 **not found**: NR strength, black level, WB gains (white-balance snapshots not taken), detail beyond `0x15c14/18`.
+
+## 10. White balance gains [V] (snapshots `wb_day`, `wb_inc`; write test)
+**Correction:** the words `0xF3211400`, `0xF321140C`, `0xF3211900`, `0xF3211908` (and their mirror at `0xF3214400/0C/900/908`) that sections 8.3-8.4 listed as "AE/AWB readbacks"
+are the **white-balance channel gains** (Auto WB makes them follow the scene, which is why they differed between any two auto snapshots).
+Fixed presets (same scene): **Daylight: `0x11400=22507, 0x1140c=25894, 0x11900=941, 0x11908=441`; Incandescent: `26003, 21594, 436, 805`**.
+Write test (stock matrix untouched, WB setter `43b665b6` frozen: PA `0x83b665b6`, original `70 b5 0c 46`, patch `70 47 0c 46`):
+* `0xF3211900 = 1900` (from 436) -> **image turns red** => `0x11900` = **R gain**. (Incandescent lowers it, Daylight 941, because tungsten light is reddish.)
+* `0xF3211908 = 1900` (R reset to 941) -> **purple** => `0x11908` = **B gain** (R + B up with G unchanged = magenta/purple).
+So `0x11900` = R gain, `0x11908` = B gain (scale unknown, unity probably near `~512..1024` for G-equal [?]); `0x11400/0x1140c` (22507/25894 day, 26003/21594 inc) move opposite to each other
+and probably are a second representation of the same gains (R/B in another scale) or the G-normalised pair [?]. The setter `43b665b6` writes 6 u16 fields at `0x11400..0x1190c` (reader `43b6661e`).
+WB is applied **before the colour matrix**: the matrix `0xF321550C` is identical for Daylight and Incandescent (checked), i.e. matrix = fixed sensor-to-working-space, WB = separate per-channel gain stage.
+Use for looks: **per-channel RGB gain (tint / split colour casts / cross-process base) independent of matrix and saturation**; for a neutral look keep the camera's own AWB/preset values and only
+add a tint by scaling `0x11900/0x11908` relative to the current pair.
