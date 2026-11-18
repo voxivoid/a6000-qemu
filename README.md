@@ -132,6 +132,15 @@ Details and next steps: [`docs/A6000_ROADMAP.md`](docs/A6000_ROADMAP.md).
 - The documents are reverse-engineering observations made for interoperability (emulation). Analysing or bypassing protection features such as battery authentication is out of scope.
 - Work on real hardware is at your own risk. This emulator never writes to a real camera.
 
+## Credits and references
+Projects this work builds on or learned from:
+- [Oein/a5000-emulator](https://github.com/Oein/a5000-emulator): the ILCE-5000 emulator this repository is forked from (GPL-2.0); its platform notes are kept in `docs/reference/`.
+- [QEMU](https://gitlab.com/qemu-project/qemu): upstream emulator (`v10.1.0`) the `sony-a6000` machine is built on.
+- [ma1co/fwtool.py](https://github.com/ma1co/fwtool.py): unpacks Sony's firmware updater (used by `tools/mkdata.py`, `provision.sh`).
+- [ma1co/Sony-PMCA-RE](https://github.com/ma1co/Sony-PMCA-RE): PlayMemories Camera Apps tooling; `tools/pmca-socket/` is a USB backend for it (MIT).
+- [ma1co/OpenMemories-Tweak](https://github.com/ma1co/OpenMemories-Tweak): root shell (Wi-Fi, Telnet, ADB) on a real camera, used to dump and to run the look mod.
+- [ivica00/bionz-x-research](https://github.com/ivica00/bionz-x-research): the `arri_isp` mod that `mods/look/` is the A6000 analogue of.
+
 ## License
 - QEMU code (`qemu-overlay/`, `patches/`), `tools/`, `provision/` and scripts: **GPL-2.0-or-later** (`LICENSE`, same as QEMU)
 - Documentation (`docs/`, `*.md`): **CC BY 4.0**
