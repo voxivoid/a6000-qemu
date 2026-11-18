@@ -83,3 +83,23 @@ reproducible by a 3x3 beyond approximation).
 5. Identify black level / WB gain (`0x3400`..), detail (`0x15700` block) registers by write tests.
 6. Measure everything from real JPEG/MOV (Delta E tools), tune `--grey-x` per ISO/exposure.
 7. Optional: on-camera selection (PP menu via `tools/pphook`) and mode-dependent presets.
+
+## a6300 av-cam extraction log (2026-11-18)
+- a6300 av-cam: `firmware_a6300/.../nflasha3_unpacked_unpacked/av-cam.bin`, same load VA 0x43541000.
+- No PP gamma is stored as a ready 96xu32 record. Only the knot-axis record (0x441bc368) and a 105-word record
+  (0x441bc514, values 2,4,96,960 + nine 1023) exist. PP gamma is computed at runtime
+  (EC_Gamma.cpp `job_EC_CalcCaptureGamma`, strings "S-Log2", "CalcCaptureGamma") and then written through the same
+  SRAM writer (0x43c2b91c == A6000 0x43b67414).
+- Five monotone u16 tables exist only in the a6300 (VA, entries, range):
+  0x43cbd066 (101, 0..640, exponential-looking, followed by a linear 0,103,206.. ramp),
+  0x43cc95ee (512, 0..2044, near-linear then descending 1976..), 0x43cfa300 (258, 0..2048, S-shaped tone curve,
+  NOT Rec709/S-Log3 (max err >300/2048)), 0x43d050d0 (224, 3..4023), 0x43d05290 (108, 183..3837).
+- No u32 literal anywhere in the image points at them (the pointers found sit in big indexed tables at
+  0x441bc6b8.. and 0x441d3638.. which index other data). They are reached by base+index arithmetic, so the PP-type ->
+  table mapping needs a dynamic trace or deeper RE of job_EC_CalcCaptureGamma.
+- Practical consequence: the PP curves are best rebuilt from the published Sony formulas (make_hwgamma.py already does
+  S-Log2/S-Log3; Cine/Movie/ITU709/HLG need formulas or measuring a real a6300), not copied from firmware tables.
+
+### PP gamma generators (make_hwgamma.py)
+Exact: slog2, slog3, logc3, hlg, rec709. APPROXIMATE (shape only, Sony curves unpublished and not in firmware):
+movie, still, cine1-4, scinetone. Tune by eye/scope or measure a real a6300 (PP_APPROX table in the script).
