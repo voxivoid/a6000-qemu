@@ -1,5 +1,30 @@
 # A6000 custom-look mod (RAM-only, experimental)
 
+> **Update (hardware-verified): the ISP gamma is memory-mapped SRAM at PA `0xF3215300`** (96 x u32). Writing it
+> inverts the saved image and the live view. The DDR tables the sections below talk about (the `0..1024` u16 tables,
+> the 97-word Creative-Style curve) are **inert working copies**: poking them does nothing. Use
+> `gammamod hwrd | hwdump | hwwr` (see "Hardware gamma path"). Full findings and the RE trail:
+> [`docs/A6000_LOOK_MOD_ISP.md`](../../docs/A6000_LOOK_MOD_ISP.md).
+
+## Hardware gamma path (the one that works)
+Needs a root shell on the camera (OpenMemories-Tweak: Wifi + Telnet + ADB; push the binary with `adb push`, never over
+telnet). Save the original first; restore = write it back.
+```sh
+/android/gammamod hwrd 0xF3215300 8                       # read-only look
+/android/gammamod hwdump 0xF3215300 96 /android/hw_orig.bin   # SAVE THIS (also pull it to the PC)
+# PC: build 96 x u32 (0..1023), e.g. 1023 - curve for the invert test; adb push as /hw_new.bin
+/android/gammamod hwwr 0xF3215300 /android/hw_new.bin 60000   # write once, then poll+rewrite for 60 s (real clock)
+/android/gammamod hwwr 0xF3215300 /android/hw_orig.bin        # restore
+```
+`hwwr` with a duration polls the table and rewrites it the instant the camera restores the stock curve (it does so ~50x/s).
+Without a duration it writes once (stills may still pick it up, live view flickers). Access is locked to
+`0xF3215300..0xF321547F` unless `-F`. Other commands: `find` (RAM byte-pattern search), `scan`/`scan32` (monotone ramps
+with checksums, for diffing two camera states). Battery pull = stock; nothing is written to flash.
+
+---
+
+## Older (DDR-table) notes, superseded
+
 Install a **custom tone curve** (and later a color matrix) on a Sony A6000 by
 overriding its av-cam develop tables in DDR through `/dev/mem`. This is the
 A6000 analogue of [ivica00/bionz-x-research `arri_isp`](https://github.com/ivica00/bionz-x-research/tree/main/mods/arri_isp),
@@ -44,6 +69,11 @@ reset.
    # from the computer, over the telnet/adb bridge you used for the dump
    # (push gammamod to /android, chmod 755)
    ```
+1b. **Confirm the PA mapping on THIS camera (read-only, mandatory):**
+   ```sh
+   sh /android/check_map.sh /system/av-cam.bin   # must print MAP CONFIRMED
+   ```
+   If it does not, do not write anything; the load base differs on this unit.
 2. **List the live gamma tables:**
    ```sh
    /android/gammamod scan 0x83541000 0xb00000 128
@@ -79,6 +109,7 @@ a PA you confirmed holds a gamma table.
 
 ## Files
 - `gammamod.c` — the on-camera `/dev/mem` tool (`scan` / `read` / `write` / `hold`).
+- `check_map.sh` — on-camera read-only check that av-cam is at PA 0x83541000 (run first).
 - `make_curve.py` — host: build a curve in the LUT format (`identity`/`flat`/`contrast`/`invert`).
 
 ## Safety

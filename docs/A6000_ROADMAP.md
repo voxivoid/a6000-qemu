@@ -77,6 +77,7 @@ No body zoom lever row (the A6000 has none; the kit PZ lens's lever is on the le
 - Hooks still carrying reference-build addresses may misbehave silently on 3.21 (open work 5).
 - Android/PMCA bring-up has not been done on this platform before.
 - Image processing is not emulated: how a recipe looks still needs the real camera.
+- Custom look (gamma) mod: the ISP gamma is SRAM at PA 0xF3215300, verified on hardware; see `docs/A6000_LOOK_MOD_ISP.md`.
 
 ## Build notes (Ubuntu 22.04 / WSL2)
 - Packages: `ninja-build pkg-config libglib2.0-dev libpixman-1-dev libsdl2-dev libgtk-3-dev libslirp-dev flex bison

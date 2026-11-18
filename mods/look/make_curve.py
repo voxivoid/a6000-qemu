@@ -48,6 +48,10 @@ def main():
     if len(sys.argv) < 4:
         sys.exit(__doc__)
     orig = load(sys.argv[1])
+    # 129-pt tables sit in 130 slots with a trailing 0 pad: keep the pad, curve the rest
+    pad = []
+    if len(orig) > 2 and orig[-1] == 0 and orig[-2] == max(orig):
+        pad, orig = [0], orig[:-1]
     out, look = sys.argv[2], sys.argv[3]
     amt = float(sys.argv[4]) if len(sys.argv) > 4 else 0.5
     n = len(orig)
@@ -78,9 +82,9 @@ def main():
     if look == "invert":                     # invert isn't monotone-increasing
         res = [max(lo, min(hi, int(round(lo + (1 - (orig[i] - lo) / span) * span))))
                for i in range(n)]
-    save(out, res)
-    print("%s look='%s' amt=%s  %d pts  %d..%d -> %d..%d"
-          % (out, look, amt, n, lo, hi, res[0], res[-1]))
+    save(out, res + pad)
+    print("%s look='%s' amt=%s  %d pts%s  %d..%d -> %d..%d"
+          % (out, look, amt, n, " +pad" if pad else "", lo, hi, res[0], res[-1]))
     print("  sample:", [res[i] for i in range(0, n, max(1, n // 8))])
 
 
