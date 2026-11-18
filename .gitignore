@@ -35,3 +35,4 @@ __pycache__/
 /dumps
 /provision/pploader
 /tools/pphook/pphook.so
+/firmware_a6300/
