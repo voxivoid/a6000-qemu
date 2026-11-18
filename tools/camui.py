@@ -154,6 +154,10 @@ class Handler(BaseHTTPRequestHandler):
                 # {"value": 1..11}: A6000 mode dial position (machine property)
                 r = self.qmp.cmd('qom-set', path='/machine', property='mode-dial',
                                  value=str(int(req['value'])))
+            elif self.path == '/hmp':
+                # {"cmd": "info registers"}: any HMP command over the one QMP
+                # connection (QEMU's QMP socket serves a single client)
+                r = self.qmp.cmd('human-monitor-command', **{'command-line': str(req['cmd'])})
             elif self.path == '/vm':
                 op = req.get('op')
                 if op not in ('stop', 'cont', 'system_reset'):
