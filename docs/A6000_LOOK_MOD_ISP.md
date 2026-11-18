@@ -13,8 +13,9 @@ and to the ISP's volatile SRAM. Nothing was written to flash except the one mode
   live view showed the inverted image (flickering back to normal until the hold loop was made fast, section 7).
 * **All RAM-side tables are inert.** The tone curves found in DDR (the 0..1024 u16 tables, the 97-word u32 Creative-Style
   curve and its copy) are staging/working copies. Changing them, even held continuously, changes nothing.
-* av-cam rewrites the stock table into the SRAM about once per live-view frame; a still capture reads it once. A custom
-  look must therefore win a race against that rewrite (poll + rewrite, section 7).
+* av-cam rewrites the SRAM on **events** (entering video, mode change, ...), not continuously. The fix that needs no race:
+  **patch av-cam's own table writer (`0x43b67414`) to `bx lr`**, write the table once, done (section 7). Verified: S-Log2
+  stays applied through live view, stills and video recording, with no flicker. One command: `mods/look/look.sh apply`.
 * Recipe Lab (settings layer) cannot do gamma on the A6000 (no gamma/LUT setting). This path bypasses the settings layer.
 
 ## 1. Camera and access (what worked, what did not)
@@ -106,22 +107,57 @@ Read with `gammamod hwrd 0xF3215300 96` (stable across reads; Standard Creative 
 Procedure: save the 96 words, write `1023 - curve[1..96]` (a clean inverted monotone curve) to `0xF3215300`, watch.
 
 * **The saved still image was inverted.** The SRAM is the real ISP gamma.
-* **Live view flickered between normal and inverted** while a loop rewrote the table every 8 ms: av-cam rewrites the stock
-  table about once per frame and the loop (timer-based, coarse sleeps) lost the race on some frames.
-* Restore (write the saved words back) works and is verified by readback; nothing else changes.
+* **Live view flickered between normal and inverted** while a timer loop rewrote the table every 8 ms.
+* Restore (write the saved words back) works. The stock table is **not one fixed set of 96 words**: it varies with
+  scene/exposure (the saved copy differed from a later read from word 2 on), so "restore" means "let the camera
+  re-program its own".
 
-## 7. Winning the race for live view
+## 7. The two ways to make it stick
 
-`gammamod hwwr <pa> <file> <ms>` now writes once, then **polls four words and rewrites the whole table the instant any
-differs** (with `sched_yield`; a real-time `clock_gettime` bound; prints how often it caught a stock rewrite).
-Result of the polling test: see section 9.
+### 7a. Polling (works, but races)
+`gammamod hwwr <pa> <file> <ms>` writes once, then polls four words and rewrites the whole table whenever any differs
+(`sched_yield`, real-clock bound). It reported ~3,000 "overwrites" in 60 s, but a later control showed the camera does **not**
+rewrite at idle (a written table stayed put for seconds with no poller, and a table was still intact 1 s after a hold
+ended), so most of those counts were probably read glitches while the ISP uses the SRAM [?]. Video recording still
+flickered with this approach.
+
+### 7b. Patch the camera's table writer (the real fix)
+* Events (e.g. starting video) make av-cam re-program the gamma: after a video attempt the SRAM held a *different* table
+  (the camera's movie curve, starting `111,126,175,211,...`), not the still curve (`15,30,63,67,...`) and not ours.
+* Every caller goes through one leaf function, **av-cam VA `0x43b67414`** (PA `0x83b67414`): `add.w r0,r0,#0x15000;
+  mov.w r2,#0x180; add.w r0,r0,#0x300; b.w 0x43b7f878` (MMIO memcpy). Bytes on this unit `00f5a8304ff4c072` equal the
+  3.21 firmware file (checked before patching).
+* Patch = one aligned 32-bit store of `70 47 a8 30` (`bx lr` + the untouched second halfword). The function returns
+  immediately, so the camera can no longer overwrite the table. RAM-only, reversible (write `00 f5 a8 30` back).
+* **Result: S-Log2 written once stays applied through live view, stills and video recording, with no flicker.** After a
+  video recording the SRAM still equalled the S-Log2 table byte for byte.
+* No explicit instruction-cache maintenance was needed in practice (the patch took effect immediately) [?: not proven
+  for every case; if the old code ever keeps running, the polling loop is the fallback].
+* Revert: restore the 4 bytes; the camera re-programs its own curve at its next event.
+* Limit: this blocks *all* camera gamma programming (Creative Style, DRO and movie curves stop updating) until reverted.
+
+`mods/look/look.sh apply|revert|status` does the whole sequence (verifies the writer bytes first, refuses if they differ).
+
+## 7c. Look generator: S-Log2 and friends
+
+The 96 hardware knots are fixed linear 11-bit input positions: `2..64` step 2 (32 knots), `68..128` step 4, `136..256` step 8,
+`272..512` step 16, `576..1024` step 64, `1152..1920` step 128, `2047` (this exact axis was found in RAM at `0x84071dc4`).
+The SRAM holds the 10-bit output at each knot. `mods/look/make_hwgamma.py` evaluates a transfer function there:
+
+* `slog2` (Sony formula, validated against the published points: 0% -> 90, 18% grey -> 347, 90% white -> 581/582 in
+  10-bit legal range), `slog3`, `rec709`, `identity`. `--range legal|full`, `--grey-x N`.
+* Scene reflectance is `R = 0.18 * knot / N` with `N` = the knot where 18% grey lands at your exposure (default 76: the
+  knot where the stock curve gives ~46%). Sensor clip (knot 2047) is fixed, so there is **no extra dynamic range**:
+  with N=76 clip lands at ~83% output. Raise/lower N (or expose differently) to move grey vs. headroom.
+* Not reproduced: S-Gamut (a colour matrix, not a curve) and the 8-bit/profile specifics of Sony's real S-Log2 path.
+* First hardware result: S-Log2 (legal, N=76) looked flat/log-like in live view, stills and video; steady with the patch.
 
 ## 8. Gotchas
 
-* **`hold` timing in the old `write`-path counts sleep requests, not time**, and the camera's `nanosleep` rounds up, so
-  a "90 s" hold ran for minutes. The new hardware path uses the real clock.
-* A **Creative Style change** makes the app rebuild the RAM curve and av-cam reload the SRAM: a held custom table is
-  overwritten once, then the poller restores it. Set the style back to Standard afterwards.
+* **`hold` timing in the old DDR `write`-path counts sleep requests, not time**, and the camera's `nanosleep` rounds up, so
+  a "90 s" hold ran for minutes. The hardware path (`hwwr`) uses the real clock.
+* While the writer is patched, Creative Style / DRO / movie curve changes do not reach the ISP. `look.sh revert` first.
+* After a battery swap or reboot `/android` is empty and the patch is gone (RAM): everything is stock again.
 * Low free RAM: keep buffers small; never run big scans with large files on `/android`.
 * Writing `-F` outside `0xF3215300..0xF321547F` is blocked by default in `hwrd/hwdump/hwwr`; the other tables in section
   4 are untested and must be read first.
@@ -129,10 +165,11 @@ Result of the polling test: see section 9.
 
 ## 9. Open items
 
-1. Polling-loop result for live view (flicker gone or not) [fill in].
-2. Format of the SRAM outliers (why non-monotone), and whether the ISP interpolates the 96 words over the full input range.
-3. The three other tables (`+0x15700`, `+0x15b08`, `+0x16200`) and the 3D LUT banks (`+0x17000..0x17800`): read, then test.
-4. Colour matrix: find where the matrix reaches the hardware (likely the same CC block); the RAM copies at `0x815c2132` /
+1. Format of the SRAM outliers (why non-monotone), and whether the ISP interpolates the 96 words over the full input range.
+2. The three other tables (`+0x15700`, `+0x15b08`, `+0x16200`) and the 3D LUT banks (`+0x17000..0x17800`): read, then test.
+3. Colour matrix: find where the matrix reaches the hardware (likely the same CC block); the RAM copies at `0x815c2132` /
    `0x8539e66c` are app-side only.
-5. Are the movie and still paths using the same SRAM (a still capture re-programs it)? Needs a capture-time hold test.
-6. Hooking instead of polling: patch the caller (`0x43b6747c`) or its source pointer so the stock write itself is ours.
+4. Still vs movie: the camera's movie table differs from the still one (saved as `movie_tbl.bin` during testing, not committed).
+   A per-mode look would need two tables and a mode switch.
+5. Instead of blocking the writer, redirect its source pointer so the camera itself writes *our* table (keeps Creative Style
+   etc. working on other tables). The a6300 has the identical writer (`0x43c2b91c`, wrapper `0x43c2b984`).

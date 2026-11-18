@@ -6,7 +6,15 @@
 > `gammamod hwrd | hwdump | hwwr` (see "Hardware gamma path"). Full findings and the RE trail:
 > [`docs/A6000_LOOK_MOD_ISP.md`](../../docs/A6000_LOOK_MOD_ISP.md).
 
-## Hardware gamma path (the one that works)
+## Quick use (S-Log2 etc.)
+```sh
+python3 mods/look/make_hwgamma.py slog2.bin slog2             # 96 x u32 for the ISP gamma SRAM (see --help: slog3, rec709, --grey-x, --range)
+CAM=<camera-ip> mods/look/look.sh apply slog2.bin             # write once + patch the camera's table writer (no flicker, still + video)
+CAM=<camera-ip> mods/look/look.sh revert                      # undo; battery pull also resets everything
+```
+Verified on hardware: stays applied through live view, stills and video. Details: `docs/A6000_LOOK_MOD_ISP.md` section 7.
+
+## Hardware gamma path (manual, what look.sh automates)
 Needs a root shell on the camera (OpenMemories-Tweak: Wifi + Telnet + ADB; push the binary with `adb push`, never over
 telnet). Save the original first; restore = write it back.
 ```sh

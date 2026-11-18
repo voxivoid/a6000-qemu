@@ -255,6 +255,26 @@ static void run_line(char *line)
             if (param_int(l, id, &v)) { snprintf(m, sizeof m, "  sel %d ret %d id 0x%lx = %d\n", sel, r, id, v); out(m); }
         }
         out("  scan done\n");
+    } else if (sstarts(c, "getq")) {
+        /* getModelInfo with a non-null `in` list of requested ids */
+        int sel = num(tok(&s)), r, v;
+        unsigned long ids[32]; int nid = 0;
+        for (char *t; nid < 32 && (t = tok(&s)); ) ids[nid++] = num(t);
+        void *in = new_list();
+        for (int i = 0; in && i < nid; i++) {
+            void *p = malloc(16);
+            if (!p) break;
+            FN(int_ctor_t, OFF_INT_CTOR)(p, 0);
+            FN(pl_add_t, OFF_PL_ADD)(in, ids[i], p);
+        }
+        void *out_l = new_list();
+        r = FN(getmi_t, OFF_GETMI)(g_model, sel, out_l, in);
+        snprintf(m, sizeof m, "  getq sel %d ret %d (%d req)\n", sel, r, nid); out(m);
+        for (int i = 0; out_l && i < nid; i++) {
+            if (param_int(out_l, ids[i], &v)) snprintf(m, sizeof m, "  0x%lx = %d (0x%x)\n", ids[i], v, v);
+            else snprintf(m, sizeof m, "  0x%lx absent\n", ids[i]);
+            out(m);
+        }
     } else if (sstarts(c, "get")) {
         int sel = num(tok(&s)), r, v; void *l = fetch(sel, &r);
         snprintf(m, sizeof m, "  sel %d ret %d\n", sel, r); out(m);
