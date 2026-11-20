@@ -139,7 +139,7 @@ Projects this work builds on or learned from:
 - [ma1co/fwtool.py](https://github.com/ma1co/fwtool.py): unpacks Sony's firmware updater (used by `tools/mkdata.py`, `provision.sh`).
 - [ma1co/Sony-PMCA-RE](https://github.com/ma1co/Sony-PMCA-RE): PlayMemories Camera Apps tooling; `tools/pmca-socket/` is a USB backend for it (MIT).
 - [ma1co/OpenMemories-Tweak](https://github.com/ma1co/OpenMemories-Tweak): root shell (Wi-Fi, Telnet, ADB) on a real camera, used to dump and to run the look mod.
-- [ivica00/bionz-x-research](https://github.com/ivica00/bionz-x-research): the `arri_isp` mod that `mods/look/` is the A6000 analogue of.
+- [ivica00/bionz-x-research](https://github.com/ivica00/bionz-x-research): the `arri_isp` mod (its "Arrivederci" transform pipeline) that `mods/look/` is the A6000 analogue of.
 
 ## License
 - QEMU code (`qemu-overlay/`, `patches/`), `tools/`, `provision/` and scripts: **GPL-2.0-or-later** (`LICENSE`, same as QEMU)
